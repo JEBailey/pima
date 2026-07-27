@@ -97,44 +97,11 @@ fn native_chars(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
     Ok(Value::List(list))
 }
 
-fn native_string(_ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+fn native_string(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
     let [arg] = args else {
         return Ok(Value::String(Arc::from("")));
     };
-    Ok(Value::String(Arc::from(value_display(arg))))
-}
-
-fn value_display(value: &Value) -> String {
-    match value {
-        Value::Unit => "unit".to_string(),
-        Value::Boolean(b) => b.to_string(),
-        Value::Integer(n) => n.to_string(),
-        Value::Float(f) => format!("{f}"),
-        Value::String(s) => format!("\"{}\"", escape_string(s)),
-        Value::Symbol(_) => ":symbol".to_string(),
-        Value::List(list) => {
-            let elems: Vec<String> = list.iter().map(value_display).collect();
-            format!("({})", elems.join(" "))
-        }
-        Value::Function(_) => "#<function>".to_string(),
-        Value::NativeFunction(_) => "#<native>".to_string(),
-        Value::Block(_) => "#<block>".to_string(),
-        Value::Namespace(_) => "#<namespace>".to_string(),
-    }
-}
-
-fn escape_string(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '"' => "\\\"".to_string(),
-            '\\' => "\\\\".to_string(),
-            '\n' => "\\n".to_string(),
-            '\r' => "\\r".to_string(),
-            '\t' => "\\t".to_string(),
-            '\0' => "\\0".to_string(),
-            c => c.to_string(),
-        })
-        .collect()
+    Ok(Value::String(Arc::from(super::display::value(arg, ctx))))
 }
 
 fn type_str(value: &Value) -> &'static str {

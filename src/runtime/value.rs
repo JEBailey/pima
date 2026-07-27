@@ -21,32 +21,35 @@ pub enum Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Unit, Self::Unit) => true,
-            (Self::Boolean(a), Self::Boolean(b)) => a == b,
-            (Self::Integer(a), Self::Integer(b)) => a == b,
-            (Self::Integer(a), Self::Float(b)) => {
-                let af = *a as f64;
-                af.is_finite() && (af - b).abs() < f64::EPSILON
-            }
-            (Self::Float(a), Self::Integer(b)) => {
-                let bf = *b as f64;
-                a.is_finite() && (a - bf).abs() < f64::EPSILON
-            }
-            (Self::Float(a), Self::Float(b)) => a == b,
-            (Self::String(a), Self::String(b)) => a == b,
-            (Self::Symbol(a), Self::Symbol(b)) => a == b,
-            (Self::List(a), Self::List(b)) => {
-                let av: Vec<_> = a.iter().collect();
-                let bv: Vec<_> = b.iter().collect();
-                av.len() == bv.len() && av.iter().zip(bv.iter()).all(|(x, y)| x == y)
-            }
-            (Self::Function(a), Self::Function(b)) => a == b,
-            (Self::NativeFunction(a), Self::NativeFunction(b)) => a == b,
-            (Self::Block(a), Self::Block(b)) => a == b,
-            (Self::Namespace(a), Self::Namespace(b)) => a == b,
-            _ => false,
+        language_equal(self, other)
+    }
+}
+
+pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Unit, Value::Unit) => true,
+        (Value::Boolean(a), Value::Boolean(b)) => a == b,
+        (Value::Integer(a), Value::Integer(b)) => a == b,
+        (Value::Integer(integer), Value::Float(float))
+        | (Value::Float(float), Value::Integer(integer)) => {
+            float.fract() == 0.0
+                && *float >= i64::MIN as f64
+                && *float < -(i64::MIN as f64)
+                && (*float as i64) == *integer
         }
+        (Value::Float(a), Value::Float(b)) => a == b,
+        (Value::String(a), Value::String(b)) => a == b,
+        (Value::Symbol(a), Value::Symbol(b)) => a == b,
+        (Value::List(a), Value::List(b)) => {
+            let av: Vec<_> = a.iter().collect();
+            let bv: Vec<_> = b.iter().collect();
+            av.len() == bv.len() && av.iter().zip(bv.iter()).all(|(x, y)| x == y)
+        }
+        (Value::Function(a), Value::Function(b)) => a == b,
+        (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
+        (Value::Block(a), Value::Block(b)) => a == b,
+        (Value::Namespace(a), Value::Namespace(b)) => a == b,
+        _ => false,
     }
 }
 

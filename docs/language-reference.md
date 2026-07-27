@@ -805,6 +805,13 @@ fails and the incomplete namespace is discarded. External side effects already
 performed by the block are not rolled back. There is no implicit call to
 `init`, `new`, or any other member.
 
+Discarding prevents publication of the incomplete namespace value; it does not
+invalidate values deliberately published through earlier external side
+effects. For example, a closure assigned to an outer mutable binding before the
+failure remains callable and retains the construction environment it captured.
+An arena-based implementation may therefore retain unreachable or externally
+reachable construction storage until the interpreter itself is dropped.
+
 A namespace member is accessed with the whitespace-free `.` operator:
 
 ```pima

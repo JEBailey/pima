@@ -16,4 +16,5 @@ pub use ids::{
 };
 pub use namespace::Namespace;
 pub use symbol::SymbolInterner;
+pub(crate) use value::language_equal;
 pub use value::{PersistentList, Value};

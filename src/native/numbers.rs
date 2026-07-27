@@ -290,36 +290,7 @@ fn native_equals(_ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
     let [a, b] = args else {
         return Ok(Value::Boolean(false));
     };
-    Ok(Value::Boolean(values_equal(a, b)))
-}
-
-fn values_equal(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Unit, Value::Unit) => true,
-        (Value::Boolean(x), Value::Boolean(y)) => x == y,
-        (Value::Integer(x), Value::Integer(y)) => x == y,
-        (Value::Integer(x), Value::Float(y)) => {
-            let xf = *x as f64;
-            xf.is_finite() && xf == *y
-        }
-        (Value::Float(x), Value::Integer(y)) => x.is_finite() && *x == *y as f64,
-        (Value::Float(x), Value::Float(y)) => x == y,
-        (Value::String(x), Value::String(y)) => x == y,
-        (Value::Symbol(x), Value::Symbol(y)) => x == y,
-        (Value::List(a_l), Value::List(b_l)) => {
-            let a_v: Vec<_> = a_l.iter().collect();
-            let b_v: Vec<_> = b_l.iter().collect();
-            a_v.len() == b_v.len()
-                && a_v
-                    .iter()
-                    .zip(b_v.iter())
-                    .all(|(av, bv)| values_equal(av, bv))
-        }
-        (Value::Function(x), Value::Function(y)) => x == y,
-        (Value::Block(x), Value::Block(y)) => x == y,
-        (Value::Namespace(x), Value::Namespace(y)) => x == y,
-        _ => false,
-    }
+    Ok(Value::Boolean(crate::runtime::language_equal(a, b)))
 }
 
 // ── Boolean ──

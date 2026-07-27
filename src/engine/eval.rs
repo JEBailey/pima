@@ -83,7 +83,7 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         } => evaluate_loop(context, kind, condition, body),
         NodeKind::Return(value) => evaluate_return(context, value),
         NodeKind::Break(value) => evaluate_break(context, value),
-        NodeKind::Continue => Err(Signal::Continue),
+        NodeKind::Continue => evaluate_continue(context),
         NodeKind::Throw(value) => evaluate_throw(context, value),
         NodeKind::Import { path, alias } => evaluate_import(context, &path, alias.as_deref()),
         NodeKind::New(operand) => evaluate_new(context, operand),
@@ -764,17 +764,42 @@ fn evaluate_break(
     Err(Signal::Break(value))
 }
 
+fn evaluate_continue(context: &mut CallContext) -> EvalResult {
+    if !context
+        .interpreter
+        .call_stack
+        .iter()
+        .any(|frame| frame.is_loop)
+    {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "control_flow_error"],
+            "`continue` used outside of a loop".to_owned(),
+        )));
+    }
+    Err(Signal::Continue)
+}
+
 fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeId) -> EvalResult {
     let value = evaluate_node(context, value_id)?;
 
-    // Validate that the thrown value is classified as :error
     let error_symbol = context.interpreter.symbols.intern("error");
-    let is_error = match &value {
+    let message_symbol = context.interpreter.symbols.intern("message");
+    let (is_error, has_valid_message) = match &value {
         Value::Namespace(ns_id) => {
             let ns = &context.interpreter.namespaces[ns_id.0 as usize];
-            ns.types.contains(&error_symbol)
+            let environment = &context.interpreter.environments[ns.environment.0 as usize];
+            let valid_message = environment
+                .bindings
+                .get(&message_symbol)
+                .is_some_and(|binding| {
+                    binding.visibility == crate::runtime::BindingVisibility::Public
+                        && binding.mutability == crate::runtime::BindingMutability::Immutable
+                        && matches!(binding.value, Value::String(_))
+                });
+            (ns.types.contains(&error_symbol), valid_message)
         }
-        _ => false,
+        _ => (false, false),
     };
 
     if !is_error {
@@ -785,6 +810,13 @@ fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeI
                 "throw requires an error value (type :error), got {}",
                 value_type_name(&value)
             ),
+        )));
+    }
+    if !has_valid_message {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "type_error"],
+            "an error namespace must expose `message` as a public immutable string".to_owned(),
         )));
     }
 
@@ -874,14 +906,7 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
     context.interpreter.current_environment = ns_env_id;
     context.interpreter.current_module = block_module;
 
-    context.interpreter.call_stack.push(CallFrame {
-        is_loop: false,
-        function_name: None,
-        call_span: None,
-    });
-
     let result = evaluate_statement_list(context, &block_statements);
-    context.interpreter.call_stack.pop();
     context.interpreter.current_environment = prev_env;
     context.interpreter.current_module = prev_module;
 
@@ -895,8 +920,6 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
             return Err(Signal::Return(value));
         }
         Err(Signal::Throw(error)) => {
-            // Remove the failed namespace environment
-            context.interpreter.environments.pop();
             return Err(Signal::Throw(error));
         }
         Err(other) => return Err(other),
@@ -926,7 +949,6 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
     if let Some(types_binding) = ns_env.bindings.get(&types_symbol) {
         // Must be pub set (immutable, public)
         if types_binding.visibility != crate::runtime::BindingVisibility::Public {
-            context.interpreter.environments.pop();
             return Err(Signal::Throw(typed_err(
                 context,
                 &["error", "type_error"],
@@ -934,7 +956,6 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
             )));
         }
         if types_binding.mutability != crate::runtime::BindingMutability::Immutable {
-            context.interpreter.environments.pop();
             return Err(Signal::Throw(typed_err(
                 context,
                 &["error", "type_error"],
@@ -948,7 +969,6 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
             for value in items {
                 if let Value::Symbol(sym) = value {
                     if fundamental_types.contains(sym) {
-                        context.interpreter.environments.pop();
                         return Err(Signal::Throw(typed_err(
                             context,
                             &["error", "type_error"],
@@ -957,7 +977,6 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
                         )));
                     }
                     if !seen_types.insert(*sym) {
-                        context.interpreter.environments.pop();
                         return Err(Signal::Throw(typed_err(
                             context,
                             &["error", "type_error"],
@@ -966,7 +985,6 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
                     }
                     types.push(*sym);
                 } else {
-                    context.interpreter.environments.pop();
                     return Err(Signal::Throw(typed_err(
                         context,
                         &["error", "type_error"],
@@ -975,7 +993,6 @@ fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeI
                 }
             }
         } else {
-            context.interpreter.environments.pop();
             return Err(Signal::Throw(typed_err(
                 context,
                 &["error", "type_error"],

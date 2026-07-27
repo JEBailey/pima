@@ -247,6 +247,25 @@ fn equality_same_value() {
 }
 
 #[test]
+fn native_functions_compare_by_identity() {
+    assert_eq!(run_ok("[= + +]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[= + -]"), pima::Value::Boolean(false));
+}
+
+#[test]
+fn mixed_numeric_equality_requires_the_same_mathematical_integer() {
+    assert_eq!(run_ok("[= 42 42.0]"), pima::Value::Boolean(true));
+    assert_eq!(
+        run_ok("[= 9223372036854775807 9223372036854775808.0]"),
+        pima::Value::Boolean(false)
+    );
+    assert_ne!(
+        pima::Value::Integer(i64::MAX),
+        pima::Value::Float(9_223_372_036_854_775_808.0)
+    );
+}
+
+#[test]
 fn equality_different_types() {
     assert_eq!(run_ok("[= 5 \"hello\" ]"), pima::Value::Boolean(false));
 }
@@ -525,6 +544,22 @@ fn string_chars() {
 fn string_value_conversion() {
     let value = run_ok(r#"[string 42]"#);
     assert_eq!(value, pima::Value::String(std::sync::Arc::from("42")));
+}
+
+#[test]
+fn string_conversion_preserves_symbol_names() {
+    assert_eq!(
+        run_ok("[string :foo]"),
+        pima::Value::String(std::sync::Arc::from(":foo"))
+    );
+}
+
+#[test]
+fn string_conversion_uses_the_shared_recursive_display() {
+    assert_eq!(
+        run_ok(r#"[string ("hello" :world 2.0)]"#),
+        pima::Value::String(std::sync::Arc::from("(hello :world 2.0)"))
+    );
 }
 
 // ── List operations ──
@@ -952,6 +987,58 @@ fn imports_are_rejected_outside_module_scope() {
             .message
             .contains("only at module scope")
     );
+}
+
+#[test]
+fn throw_requires_a_public_immutable_string_message() {
+    let outcome = run(
+        "set InvalidError {\n    pub set types (:error :invalid)\n}\nset caught [attempt {\n    throw [new InvalidError]\n}]\n[is? caught :type_error]\n",
+    );
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.value, Some(pima::Value::Boolean(true)));
+}
+
+#[test]
+fn continue_outside_a_loop_is_a_typed_control_flow_error() {
+    let outcome =
+        run("set caught [attempt {\n    continue\n}]\n[is? caught :control_flow_error]\n");
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.value, Some(pima::Value::Boolean(true)));
+}
+
+#[test]
+fn top_level_return_inside_new_is_rejected() {
+    let outcome = run("new {\n    return 7\n}\n");
+
+    assert!(!outcome.is_success());
+    assert!(
+        outcome.diagnostics[0]
+            .message
+            .contains("outside of a function"),
+        "{:?}",
+        outcome.diagnostics
+    );
+}
+
+#[test]
+fn return_inside_new_can_exit_an_enclosing_function() {
+    let outcome =
+        run("function construct () {\n    new {\n        return 7\n    }\n}\n[construct]\n");
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.value, Some(pima::Value::Integer(7)));
+}
+
+#[test]
+fn failed_new_preserves_closures_published_as_external_side_effects() {
+    let outcome = run(
+        "set Failure {\n    pub set types (:error :failure)\n    pub set message \"failed\"\n}\nvar escaped ()\nset caught [attempt {\n    new {\n        function survivor () { 42 }\n        let escaped survivor\n        throw [new Failure]\n    }\n}]\n[escaped]\n",
+    );
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
 }
 
 // ── Namespace types ──

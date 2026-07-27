@@ -1,4 +1,5 @@
 pub mod console;
+mod display;
 pub mod io;
 pub mod lists;
 pub mod numbers;
