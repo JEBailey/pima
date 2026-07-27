@@ -1,0 +1,27 @@
+import "/po/library/standard"
+
+set Square {
+	set length 	5
+	var width 	80
+	
+	var total_area 15
+	
+	pub function area () {
+		let total_area [* length width]
+	}
+	
+	pub function set_width (:w) {
+		let width w
+	}
+}
+
+set square1 [new Square]
+set square2 [new Square]
+
+println "\n** CREATE NAMESPACE(OBJECT)**"
+println "square1 area :  " [square1.area]
+println "square2 area :  " [square2.area]
+println "changing square1 width to 40"
+square1.set_width 40
+println "area of square1 is now : " [square1.area]
+println "area of square2 is still : " [square2.area]

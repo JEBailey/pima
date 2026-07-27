@@ -1,0 +1,51 @@
+use crate::source::Span;
+use std::sync::Arc;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TokenKind {
+    Eol,
+    Identifier(Arc<str>),
+    Symbol(Arc<str>),
+    Boolean(bool),
+    Integer(i64),
+    Float(f64),
+    String(Arc<str>),
+    ImportPath(Arc<str>),
+    Underscore,
+    Dot,
+    LeftParen,
+    RightParen,
+    LeftBracket,
+    RightBracket,
+    LeftBrace,
+    RightBrace,
+    Keyword(Keyword),
+    Eof,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Keyword {
+    As,
+    Attempt,
+    Break,
+    Continue,
+    Eval,
+    Function,
+    If,
+    Import,
+    Let,
+    New,
+    Pub,
+    Return,
+    Set,
+    Throw,
+    Until,
+    Var,
+    While,
+}

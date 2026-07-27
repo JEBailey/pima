@@ -1,0 +1,80 @@
+pub function ^ (:x :y) {
+	if [< y 2] x [* x [^ x [- y 1]]]
+}
+
+/*
+* ternary operator
+*/
+pub function ? (:predicate :result1 :result2) {
+	//return the result without evaluating
+	if predicate result1 result2
+}
+
+//Logic related functions
+
+pub function <= (:value1 :value2) {
+	if [< value1 value2] true [= value1 value2]
+}
+
+pub function >= (:value1 :value2) {
+	if [> value1 value2] true {
+		= value1 value2
+	}
+}
+
+pub set	E 	2.718281828459045
+pub set	PI 	3.141592653589793
+
+pub function swap (:list) {
+	if [empty? list] () {
+	    append [swap [rest list]] [head list]
+	}
+}
+
+pub function incr(:x) {
+	+ x 1
+}
+
+pub function decr(:x) {
+	- x 1
+}
+
+/*
+* inclusive range
+*/
+pub function .. (:begin :end) {
+	set func [? [<= begin end] incr decr ]
+	if [= begin end] {
+		append () begin
+	} {
+		push [.. [func begin] end] begin
+	}
+}
+
+/**
+ *  iterates through a list and executes 
+ *  the passed in block
+ */
+
+pub function foreach(:list :block) {
+    if [not [empty? list]] {
+        set item [head list]
+	eval block
+        foreach [rest list] block
+    } {
+    }
+}
+
+/*
+ * Applies func to every item and returns a new list.
+ */
+
+pub function map (:func :list) {
+	if [empty? list] {
+		()
+	} {
+		push [map func [rest list]] [func [head list]]
+	}
+}
+
+println [.. 1 12]

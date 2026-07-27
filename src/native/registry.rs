@@ -1,0 +1,83 @@
+use crate::runtime::{NativeFunctionId, Value};
+
+pub type NativeResult = Result<Value, Value>;
+pub type NativeCall = fn(&mut dyn NativeContext, &[Value]) -> NativeResult;
+
+pub trait NativeContext {
+    fn typed_error(&mut self, types: &[&str], message: String) -> Value;
+    fn intern_symbol(&mut self, name: &str) -> crate::runtime::SymbolId;
+    fn resolve_symbol(&self, id: crate::runtime::SymbolId) -> Option<&str>;
+    /// Return the type symbols for a namespace value (without the ":namespace" prefix).
+    /// Returns empty list for non-namespace values.
+    fn namespace_type_symbols(
+        &self,
+        id: crate::runtime::NamespaceId,
+    ) -> Vec<crate::runtime::SymbolId>;
+    fn working_directory(&self) -> &std::path::Path;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arity {
+    Exact(usize),
+    AtLeast(usize),
+    Range { minimum: usize, maximum: usize },
+}
+
+#[derive(Clone)]
+pub struct NativeDefinition {
+    pub name: &'static str,
+    pub arity: Arity,
+    pub call: NativeCall,
+}
+
+impl Arity {
+    pub fn check(&self, actual: usize) -> bool {
+        match self {
+            Self::Exact(n) => actual == *n,
+            Self::AtLeast(n) => actual >= *n,
+            Self::Range { minimum, maximum } => actual >= *minimum && actual <= *maximum,
+        }
+    }
+}
+
+impl std::fmt::Debug for NativeDefinition {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeDefinition")
+            .field("name", &self.name)
+            .field("arity", &self.arity)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct NativeRegistry {
+    definitions: Vec<NativeDefinition>,
+}
+
+impl NativeRegistry {
+    pub fn register(&mut self, definition: NativeDefinition) -> NativeFunctionId {
+        let id = NativeFunctionId(self.definitions.len() as u16);
+        self.definitions.push(definition);
+        id
+    }
+
+    pub fn get(&self, id: NativeFunctionId) -> Option<&NativeDefinition> {
+        self.definitions.get(id.0 as usize)
+    }
+
+    /// Iterate over all definitions with their IDs.
+    pub fn iter_with_ids(&self) -> impl Iterator<Item = (NativeFunctionId, &NativeDefinition)> {
+        self.definitions
+            .iter()
+            .enumerate()
+            .map(|(i, def)| (NativeFunctionId(i as u16), def))
+    }
+
+    pub fn find_id(&self, name: &str) -> Option<NativeFunctionId> {
+        self.definitions
+            .iter()
+            .position(|definition| definition.name == name)
+            .map(|index| NativeFunctionId(index as u16))
+    }
+}

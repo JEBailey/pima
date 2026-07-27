@@ -1,0 +1,117 @@
+use std::sync::Arc;
+
+use crate::source::{SourceId, Span};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NodeId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BlockId(pub u32);
+
+#[derive(Clone, Debug)]
+pub struct Module {
+    pub source: SourceId,
+    pub statements: Vec<NodeId>,
+    pub nodes: Vec<Node>,
+    pub blocks: Vec<Block>,
+}
+
+impl Module {
+    pub fn node(&self, id: NodeId) -> &Node {
+        &self.nodes[id.0 as usize]
+    }
+
+    pub fn block(&self, id: BlockId) -> &Block {
+        &self.blocks[id.0 as usize]
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Block {
+    pub span: Span,
+    pub statements: Vec<NodeId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Node {
+    pub span: Span,
+    pub kind: NodeKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum NodeKind {
+    Unit,
+    Boolean(bool),
+    Integer(i64),
+    Float(f64),
+    String(Arc<str>),
+    Symbol(Arc<str>),
+    Identifier(Arc<str>),
+    Placeholder,
+    List(Vec<NodeId>),
+    Block(BlockId),
+    Member {
+        object: NodeId,
+        member: Arc<str>,
+    },
+    Call {
+        callee: NodeId,
+        arguments: Vec<NodeId>,
+        immediate: bool,
+    },
+    Binding {
+        visibility: Visibility,
+        mutability: BindingKind,
+        name: Arc<str>,
+        value: NodeId,
+    },
+    Assignment {
+        name: Arc<str>,
+        value: NodeId,
+    },
+    Function {
+        visibility: Visibility,
+        name: Arc<str>,
+        parameters: Vec<Arc<str>>,
+        body: BlockId,
+    },
+    Conditional {
+        condition: NodeId,
+        consequent: NodeId,
+        alternative: NodeId,
+    },
+    Loop {
+        kind: LoopKind,
+        condition: NodeId,
+        body: BlockId,
+    },
+    Return(Option<NodeId>),
+    Break(Option<NodeId>),
+    Continue,
+    Throw(NodeId),
+    Import {
+        path: Arc<str>,
+        alias: Option<Arc<str>>,
+    },
+    New(NodeId),
+    Eval(NodeId),
+    Attempt(BlockId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    Private,
+    Public,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BindingKind {
+    Immutable,
+    Mutable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopKind {
+    While,
+    Until,
+}
