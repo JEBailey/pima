@@ -12,7 +12,7 @@ pub enum Signal {
 
 pub type EvalResult = Result<Value, Signal>;
 
-fn typed_err(context: &mut CallContext, types: &[&str], message: String) -> Value {
+pub(super) fn typed_err(context: &mut CallContext, types: &[&str], message: String) -> Value {
     <CallContext as NativeContext>::typed_error(context, types, message)
 }
 
@@ -52,12 +52,12 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
                 .store_block(block_id, context.interpreter.current_module);
             Ok(Value::Block(crate::runtime::BlockId(value_block_id as u32)))
         }
-        NodeKind::Member { object, member } => evaluate_member(context, object, &member),
+        NodeKind::Member { object, member } => super::instantiate::member(context, object, &member),
         NodeKind::Call {
             callee,
             arguments,
             immediate: _,
-        } => evaluate_call(context, callee, &arguments),
+        } => super::call::evaluate(context, callee, &arguments),
         NodeKind::Binding {
             visibility,
             mutability,
@@ -86,7 +86,7 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         NodeKind::Continue => evaluate_continue(context),
         NodeKind::Throw(value) => evaluate_throw(context, value),
         NodeKind::Import { path, alias } => evaluate_import(context, &path, alias.as_deref()),
-        NodeKind::New(operand) => evaluate_new(context, operand),
+        NodeKind::New(operand) => super::instantiate::evaluate(context, operand),
         NodeKind::Eval(operand) => evaluate_eval(context, operand),
         NodeKind::Attempt(block_id) => evaluate_attempt(context, block_id),
     };
@@ -168,318 +168,11 @@ fn evaluate_list(context: &mut CallContext, elements: &[crate::syntax::ast::Node
 
 // ── Member Access ──
 
-fn evaluate_member(
-    context: &mut CallContext,
-    object_id: crate::syntax::ast::NodeId,
-    member: &str,
-) -> EvalResult {
-    let object = evaluate_node(context, object_id)?;
-    match object {
-        Value::Namespace(ns_id) => {
-            // Extract what we need before mutating
-            let ns_data = {
-                let ns = &context.interpreter.namespaces[ns_id.0 as usize];
-                let symbol = context.interpreter.symbols.intern(member);
-                let env_id = ns.environment;
-                let env = &context.interpreter.environments[env_id.0 as usize];
-                let has_binding = env.bindings.contains_key(&symbol);
-                if !has_binding {
-                    return Err(Signal::Throw(typed_err(
-                        context,
-                        &["error", "name_error"],
-                        format!("namespace has no member `{member}`"),
-                    )));
-                }
-                let ns2 = &context.interpreter.namespaces[ns_id.0 as usize];
-                let env_id2 = ns2.environment;
-                let env2 = &context.interpreter.environments[env_id2.0 as usize];
-                let Some(binding) = env2.bindings.get(&symbol) else {
-                    return Err(Signal::Throw(typed_err(
-                        context,
-                        &["error", "internal_error"],
-                        format!("namespace member `{member}` disappeared during lookup"),
-                    )));
-                };
-                if binding.visibility == crate::runtime::BindingVisibility::Private {
-                    return Err(Signal::Throw(typed_err(
-                        context,
-                        &["error", "visibility_error"],
-                        format!("member `{member}` is private"),
-                    )));
-                }
-                let value = binding.value.clone();
-                let capture_env = ns2.environment;
-                (value, capture_env)
-            };
-
-            let (value, _capture_env) = ns_data;
-            Ok(value)
-        }
-        _ => Err(Signal::Throw(typed_err(
-            context,
-            &["error", "type_error"],
-            format!(
-                "member access `.` requires a namespace, got {}",
-                value_type_name(&object)
-            ),
-        ))),
-    }
-}
-
 // ── Calls ──
-
-fn evaluate_call(
-    context: &mut CallContext,
-    callee_id: crate::syntax::ast::NodeId,
-    arguments: &[crate::syntax::ast::NodeId],
-) -> EvalResult {
-    let callee = evaluate_node(context, callee_id)?;
-
-    // Check for partial application (arguments contain Placeholders)
-    // We detect this by checking if any argument node is a Placeholder
-    let module = &context.interpreter.parsed_modules[context.interpreter.current_module];
-    let has_placeholder = arguments.iter().any(|&arg_id| {
-        matches!(
-            module.node(arg_id).kind,
-            crate::syntax::ast::NodeKind::Placeholder
-        )
-    });
-
-    if has_placeholder {
-        return create_partial_application(context, callee, arguments);
-    }
-
-    // Evaluate all arguments
-    let mut evaluated_args = Vec::with_capacity(arguments.len());
-    for &arg_id in arguments {
-        evaluated_args.push(evaluate_node(context, arg_id)?);
-    }
-
-    // Dispatch based on callee type
-    match callee {
-        Value::Function(func_id) => call_user_function(context, func_id, &evaluated_args),
-        Value::NativeFunction(native_id) => {
-            call_native_function(context, native_id, &evaluated_args)
-        }
-        other => Err(Signal::Throw(typed_err(
-            context,
-            &["error", "type_error"],
-            format!("cannot call value of type {}", value_type_name(&other)),
-        ))),
-    }
-}
-
-fn create_partial_application(
-    context: &mut CallContext,
-    callee: Value,
-    arguments: &[crate::syntax::ast::NodeId],
-) -> EvalResult {
-    // Only user functions can be partially applied
-    let Value::Function(func_id) = callee else {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "type_error"],
-            "partial application requires a function".to_string(),
-        )));
-    };
-
-    // Clone func data before we need to mutate context
-    let func_data = context.interpreter.functions[func_id.0 as usize].clone();
-    let func_params: Vec<crate::runtime::SymbolId> = func_data.parameters.clone();
-
-    if arguments.len() != func_params.len() {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "arity_error"],
-            format!(
-                "function expects {} arguments but got {}",
-                func_params.len(),
-                arguments.len()
-            ),
-        )));
-    }
-
-    let has_ph: Vec<bool> = {
-        let module = &context.interpreter.parsed_modules[context.interpreter.current_module];
-        arguments
-            .iter()
-            .map(|&arg_id| {
-                matches!(
-                    module.node(arg_id).kind,
-                    crate::syntax::ast::NodeKind::Placeholder
-                )
-            })
-            .collect()
-    };
-
-    let mut bound_params: Vec<crate::runtime::SymbolId> = Vec::new();
-    let mut remaining_params: Vec<crate::runtime::SymbolId> = Vec::new();
-    let mut bound_values: Vec<Value> = Vec::new();
-
-    let mut param_iter = func_params.iter();
-    let mut arg_iter = arguments.iter();
-    let mut ph_iter = has_ph.iter();
-
-    while let (Some(&param), Some(&arg_id), Some(&is_ph)) =
-        (param_iter.next(), arg_iter.next(), ph_iter.next())
-    {
-        if is_ph {
-            remaining_params.push(param);
-        } else {
-            let value = evaluate_node(context, arg_id)?;
-            bound_params.push(param);
-            bound_values.push(value);
-        }
-    }
-    for &param in param_iter {
-        remaining_params.push(param);
-    }
-
-    let mut new_func = crate::runtime::UserFunction {
-        name: func_data.name,
-        parameters: remaining_params,
-        body: func_data.body,
-        body_module: func_data.body_module,
-        environment: func_data.environment,
-        declaration_span: func_data.declaration_span,
-    };
-
-    // We need to pre-bind the bound params in the environment
-    let parent_env = func_data.environment;
-    let new_env_id = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
-    {
-        let mut new_env = crate::runtime::Environment::new(Some(parent_env));
-        for (sym, val) in bound_params.into_iter().zip(bound_values) {
-            new_env.bindings.insert(
-                sym,
-                crate::runtime::Binding {
-                    value: val,
-                    mutability: crate::runtime::BindingMutability::Immutable,
-                    visibility: crate::runtime::BindingVisibility::Private,
-                },
-            );
-        }
-        context.interpreter.environments.push(new_env);
-    }
-    new_func.environment = new_env_id;
-
-    let new_func_id = crate::runtime::FunctionId(context.interpreter.functions.len() as u32);
-    context.interpreter.functions.push(new_func);
-
-    Ok(Value::Function(new_func_id))
-}
 
 // ── User Function Call ──
 
-fn call_user_function(
-    context: &mut CallContext,
-    func_id: crate::runtime::FunctionId,
-    arguments: &[Value],
-) -> EvalResult {
-    let func = &context.interpreter.functions[func_id.0 as usize];
-
-    if arguments.len() != func.parameters.len() {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "arity_error"],
-            format!(
-                "function expects {} arguments but got {}",
-                func.parameters.len(),
-                arguments.len()
-            ),
-        )));
-    }
-
-    let child_env_id = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
-    {
-        let mut new_env = crate::runtime::Environment::new(Some(func.environment));
-        for (param, arg) in func.parameters.iter().zip(arguments) {
-            new_env.bindings.insert(
-                *param,
-                crate::runtime::Binding {
-                    value: arg.clone(),
-                    mutability: crate::runtime::BindingMutability::Immutable,
-                    visibility: crate::runtime::BindingVisibility::Private,
-                },
-            );
-        }
-        context.interpreter.environments.push(new_env);
-    }
-
-    let function_name = context
-        .interpreter
-        .symbols
-        .resolve(func.name)
-        .unwrap_or("<anonymous>")
-        .to_owned();
-    context.interpreter.call_stack.push(CallFrame {
-        is_loop: false,
-        function_name: Some(function_name),
-        call_span: context.interpreter.active_span,
-    });
-
-    let prev_env = context.interpreter.current_environment;
-    let prev_module = context.interpreter.current_module;
-    context.interpreter.current_environment = child_env_id;
-    context.interpreter.current_module = func.body_module;
-
-    // Evaluate body
-    let result = evaluate_block(context, func.body);
-
-    // Restore environment and module
-    context.interpreter.current_environment = prev_env;
-    context.interpreter.current_module = prev_module;
-    context.interpreter.call_stack.pop();
-
-    // Handle signals
-    match result {
-        Ok(value) => Ok(value),
-        Err(Signal::Return(value)) => Ok(value),
-        Err(Signal::Break(_)) => Err(Signal::Throw(typed_err(
-            context,
-            &["error", "control_flow_error"],
-            "`break` cannot cross function boundary".to_string(),
-        ))),
-        Err(Signal::Continue) => Err(Signal::Throw(typed_err(
-            context,
-            &["error", "control_flow_error"],
-            "`continue` cannot cross function boundary".to_string(),
-        ))),
-        Err(Signal::Throw(value)) => Err(Signal::Throw(value)),
-    }
-}
-
 // ── Native Function Call ──
-
-fn call_native_function(
-    context: &mut CallContext,
-    native_id: crate::runtime::NativeFunctionId,
-    arguments: &[Value],
-) -> EvalResult {
-    let definition = context
-        .interpreter
-        .natives
-        .get(native_id)
-        .expect("native function id not found");
-
-    // Check arity
-    if !definition.arity.check(arguments.len()) {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "arity_error"],
-            format!(
-                "native function `{}` called with wrong number of arguments",
-                definition.name
-            ),
-        )));
-    }
-
-    let result = (definition.call)(context, arguments);
-    match result {
-        Ok(value) => Ok(value),
-        Err(error_value) => Err(Signal::Throw(error_value)),
-    }
-}
 
 // ── Bindings ──
 
@@ -872,146 +565,6 @@ fn evaluate_attempt(
 
 // ── new ──
 
-fn evaluate_new(context: &mut CallContext, operand_id: crate::syntax::ast::NodeId) -> EvalResult {
-    let value = evaluate_node(context, operand_id)?;
-
-    let Value::Block(block_ref_id) = value else {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "type_error"],
-            "new requires a block value".to_string(),
-        )));
-    };
-
-    // Clone block statements before mutating context
-    let (block_module, block_statements) = {
-        let stored = &context.interpreter.stored_blocks[block_ref_id.0 as usize];
-        let module = &context.interpreter.parsed_modules[stored.module_index];
-        (
-            stored.module_index,
-            module.block(stored.block_id).statements.clone(),
-        )
-    };
-
-    let ns_env_id = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
-    context
-        .interpreter
-        .environments
-        .push(crate::runtime::Environment::new(Some(
-            context.interpreter.current_environment,
-        )));
-
-    let prev_env = context.interpreter.current_environment;
-    let prev_module = context.interpreter.current_module;
-    context.interpreter.current_environment = ns_env_id;
-    context.interpreter.current_module = block_module;
-
-    let result = evaluate_statement_list(context, &block_statements);
-    context.interpreter.current_environment = prev_env;
-    context.interpreter.current_module = prev_module;
-
-    // If execution failed, discard incomplete namespace
-    match result {
-        Ok(_) => {
-            // Block completed — we ignore its value and return the namespace
-        }
-        Err(Signal::Return(value)) => {
-            // return inside new — propagate it (it goes to the enclosing function)
-            return Err(Signal::Return(value));
-        }
-        Err(Signal::Throw(error)) => {
-            return Err(Signal::Throw(error));
-        }
-        Err(other) => return Err(other),
-    };
-
-    // Validate optional types declaration
-    let types_symbol = context.interpreter.symbols.intern("types");
-    let fundamental_types: std::collections::HashSet<_> = [
-        "unit",
-        "boolean",
-        "integer",
-        "float",
-        "string",
-        "symbol",
-        "list",
-        "function",
-        "block",
-        "namespace",
-    ]
-    .into_iter()
-    .map(|name| context.interpreter.symbols.intern(name))
-    .collect();
-    let ns_env = &context.interpreter.environments[ns_env_id.0 as usize];
-    let mut types: Vec<crate::runtime::SymbolId> = Vec::new();
-    let mut seen_types = std::collections::HashSet::new();
-
-    if let Some(types_binding) = ns_env.bindings.get(&types_symbol) {
-        // Must be pub set (immutable, public)
-        if types_binding.visibility != crate::runtime::BindingVisibility::Public {
-            return Err(Signal::Throw(typed_err(
-                context,
-                &["error", "type_error"],
-                "namespace `types` must be declared with `pub set`".to_string(),
-            )));
-        }
-        if types_binding.mutability != crate::runtime::BindingMutability::Immutable {
-            return Err(Signal::Throw(typed_err(
-                context,
-                &["error", "type_error"],
-                "namespace `types` must be immutable".to_string(),
-            )));
-        }
-
-        // Must be a list of symbols
-        if let Value::List(list) = &types_binding.value {
-            let items: Vec<_> = list.iter().collect();
-            for value in items {
-                if let Value::Symbol(sym) = value {
-                    if fundamental_types.contains(sym) {
-                        return Err(Signal::Throw(typed_err(
-                            context,
-                            &["error", "type_error"],
-                            "namespace `types` cannot contain a fundamental runtime type"
-                                .to_string(),
-                        )));
-                    }
-                    if !seen_types.insert(*sym) {
-                        return Err(Signal::Throw(typed_err(
-                            context,
-                            &["error", "type_error"],
-                            "namespace `types` cannot contain duplicates".to_string(),
-                        )));
-                    }
-                    types.push(*sym);
-                } else {
-                    return Err(Signal::Throw(typed_err(
-                        context,
-                        &["error", "type_error"],
-                        "namespace `types` must contain only symbols".to_string(),
-                    )));
-                }
-            }
-        } else {
-            return Err(Signal::Throw(typed_err(
-                context,
-                &["error", "type_error"],
-                "namespace `types` must be a list".to_string(),
-            )));
-        }
-    }
-
-    let ns = crate::runtime::Namespace {
-        environment: ns_env_id,
-        types,
-    };
-
-    let ns_id = crate::runtime::NamespaceId(context.interpreter.namespaces.len() as u32);
-    context.interpreter.namespaces.push(ns);
-
-    Ok(Value::Namespace(ns_id))
-}
-
 // ── Import ──
 
 fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -> EvalResult {
@@ -1363,7 +916,7 @@ fn fail_module<T>(
 
 // ── Helpers ──
 
-fn value_type_name(value: &Value) -> &'static str {
+pub(super) fn value_type_name(value: &Value) -> &'static str {
     match value {
         Value::Unit => ":unit",
         Value::Boolean(_) => ":boolean",

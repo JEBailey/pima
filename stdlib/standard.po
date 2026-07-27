@@ -1,11 +1,54 @@
 // Pima standard library
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+pub set E 2.718281828459045
+pub set PI 3.141592653589793
+
+// =============================================================================
+// Arithmetic
+// =============================================================================
+
 pub function ^ (:x :y) {
     if [< y 2] x [* x [^ x [- y 1]]]
 }
 
-pub function ? (:predicate :result1 :result2) {
-    if predicate result1 result2
+pub function abs (:n) {
+    if [< n 0] [* -1 n] n
+}
+
+pub function min (:a :b) {
+    if [< a b] a b
+}
+
+pub function max (:a :b) {
+    if [> a b] a b
+}
+
+pub function incr(:x) {
+    + x 1
+}
+
+pub function decr(:x) {
+    - x 1
+}
+
+pub function even? (:n) {
+    [= [mod n 2] 0]
+}
+
+pub function odd? (:n) {
+    [not [even? n]]
+}
+
+// =============================================================================
+// Boolean / Logic
+// =============================================================================
+
+pub function <> (:a :b) {
+    [not [= a b]]
 }
 
 pub function <= (:value1 :value2) {
@@ -18,8 +61,45 @@ pub function >= (:value1 :value2) {
     }
 }
 
-pub set E 2.718281828459045
-pub set PI 3.141592653589793
+pub function and (:a :b) {
+    if a b false
+}
+
+pub function or (:a :b) {
+    if a true b
+}
+
+pub function ? (:predicate :result1 :result2) {
+    if predicate result1 result2
+}
+
+// =============================================================================
+// List Construction & Access
+// =============================================================================
+
+pub function list (:head) {
+    push () head
+}
+
+pub function last (:list) {
+    if [empty? [rest list]] {
+        head list
+    } {
+        last [rest list]
+    }
+}
+
+pub function nth (:list :index) {
+    if [= index 0] {
+        head list
+    } {
+        nth [rest list] [- index 1]
+    }
+}
+
+// =============================================================================
+// List Transformations
+// =============================================================================
 
 pub function swap (:list) {
     if [empty? list] () {
@@ -27,12 +107,143 @@ pub function swap (:list) {
     }
 }
 
-pub function incr(:x) {
-    + x 1
+pub function take (:list :n) {
+    if [= n 0] {
+        ()
+    } {
+        push [take [rest list] [- n 1]] [head list]
+    }
 }
 
-pub function decr(:x) {
-    - x 1
+pub function drop (:list :n) {
+    if [= n 0] {
+        list
+    } {
+        drop [rest list] [- n 1]
+    }
+}
+
+pub function concat_lists (:list1 :list2) {
+    if [empty? list1] {
+        list2
+    } {
+        push [concat_lists [rest list1] list2] [head list1]
+    }
+}
+
+pub function flatten (:list) {
+    if [empty? list] {
+        ()
+    } {
+        if [is? [head list] :list] {
+            concat_lists [flatten [head list]] [flatten [rest list]]
+        } {
+            push [flatten [rest list]] [head list]
+        }
+    }
+}
+
+pub function map (:func :list) {
+    if [empty? list] {
+        ()
+    } {
+        push [map func [rest list]] [func [head list]]
+    }
+}
+
+pub function filter (:pred :list) {
+    if [empty? list] {
+        ()
+    } {
+        if [pred [head list]] {
+            push [filter pred [rest list]] [head list]
+        } {
+            filter pred [rest list]
+        }
+    }
+}
+
+pub function fold (:func :list :acc) {
+    if [empty? list] {
+        acc
+    } {
+        fold func [rest list] [func acc [head list]]
+    }
+}
+
+// =============================================================================
+// List Predicates
+// =============================================================================
+
+pub function any? (:pred :list) {
+    if [empty? list] {
+        false
+    } {
+        if [pred [head list]] {
+            true
+        } {
+            any? pred [rest list]
+        }
+    }
+}
+
+pub function all? (:pred :list) {
+    if [empty? list] {
+        true
+    } {
+        if [pred [head list]] {
+            all? pred [rest list]
+        } {
+            false
+        }
+    }
+}
+
+// =============================================================================
+// String Operations
+// =============================================================================
+
+pub function join (:sep :list) {
+    if [empty? list] {
+        ""
+    } {
+        if [empty? [rest list]] {
+            string [head list]
+        } {
+            concat [head list] sep [join sep [rest list]]
+        }
+    }
+}
+
+
+
+// =============================================================================
+// Iteration
+// =============================================================================
+
+pub function foreach(:list :block) {
+    if [not [empty? list]] {
+        set item [head list]
+        eval block
+        foreach [rest list] block
+    } {
+    }
+}
+
+pub function times (:n :block) {
+    if [< n 1] {
+    } {
+        eval block
+        times [- n 1] block
+    }
+}
+
+pub function iterate (:start :end :func) {
+    if [<= start end] {
+        push [iterate [+ start 1] end func] [func start]
+    } {
+        ()
+    }
 }
 
 pub function .. (:begin :end) {
@@ -44,19 +255,18 @@ pub function .. (:begin :end) {
     }
 }
 
-pub function foreach(:list :block) {
-    if [not [empty? list]] {
-        set item [head list]
-        eval block
-        foreach [rest list] block
-    } {
-    }
+// =============================================================================
+// Predicates
+// =============================================================================
+
+pub function null? (:value) {
+    [is? value :unit]
 }
 
-pub function map (:func :list) {
-    if [empty? list] {
-        ()
-    } {
-        push [map func [rest list]] [func [head list]]
-    }
+// =============================================================================
+// Utility
+// =============================================================================
+
+pub function identity (:x) {
+    x
 }

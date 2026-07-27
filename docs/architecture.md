@@ -71,10 +71,10 @@ pima/
 ```
 
 This is a responsibility map, not a requirement that every listed file exist.
-Calls and namespace instantiation currently live in `engine/eval.rs`; they
-should move into `call.rs` and `instantiate.rs` only when those modules can own
-the complete behavior rather than forwarding to placeholders. `/po/io` is
-implemented in `native/io.rs` and exposed only through its virtual module.
+Calls and namespace instantiation live in `engine/call.rs` and
+`engine/instantiate.rs`. These modules own their complete behavior rather than
+forwarding to the AST dispatcher. `/po/io` is implemented in `native/io.rs`
+and exposed only through its virtual module.
 
 ## 2. Dependency direction
 
@@ -312,8 +312,8 @@ attempting to cross their boundary.
 
 ### `eval`
 
-Evaluates AST nodes, declarations, blocks, and ordinary expressions. Evaluation
-order is explicit and left-to-right.
+Dispatches AST nodes and evaluates declarations, blocks, control forms, and
+ordinary expressions. Evaluation order is explicit and left-to-right.
 
 ### `call`
 
@@ -324,8 +324,8 @@ frames.
 ### `instantiate`
 
 Implements `new`: create a namespace environment linked to the current scope,
-execute the uninstantiated block, validate types, and publish the namespace only
-after successful completion.
+execute the uninstantiated block, validate types, enforce member visibility,
+and publish the namespace only after successful completion.
 
 ### `module_loader`
 

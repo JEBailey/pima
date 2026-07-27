@@ -1,4 +1,6 @@
+mod call;
 mod eval;
+mod instantiate;
 mod interpreter;
 mod module_loader;
 
