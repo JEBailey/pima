@@ -6,6 +6,8 @@ tree-walk interpreter in Rust. Its central ideas are:
 - physical line endings terminate statements;
 - square brackets invoke immediately;
 - braces produce uninstantiated code blocks;
+- `@(:name...) { ... }` declares a block's required execution context;
+- `do` executes a block in the current environment;
 - bindings are immutable unless declared with `var`;
 - namespaces are private by default and expose members with `pub`;
 - lists are immutable persistent values; and

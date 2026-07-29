@@ -6,16 +6,16 @@ import "/pima/library/standard"
 // then call a function which will execute said block
 
 
-Console.println "##EVAL TEST"
+Console.println "##DO TEST"
 Console.println "following test prints \"hello world my name is jason\" "
 
-set hello {
+set hello @(:name) {
 	//note that at this point name is undefined
 	Console.println "hello world my name is " name
 }
 
 function saysomething (:codeblock :name) {
-	eval codeblock
+	do codeblock
 }
 
 saysomething hello "jason"

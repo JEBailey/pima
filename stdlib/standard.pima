@@ -74,7 +74,7 @@ function list_reverse (:list) {
 function list_foreach (:list :block) {
     if [Logic.not [List.empty? list]] {
         set item [List.head list]
-        eval block
+        do block
         list_foreach [List.rest list] block
     } {
     }

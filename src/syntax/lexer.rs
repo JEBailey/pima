@@ -62,6 +62,9 @@ enum RawToken {
     #[token("_", priority = 3)]
     Underscore,
 
+    #[token("@")]
+    At,
+
     #[token("..")]
     DotDot,
 
@@ -147,6 +150,7 @@ fn token_kind(raw: RawToken, text: &str) -> Result<TokenKind, &'static str> {
         RawToken::Symbol => TokenKind::Symbol(Arc::from(&text[1..])),
         RawToken::ImportPath => TokenKind::ImportPath(Arc::from(text)),
         RawToken::Underscore => TokenKind::Underscore,
+        RawToken::At => TokenKind::At,
         RawToken::DotDot | RawToken::Operator | RawToken::Slash | RawToken::Star => {
             TokenKind::Identifier(Arc::from(text))
         }
@@ -169,7 +173,7 @@ fn word_kind(word: &str) -> TokenKind {
         "attempt" => Keyword::Attempt,
         "break" => Keyword::Break,
         "continue" => Keyword::Continue,
-        "eval" => Keyword::Eval,
+        "do" => Keyword::Do,
         "function" => Keyword::Function,
         "if" => Keyword::If,
         "import" => Keyword::Import,

@@ -93,7 +93,7 @@ resolving that name as a binding.
 The reserved words are:
 
 ```text
-as  attempt  break  continue  eval  function  if  import  let  match  new  pub
+as  attempt  break  continue  do  function  if  import  let  match  new  pub
 return  set  throw  until  var  while
 ```
 
@@ -118,6 +118,7 @@ expression       = literal
                  | member-access
                  | list
                  | block
+                 | annotated-block
                  | bracket-expression
                  | declaration
                  | assignment
@@ -128,6 +129,7 @@ expression       = literal
                  | attempt-expression
                  | import-expression
                  | new-expression
+                 | do-expression
                  | call ;
 
 literal          = number | string | "true" | "false" ;
@@ -139,6 +141,11 @@ escape           = "\", ( '"' | "\" | "n" | "r" | "t" | "0"
 
 list             = "(", separator*, [ expression-list ], separator*, ")" ;
 block            = "{", layout*, [ statement-list ], layout*, "}" ;
+annotated-block  = "@", separator*, context-requirements, separator*, block ;
+context-requirements
+                 = "(", separator*,
+                   [ symbol, { separator+, symbol } ],
+                   separator*, ")" ;
 bracket-expression
                  = "[", separator*, expression-list, separator*, "]" ;
 expression-list  = expression, { separator+, expression } ;
@@ -149,10 +156,15 @@ visibility       = "pub" ;
 binding          = ( "set" | "var" ), separator+,
                    binding-pattern, separator+, expression ;
 assignment       = "let", separator+, binding-pattern, separator+, expression ;
-binding-pattern  = identifier | pattern ;
-pattern          = identifier | symbol | literal | "_" | list-pattern ;
-list-pattern     = "(", separator*, [ pattern-list ], separator*, ")" ;
-pattern-list     = pattern, { separator+, pattern } ;
+binding-pattern  = binding-name | "_" | binding-list-pattern ;
+binding-name     = identifier | symbol ;
+binding-list-pattern
+                 = "(", separator*, [ binding-pattern,
+                   { separator+, binding-pattern } ], separator*, ")" ;
+match-pattern    = identifier | symbol | literal | "_" | match-list-pattern ;
+match-list-pattern
+                 = "(", separator*, [ match-pattern,
+                   { separator+, match-pattern } ], separator*, ")" ;
 function-declaration
                  = "function", separator+, identifier, separator*,
                    parameter-list, separator*, block ;
@@ -162,7 +174,7 @@ parameter-list   = "(", separator*,
                    separator*, ")" ;
 
 conditional      = "if", separator+, expression, separator+,
-                   expression, separator+, expression ;
+                   expression, [ separator+, expression ] ;
 loop             = ( "while" | "until" ), separator+,
                    expression, separator+, block ;
 control-transfer = return-expression
@@ -178,11 +190,12 @@ attempt-expression
 match-expression = "match", separator+, expression, separator*,
                    "(", separator*, match-arm,
                    { separator*, match-arm }, separator*, ")" ;
-match-arm        = pattern, separator*, block ;
+match-arm        = match-pattern, separator*, block ;
 import-expression
                  = "import", separator+, ( string | import-path ),
                    [ separator+, "as", separator+, identifier ] ;
 new-expression   = "new", separator+, expression ;
+do-expression    = "do", separator+, expression ;
 
 call             = expression, { separator+, expression } ;
 ```
@@ -206,6 +219,17 @@ permitted. `[function]` immediately invokes `function` with zero arguments.
 Parentheses construct lists; they do not group arithmetic expressions.
 Brackets immediately invoke a call expression. Braces create a block value and
 do not execute its body merely by being encountered.
+
+`@` is a block-construction special form with two syntactic operands: a literal
+list of required context symbols and a block body:
+
+```pima
+@(:name :score) {
+    Console.println name score
+}
+```
+
+The result is a block value, not a function.
 
 ## 4. Values
 
@@ -312,15 +336,47 @@ immediately invokes the callee, and yields the result:
 A block literal evaluates to an inert code-block value. Creating or passing a
 code block does not execute it, create a scope, bind its free identifiers, or
 capture an environment. A code block becomes instantiated only when an
-operation such as `eval`, `attempt`, or `new` supplies an execution
+operation such as `do`, `attempt`, or `new` supplies an execution
 environment.
+
+An annotated block declares context bindings that must be visible when `do`
+executes it:
+
+```pima
+set report @(:name :score) {
+    Console.println name score
+}
+```
+
+The annotation does not create bindings and does not capture their current
+values. Each symbol must be unique and cannot be a reserved word. The first
+version treats the annotation as a guaranteed minimum contract: other free
+identifiers may still resolve normally from the execution environment.
 
 When an instantiated block executes, its statements run from left to right and
 its final value is returned. An empty block returns unit.
 
+Booleans, calls, and blocks are all expressions and may occupy the same
+expression positions:
+
+```pima
+true
+[foo bar]
+{
+    foo 2
+    bar 3 x
+}
+```
+
+They do not necessarily produce the same kind of value: a block literal
+produces an inert `:block` value until a block-aware form supplies an execution
+environment. When such a form executes the block, the block's final statement
+is its resulting value. This lets a multi-statement block serve anywhere that
+form would otherwise accept a single result-producing expression.
+
 Calls evaluate the callee and ordinary arguments from left to right, then invoke
 the callee. The special forms `if`, `while`, `until`, `function`, `set`, `let`,
-`var`, `pub`, `import`, `new`, `eval`, `attempt`, `return`, `break`,
+`var`, `pub`, `import`, `new`, `do`, `attempt`, `return`, `break`,
 `continue`, and `throw` control evaluation of one or more operands.
 
 Operations fail by throwing typed error values. Error conditions include:
@@ -413,7 +469,7 @@ if [is? result :error] {
   it does not distinguish returned errors from caught errors.
 - `attempt` catches only `throw`. It does not intercept `return`, `break`, or
   `continue`.
-- Like `eval`, `attempt` does not create a child scope. Declarations and
+- Like `do`, `attempt` does not create a child scope. Declarations and
   assignments made before an error remain visible in caller scope; it is not a
   transaction and does not roll back side effects.
 
@@ -438,21 +494,41 @@ using it with an unbound name or an immutable binding is an error.
 
 ### 6.1 Patterns and destructuring
 
-A binding target may be a pattern. Symbols capture values, `_` ignores a value,
-and list patterns destructure immutable lists recursively:
+A binding target may be a pattern. Bare names and symbol names both identify
+destination bindings, `_` ignores a value, and list patterns destructure
+immutable lists recursively:
 
 ```pima
-set (:x (:y _)) (3 (4 5))
+set (x (y _)) (3 (4 5))
 
 var left 0
 var right 0
-let (:left :right) (10 20)
+let (left right) (10 20)
 ```
 
 `set` creates immutable bindings for every capture, `var` creates mutable
 bindings, and `let` updates existing mutable bindings. Destructuring is atomic:
 the complete shape and every destination are validated before any declaration
 or assignment occurs. A shape mismatch throws `:match_error`.
+
+Within a binding target, `name` and `:name` have the same meaning. The symbol
+spelling is accepted as a convenient name descriptor but is redundant because
+`set`, `var`, or `let` already establishes that the expression is a binding
+target:
+
+```pima
+set (x y) (1 2)
+set (:x :y) (1 2)       // equivalent spelling
+
+var left 0
+var right 0
+let (left right) (3 4)
+let (:left :right) (3 4) // legal, but unnecessarily symbolic
+```
+
+The binding form, not the presence of `:`, determines the operation. In
+particular, `let (:left :right) ...` does not create bindings: both names must
+already resolve to mutable bindings just as they must in the bare-name form.
 
 `match` evaluates its subject once and selects the first matching arm:
 
@@ -472,7 +548,7 @@ match result (
 )
 ```
 
-Inside patterns, `:name` captures, a bare name matches the symbol with that
+Inside `match` patterns, `:name` captures, while a bare name matches the symbol with that
 name, ordinary literals require equality, and `_` is a wildcard. Thus `ok`
 matches the symbol `:ok`, while `:value` captures the corresponding value.
 Captures are immutable and visible only within their arm. If no arm matches,
@@ -570,15 +646,42 @@ set area_function square.area
 
 ### 8.1 Conditional
 
-`if` evaluates its predicate, then evaluates exactly one branch:
+`if` evaluates its predicate and accepts a consequent with an optional
+alternative:
 
 ```pima
+if predicate consequent
 if predicate consequent alternative
 ```
 
 A branch may be a single expression or a block. If it is a block, the selected
-block is executed. The unselected branch is not evaluated. The value of `if` is
-the selected branch's value.
+block is executed. The unselected branch is not evaluated. When the predicate
+is true, the value of `if` is the consequent's value. When the predicate is
+false, the value is the alternative's value when present, or unit when no
+alternative was provided.
+
+The two-part form is useful for conditional effects and control transfer:
+
+```pima
+if [< balance 0] {
+    return :invalid
+}
+```
+
+Consequently, a single expression and a block containing that expression are
+equivalent branch forms:
+
+```pima
+if [< x 2] [return "this"] alternative
+
+if [< x 2] {
+    return "this"
+} alternative
+```
+
+Both selected branches produce the same `return` transfer. Blocks extend an
+expression position to multiple statements without changing the surrounding
+control form's result semantics.
 
 ### 8.2 Loops
 
@@ -617,12 +720,12 @@ Using `return` outside a function, or `break` or `continue` outside a loop, is a
 runtime error. These transfers cannot cross a function-call boundary: a
 function called from inside a loop cannot break or continue its caller's loop.
 
-Code executed by `eval` behaves as though it appeared directly at the call site.
+Code executed by `do` behaves as though it appeared directly at the call site.
 Consequently, an evaluated block may return from the function containing the
-`eval`, or break or continue a loop containing the `eval`. If `eval` is called
+`do`, or break or continue a loop containing the `do`. If `do` is called
 inside another function, that function call remains a boundary.
 
-## 9. Blocks and `eval`
+## 9. Blocks, context contracts, and `do`
 
 Blocks are first-class, uninstantiated chunks of code:
 
@@ -632,16 +735,54 @@ set greeting {
 }
 ```
 
-`eval block` instantiates and executes the block in the caller's current
+`do block` instantiates and executes the block in the caller's current
 environment. Because a block does not capture the environment in which its
 literal was created, all of its free identifiers are resolved through the
 evaluation environment. This allows a caller to supply names referenced by the
 block, as demonstrated by `examples/function_test.pima`.
 
-`eval` does not create a child scope. Declarations in the evaluated block are
+An annotated block makes important environmental dependencies visible:
+
+```pima
+set report @(:name :score) {
+    Console.println name score
+}
+
+function render (:report :name :score) {
+    do report
+}
+
+render report "Ada" 96
+```
+
+Before any operation executes an annotated block, it verifies that every
+required name resolves through the supplied environment's ordinary lexical
+lookup chain. A missing requirement throws an error classified as:
+
+```pima
+(:error :name_error :missing_context)
+```
+
+The annotation is a context contract rather than a function parameter list:
+`render` already owns the `name` and `score` bindings, and the block uses those
+same bindings. An annotated block remains type `:block`, captures no
+environment, and is not callable. It must be executed by an operation that
+supplies an environment.
+
+Context validation is intrinsic to block execution rather than specific to
+`do`. The same check applies when `if`, `while`, `until`, `attempt`, `new`, or
+another block-aware form executes an annotated block. Unselected conditional
+branches are neither validated nor executed. For `new`, requirements resolve
+through the new namespace environment and then its enclosing environment.
+
+`do` does not create a child scope. Declarations in the evaluated block are
 created in the caller's current environment, and `let` assignments update
 mutable bindings visible from that environment. The effect is the same as if
-the block's statements had been written directly at the `eval` call site.
+the block's statements had been written directly at the `do` call site.
+
+A plain block has no enforced context contract and preserves the original open
+block behavior. `@()` is permitted and creates an annotated block whose
+required context list is empty.
 
 ## 10. Core operations
 
@@ -659,7 +800,7 @@ namespaces:
 | `String.from`, `String.concat` | Display conversion and concatenation |
 | `String.length`, `String.slice`, `String.chars` | Unicode-aware string operations |
 | `Console.println` | Print all operands followed by a line ending |
-| `eval` | Execute a block in the current environment |
+| `do` | Execute a block in the current environment |
 | `attempt` | Execute a block and return any thrown error as a value |
 | `append` | Return a new list with a value appended |
 | `push` | Return a new list with a value prepended |

@@ -1,11 +1,11 @@
 import "/pima/library/standard"
 
 // These blocks are inert values. Neither one resolves its names yet.
-set compact_report {
+set compact_report @(:name :score) {
     Console.println name ":" score
 }
 
-set detailed_report {
+set detailed_report @(:name :score :passing) {
     Console.println "Student:" name
     Console.println "Score:" score
     Console.println "Passing:" passing
@@ -16,11 +16,11 @@ function choose_report (:detailed) {
     if detailed detailed_report compact_report
 }
 
-// The receiving function supplies the environment used by eval.
+// The receiving function supplies the environment used by do.
 // The report block resolves name, score, and passing from this call.
 function render_report (:report :name :score) {
     set passing [Maths.greater_or_equal score 70]
-    eval report
+    do report
 }
 
 set selected [choose_report true]
@@ -34,7 +34,7 @@ set reports (compact_report detailed_report)
 function for_each_report (:remaining :action) {
     if [Logic.not [List.empty? remaining]] {
         set report [List.head remaining]
-        eval action
+        do action
         for_each_report [List.rest remaining] action
     } {
     }
@@ -42,20 +42,20 @@ function for_each_report (:remaining :action) {
 
 // report is supplied by for_each_report; render_report comes from its
 // enclosing module scope.
-set render_action {
+set render_action @(:report) {
     Console.println "--- next report ---"
     render_report report "Linus" 88
 }
 
 for_each_report reports render_action
 
-// Declarations made by eval belong to the caller's current environment.
-set initialize_message {
+// Declarations made by do belong to the caller's current environment.
+set initialize_message @(:greeting :recipient) {
     set message [String.concat greeting ", " recipient "!"]
 }
 
 function build_message (:initializer :greeting :recipient) {
-    eval initializer
+    do initializer
     message
 }
 

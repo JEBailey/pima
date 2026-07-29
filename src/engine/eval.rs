@@ -89,7 +89,7 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         NodeKind::Import { path, alias } => evaluate_import(context, &path, alias.as_deref()),
         NodeKind::StaticImport { namespace } => evaluate_static_import(context, &namespace),
         NodeKind::New(operand) => super::instantiate::evaluate(context, operand),
-        NodeKind::Eval(operand) => evaluate_eval(context, operand),
+        NodeKind::Do(operand) => evaluate_do(context, operand),
         NodeKind::Attempt(block_id) => evaluate_attempt(context, block_id),
         NodeKind::Match { value, arms } => evaluate_match(context, value, &arms),
     };
@@ -115,10 +115,21 @@ pub fn evaluate_block(
     block_id: crate::syntax::ast::BlockId,
 ) -> EvalResult {
     let module_index = context.interpreter.current_module;
-    let statements = context.interpreter.parsed_modules[module_index]
-        .block(block_id)
-        .statements
-        .clone();
+    let (requirements, statements) = {
+        let block = context.interpreter.parsed_modules[module_index].block(block_id);
+        (block.requirements.clone(), block.statements.clone())
+    };
+    for requirement in requirements {
+        if !binding_is_visible(context, &requirement) {
+            return Err(Signal::Throw(typed_err(
+                context,
+                &["error", "name_error", "missing_context"],
+                format!(
+                    "cannot execute block: required context binding `{requirement}` is unavailable"
+                ),
+            )));
+        }
+    }
     evaluate_statement_list(context, &statements)
 }
 
@@ -465,13 +476,18 @@ fn evaluate_conditional(
     context: &mut CallContext,
     condition_id: crate::syntax::ast::NodeId,
     consequent_id: crate::syntax::ast::NodeId,
-    alternative_id: crate::syntax::ast::NodeId,
+    alternative_id: Option<crate::syntax::ast::NodeId>,
 ) -> EvalResult {
     let condition = evaluate_node(context, condition_id)?;
 
     let branch_id = match condition {
         Value::Boolean(true) => consequent_id,
-        Value::Boolean(false) => alternative_id,
+        Value::Boolean(false) => {
+            let Some(alternative) = alternative_id else {
+                return Ok(Value::Unit);
+            };
+            alternative
+        }
         _ => {
             return Err(Signal::Throw(typed_err(
                 context,
@@ -654,33 +670,42 @@ fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeI
     Err(Signal::Throw(value))
 }
 
-// ── eval ──
+// ── do ──
 
-fn evaluate_eval(context: &mut CallContext, operand_id: crate::syntax::ast::NodeId) -> EvalResult {
+fn evaluate_do(context: &mut CallContext, operand_id: crate::syntax::ast::NodeId) -> EvalResult {
     let value = evaluate_node(context, operand_id)?;
 
     let Value::Block(block_ref_id) = value else {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
-            "eval requires a block value".to_string(),
+            "do requires a block value".to_string(),
         )));
     };
 
-    // Evaluate the block in the current environment (no child scope)
-    let (module_index, statements) = {
+    let (module_index, block_id) = {
         let stored = &context.interpreter.stored_blocks[block_ref_id.0 as usize];
-        let module = &context.interpreter.parsed_modules[stored.module_index];
-        (
-            stored.module_index,
-            module.block(stored.block_id).statements.clone(),
-        )
+        (stored.module_index, stored.block_id)
     };
+
     let previous_module = context.interpreter.current_module;
     context.interpreter.current_module = module_index;
-    let result = evaluate_statement_list(context, &statements);
+    let result = evaluate_block(context, block_id);
     context.interpreter.current_module = previous_module;
     result
+}
+
+fn binding_is_visible(context: &mut CallContext, name: &str) -> bool {
+    let symbol = context.interpreter.symbols.intern(name);
+    let mut environment = Some(context.interpreter.current_environment);
+    while let Some(environment_id) = environment {
+        let current = &context.interpreter.environments[environment_id.0 as usize];
+        if current.bindings.contains_key(&symbol) {
+            return true;
+        }
+        environment = current.parent;
+    }
+    false
 }
 
 // ── attempt ──

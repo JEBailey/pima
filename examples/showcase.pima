@@ -68,13 +68,13 @@ set account [create_account "Ada" total]
 account.deposit 25
 account.deposit 10
 
-// Blocks do not capture scope; eval supplies prefix and account at the call site.
-set announce {
+// Blocks do not capture scope; do supplies prefix and account at the call site.
+set announce @(:prefix :account) {
     Console.println prefix [account.summary]
 }
 
 function announce_account (:prefix :account) {
-    eval announce
+    do announce
 }
 
 announce_account "Account" account

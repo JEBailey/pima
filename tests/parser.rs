@@ -10,7 +10,7 @@ use pima::{
 #[test]
 fn parses_destructuring_binding_and_match_patterns() {
     let module = parse_source(
-        "set (:x (:y _)) (1 (2 3))\n\
+        "set (x (y _)) (1 (2 3))\n\
          match (:ok 42) (\n\
              (ok :value) { value }\n\
              (_ _) { 0 }\n\
@@ -32,6 +32,26 @@ fn parses_destructuring_binding_and_match_patterns() {
             if matches!(elements[0], Pattern::Literal(_))
                 && matches!(elements[1], Pattern::Capture(_))
     ));
+}
+
+#[test]
+fn binding_patterns_treat_bare_and_symbol_names_as_captures() {
+    let module = parse_source(
+        "set (left :right) (1 2)\n\
+         let (left :right) (3 4)\n",
+    );
+    for &statement in &module.statements {
+        let pattern = match &module.node(statement).kind {
+            NodeKind::Binding { pattern, .. } | NodeKind::Assignment { pattern, .. } => pattern,
+            _ => panic!("expected binding operation"),
+        };
+        assert!(matches!(
+            pattern,
+            Pattern::List(elements)
+                if matches!(elements[0], Pattern::Capture(_))
+                    && matches!(elements[1], Pattern::Capture(_))
+        ));
+    }
 }
 
 fn parse_source(source: &str) -> pima::syntax::ast::Module {
@@ -215,25 +235,62 @@ fn rejects_duplicate_function_parameters() {
 }
 
 #[test]
-fn parses_eval_as_a_caller_scoped_special_form() {
+fn parses_do_as_a_caller_scoped_special_form() {
     let module = parse_source(
         r#"set code {
     println "hello"
 }
-eval code
-[eval code]
+do code
+[do code]
 "#,
     );
 
     assert_eq!(module.statements.len(), 3);
     assert!(matches!(
         module.node(module.statements[1]).kind,
-        NodeKind::Eval(_)
+        NodeKind::Do(_)
     ));
     assert!(matches!(
         module.node(module.statements[2]).kind,
-        NodeKind::Eval(_)
+        NodeKind::Do(_)
     ));
+}
+
+#[test]
+fn parses_annotated_block_context_requirements() {
+    let module = parse_source(
+        "set report @(:name :score) {\n\
+             Console.println name score\n\
+         }\n",
+    );
+    let NodeKind::Binding { value, .. } = module.node(module.statements[0]).kind else {
+        panic!("expected block binding");
+    };
+    let NodeKind::Block(block_id) = module.node(value).kind else {
+        panic!("expected annotated block");
+    };
+    let requirements = &module.block(block_id).requirements;
+    assert_eq!(
+        requirements
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<&str>>(),
+        ["name", "score"]
+    );
+}
+
+#[test]
+fn rejects_duplicate_annotated_block_requirements() {
+    let mut sources = SourceMap::default();
+    let text = "set report @(:name :name) {}\n";
+    let source_id = sources.add("<test>", text);
+    let tokens = lex(source_id, text).expect("source should lex");
+    let diagnostics = parse(&tokens).expect_err("source should not parse");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("duplicate context requirement")
+    );
 }
 
 #[test]

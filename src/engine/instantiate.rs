@@ -3,8 +3,7 @@ use std::collections::HashSet;
 use crate::runtime::{BindingMutability, BindingVisibility, Environment, Namespace, Value};
 
 use super::eval::{
-    CallContext, EvalResult, Signal, evaluate_node, evaluate_statement_list, typed_err,
-    value_type_name,
+    CallContext, EvalResult, Signal, evaluate_block, evaluate_node, typed_err, value_type_name,
 };
 
 pub(super) fn member(
@@ -58,13 +57,9 @@ pub(super) fn evaluate(
             "new requires a block value".to_owned(),
         )));
     };
-    let (module_index, statements) = {
+    let (module_index, block_id) = {
         let stored = &context.interpreter.stored_blocks[block_reference.0 as usize];
-        let module = &context.interpreter.parsed_modules[stored.module_index];
-        (
-            stored.module_index,
-            module.block(stored.block_id).statements.clone(),
-        )
+        (stored.module_index, stored.block_id)
     };
 
     let environment_id =
@@ -76,7 +71,7 @@ pub(super) fn evaluate(
     let previous_module = context.interpreter.current_module;
     context.interpreter.current_environment = environment_id;
     context.interpreter.current_module = module_index;
-    let result = evaluate_statement_list(context, &statements);
+    let result = evaluate_block(context, block_id);
     context.interpreter.current_environment = previous_environment;
     context.interpreter.current_module = previous_module;
     result?;

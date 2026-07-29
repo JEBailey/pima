@@ -29,6 +29,7 @@ impl Module {
 #[derive(Clone, Debug)]
 pub struct Block {
     pub span: Span,
+    pub requirements: Vec<Arc<str>>,
     pub statements: Vec<NodeId>,
 }
 
@@ -92,7 +93,7 @@ pub enum NodeKind {
     Conditional {
         condition: NodeId,
         consequent: NodeId,
-        alternative: NodeId,
+        alternative: Option<NodeId>,
     },
     Loop {
         kind: LoopKind,
@@ -111,7 +112,7 @@ pub enum NodeKind {
         namespace: Arc<str>,
     },
     New(NodeId),
-    Eval(NodeId),
+    Do(NodeId),
     Attempt(BlockId),
     Match {
         value: NodeId,

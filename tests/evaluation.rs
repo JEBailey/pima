@@ -76,7 +76,7 @@ fn standard_library_exposes_core_functions_through_namespaces() {
 #[test]
 fn bindings_destructure_lists_recursively() {
     assert_eq!(
-        run_ok("set (:x (:y _)) (3 (4 5))\n(x y)"),
+        run_ok("set (x (y _)) (3 (4 5))\n(x y)"),
         pima::Value::List(
             [pima::Value::Integer(3), pima::Value::Integer(4)]
                 .into_iter()
@@ -90,7 +90,7 @@ fn let_destructuring_updates_mutable_bindings_atomically() {
     assert_eq!(
         run_ok(
             "var x 1\nvar y 2\n\
-             let (:x :y) (3 4)\n\
+             let (x y) (3 4)\n\
              (x y)"
         ),
         pima::Value::List(
@@ -103,7 +103,7 @@ fn let_destructuring_updates_mutable_bindings_atomically() {
     let value = run_ok(
         "import \"/pima/library/standard\"\n\
          var x 1\nset y 2\n\
-         set failure [attempt { let (:x :y) (3 4) }]\n\
+         set failure [attempt { let (x y) (3 4) }]\n\
          (x [Types.is? failure :mutation_error])",
     );
     assert_eq!(
@@ -155,7 +155,7 @@ fn ordinary_pattern_literals_match_themselves() {
 fn failed_pattern_throws_match_error() {
     let value = run_ok(
         "import \"/pima/library/standard\"\n\
-         set failure [attempt { set (:x :y) (1) }]\n\
+         set failure [attempt { set (x y) (1) }]\n\
          [Types.is? failure :match_error]",
     );
     assert_eq!(value, pima::Value::Boolean(true));
@@ -460,9 +460,73 @@ fn if_false_branch() {
 }
 
 #[test]
+fn if_without_alternative_returns_consequent_or_unit() {
+    assert_eq!(run_ok("if true 42"), pima::Value::Integer(42));
+    assert_eq!(run_ok("if false 42"), pima::Value::Unit);
+    assert_eq!(run_ok("[if true 42]"), pima::Value::Integer(42));
+    assert_eq!(run_ok("[if false 42]"), pima::Value::Unit);
+}
+
+#[test]
+fn if_without_alternative_accepts_a_block_consequent() {
+    assert_eq!(run_ok("if true { + 20 22 }"), pima::Value::Integer(42));
+    assert_eq!(run_ok("if false { missing }"), pima::Value::Unit);
+}
+
+#[test]
 fn if_with_blocks() {
     let value = run_ok("if true { 10 }{ 20 }");
     assert_eq!(value, pima::Value::Integer(10));
+}
+
+#[test]
+fn single_expression_and_block_if_branches_are_equivalent() {
+    assert_eq!(
+        run_ok("if true [+ 20 22] 0"),
+        run_ok("if true { + 20 22 } { 0 }")
+    );
+}
+
+#[test]
+fn immediate_and_block_branches_propagate_return_equally() {
+    assert_eq!(
+        run_ok(
+            "function direct () {\n\
+                 if true [return \"this\"] \"other\"\n\
+             }\n\
+             [direct]\n"
+        ),
+        run_ok(
+            "function blocked () {\n\
+                 if true {\n\
+                     return \"this\"\n\
+                 } {\n\
+                     \"other\"\n\
+                 }\n\
+             }\n\
+             [blocked]\n"
+        )
+    );
+}
+
+#[test]
+fn selected_annotated_if_branch_enforces_its_context() {
+    let outcome = run("var changed false\n\
+         if true @(:missing) { let changed true } { 0 }\n");
+    assert!(!outcome.is_success());
+    assert!(
+        outcome.diagnostics[0]
+            .message
+            .contains("required context binding `missing` is unavailable")
+    );
+}
+
+#[test]
+fn unselected_annotated_if_branch_is_not_validated() {
+    assert_eq!(
+        run_ok("if false @(:missing) { 1 } { 2 }"),
+        pima::Value::Integer(2)
+    );
 }
 
 #[test]
@@ -597,18 +661,53 @@ fn empty_loop_returns_unit() {
     assert_eq!(value, pima::Value::Unit);
 }
 
-// ── eval ──
+// ── do ──
 
 #[test]
-fn eval_executes_block_in_current_scope() {
-    let value = run_ok("set code { x }\nset x 42\neval code");
+fn do_executes_block_in_current_scope() {
+    let value = run_ok("set code { x }\nset x 42\ndo code");
     assert_eq!(value, pima::Value::Integer(42));
 }
 
 #[test]
-fn eval_can_create_bindings_in_caller_scope() {
-    let value = run_ok("set code { set y 99 }\neval code\ny");
+fn do_can_create_bindings_in_caller_scope() {
+    let value = run_ok("set code { set y 99 }\ndo code\ny");
     assert_eq!(value, pima::Value::Integer(99));
+}
+
+#[test]
+fn annotated_blocks_require_visible_context_bindings() {
+    let value = run_ok(
+        "set report @(:name :score) { score }\n\
+         function render (:report :name :score) { do report }\n\
+         render report \"Ada\" 96\n",
+    );
+    assert_eq!(value, pima::Value::Integer(96));
+}
+
+#[test]
+fn annotated_blocks_fail_before_execution_when_context_is_missing() {
+    let outcome = run("var changed false\n\
+         set report @(:name :score) { let changed true }\n\
+         function render (:report :name) { do report }\n\
+         render report \"Ada\"\n");
+    assert!(!outcome.is_success());
+    assert!(
+        outcome.diagnostics[0]
+            .message
+            .contains("required context binding `score` is unavailable")
+    );
+}
+
+#[test]
+fn annotated_block_requirements_use_the_lexical_lookup_chain() {
+    let value = run_ok(
+        "set prefix \"Result: \"\n\
+         set report @(:prefix :name) { name }\n\
+         function render (:report :name) { do report }\n\
+         render report \"Ada\"\n",
+    );
+    assert_eq!(value, pima::Value::String("Ada".into()));
 }
 
 // ── attempt ──
@@ -626,6 +725,24 @@ fn attempt_catches_error() {
 fn new_creates_namespace() {
     let value = run_ok("set Template {\n  pub set x 10\n}\nset obj [new Template]\nobj");
     assert!(matches!(value, pima::Value::Namespace(_)));
+}
+
+#[test]
+fn new_enforces_annotated_block_context_requirements() {
+    let value = run_ok(
+        "set seed 42\n\
+         set object [new @(:seed) { pub set value seed }]\n\
+         object.value\n",
+    );
+    assert_eq!(value, pima::Value::Integer(42));
+
+    let outcome = run("new @(:missing) { pub set value 1 }\n");
+    assert!(!outcome.is_success());
+    assert!(
+        outcome.diagnostics[0]
+            .message
+            .contains("required context binding `missing` is unavailable")
+    );
 }
 
 #[test]
@@ -919,11 +1036,11 @@ fn pub_set_in_namespace() {
     assert_eq!(value, pima::Value::Integer(42));
 }
 
-// ── Non-local control flow through eval ──
+// ── Non-local control flow through do ──
 
 #[test]
-fn eval_can_return_from_enclosing_function() {
-    let value = run_ok("function f () {\n  eval { return 99 }\n  1\n}\n[f]");
+fn do_can_return_from_enclosing_function() {
+    let value = run_ok("function f () {\n  do { return 99 }\n  1\n}\n[f]");
     assert_eq!(value, pima::Value::Integer(99));
 }
 
@@ -961,12 +1078,12 @@ fn integer_division_overflow_is_a_pima_error() {
 }
 
 #[test]
-fn eval_uses_the_block_origin_module() {
+fn do_uses_the_block_origin_module() {
     let mut interpreter = Interpreter::default();
     let declaration = interpreter.run_source("<first>", "set code { 42 }\n");
     assert!(declaration.is_success(), "{:?}", declaration.diagnostics);
 
-    let outcome = interpreter.run_source("<second>", "eval code\n");
+    let outcome = interpreter.run_source("<second>", "do code\n");
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
 }

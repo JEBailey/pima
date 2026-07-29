@@ -164,7 +164,7 @@ tokens include:
 - identifiers and operator identifiers;
 - symbol literals such as `:name`;
 - integer, float, and string literals;
-- `.`, `_`, brackets, braces, and parentheses; and
+- `.`, `@`, `_`, brackets, braces, and parentheses; and
 - reserved words.
 
 Tokens retain spans. The lexer must not resolve bindings or determine function
@@ -183,12 +183,12 @@ resolved. The AST distinguishes:
 - ordinary line calls;
 - immediate bracket calls;
 - list and symbol literals;
-- code blocks;
+- plain and context-annotated code blocks;
 - declarations and assignment;
 - function declarations;
 - member access;
 - control forms;
-- imports, `new`, `eval`, and `attempt`; and
+- imports, `new`, `do`, and `attempt`; and
 - `throw` and other control transfer.
 
 Every node has a span. Code blocks contain AST statements but no captured
@@ -264,7 +264,11 @@ changes to a `pub var` without being able to assign it.
 
 A user function stores its parameter symbols, body AST handle, defining
 environment, declaration span, and display name. This is where closures capture
-lexical scope. A block stores no environment.
+lexical scope. A block stores no environment. It may carry a validated list of
+required context symbols declared by `@`. The common block-execution path
+checks those symbols against the supplied environment's lexical lookup chain
+before executing any statement, regardless of whether execution was initiated
+by `do`, a control form, `attempt`, or `new`.
 
 ### `namespace`
 
@@ -313,7 +317,10 @@ attempting to cross their boundary.
 ### `eval`
 
 Dispatches AST nodes and evaluates declarations, blocks, control forms, and
-ordinary expressions. Evaluation order is explicit and left-to-right.
+ordinary expressions. Evaluation order is explicit and left-to-right. All
+block-aware forms share one execution operation that validates context
+requirements, evaluates statements in order, returns the final value, and
+propagates non-local control flow.
 
 ### `call`
 
@@ -366,7 +373,7 @@ acceptable baseline performance are native:
 Ranges, traversal helpers, exponentiation, and similar utilities remain Pima
 standard-library code.
 
-Special forms such as `if`, `function`, `let`, `eval`, and `attempt` are engine
+Special forms such as `if`, `function`, `let`, `@`, `do`, and `attempt` are engine
 AST operations, not fake native functions, because they control evaluation or
 scope.
 

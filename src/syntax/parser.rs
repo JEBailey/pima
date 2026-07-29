@@ -109,8 +109,9 @@ impl Parser<'_> {
             Some(TokenKind::Keyword(Keyword::Throw)) => self.parse_throw(),
             Some(TokenKind::Keyword(Keyword::Import)) => self.parse_import(),
             Some(TokenKind::Keyword(Keyword::New)) => self.parse_unary_special(UnaryForm::New),
-            Some(TokenKind::Keyword(Keyword::Eval)) => self.parse_unary_special(UnaryForm::Eval),
+            Some(TokenKind::Keyword(Keyword::Do)) => self.parse_unary_special(UnaryForm::Do),
             Some(TokenKind::Keyword(Keyword::Attempt)) => self.parse_attempt(),
+            Some(TokenKind::At) => self.parse_annotated_block(),
             _ => self.parse_postfix(),
         }
     }
@@ -261,8 +262,59 @@ impl Parser<'_> {
         let end = self.advance().span;
         let span = self.join(start, end);
         let id = BlockId(self.blocks.len() as u32);
-        self.blocks.push(Block { span, statements });
+        self.blocks.push(Block {
+            span,
+            requirements: Vec::new(),
+            statements,
+        });
         Ok((id, span))
+    }
+
+    fn parse_annotated_block(&mut self) -> ParseResult<NodeId> {
+        let start = self.advance().span;
+        self.expect_simple(
+            |kind| matches!(kind, TokenKind::LeftParen),
+            "expected `(` after `@`",
+        )?;
+
+        let mut requirements = Vec::new();
+        let mut names = HashSet::new();
+        self.skip_eols();
+        while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
+            if self.at_eof() {
+                self.report_eof("unterminated context requirement list; expected `)`");
+                return Err(());
+            }
+            let token = self.peek().cloned().ok_or_else(|| {
+                self.report_eof("unterminated context requirement list; expected `)`");
+            })?;
+            let TokenKind::Symbol(requirement) = token.kind else {
+                self.report_here("context requirements must be symbols such as `:name`");
+                return Err(());
+            };
+            self.advance();
+            if is_reserved(&requirement) {
+                self.diagnostics.push(Diagnostic::at_error(
+                    "reserved words cannot be context requirements",
+                    token.span,
+                ));
+                return Err(());
+            }
+            if !names.insert(requirement.clone()) {
+                self.diagnostics.push(Diagnostic::at_error(
+                    format!("duplicate context requirement `:{requirement}`"),
+                    token.span,
+                ));
+                return Err(());
+            }
+            requirements.push(requirement);
+            self.skip_eols();
+        }
+        self.advance();
+
+        let (block, block_span) = self.parse_block()?;
+        self.blocks[block.0 as usize].requirements = requirements;
+        Ok(self.alloc(self.join(start, block_span), NodeKind::Block(block)))
     }
 
     fn parse_public_declaration(&mut self) -> ParseResult<NodeId> {
@@ -333,11 +385,40 @@ impl Parser<'_> {
     }
 
     fn parse_binding_pattern(&mut self) -> ParseResult<Pattern> {
-        if let Some(TokenKind::Identifier(name)) = self.peek_kind().cloned() {
-            self.advance();
-            return Ok(Pattern::Capture(name));
+        let token = self.peek().cloned().ok_or_else(|| {
+            self.report_eof("expected binding target");
+        })?;
+        match token.kind {
+            TokenKind::Identifier(name) | TokenKind::Symbol(name) => {
+                self.advance();
+                Ok(Pattern::Capture(name))
+            }
+            TokenKind::Underscore => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            }
+            TokenKind::LeftParen => {
+                self.advance();
+                let mut elements = Vec::new();
+                self.skip_eols();
+                while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
+                    if self.at_eof() {
+                        self.report_eof("unterminated binding pattern; expected `)`");
+                        return Err(());
+                    }
+                    elements.push(self.parse_binding_pattern()?);
+                    self.skip_eols();
+                }
+                self.advance();
+                Ok(Pattern::List(elements))
+            }
+            _ => {
+                self.report_here(
+                    "expected a binding name, `:name`, `_`, or nested binding pattern",
+                );
+                Err(())
+            }
         }
-        self.parse_pattern()
     }
 
     fn parse_pattern(&mut self) -> ParseResult<Pattern> {
@@ -483,9 +564,16 @@ impl Parser<'_> {
         let start = self.advance().span;
         let condition = self.require_expression("expected condition after `if`")?;
         let consequent = self.require_expression("expected consequent branch")?;
-        let alternative = self.require_expression("expected alternative branch")?;
+        let alternative = if self.at_statement_end() {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+        let end = alternative
+            .map(|id| self.node(id).span)
+            .unwrap_or_else(|| self.node(consequent).span);
         Ok(self.alloc(
-            self.join(start, self.node(alternative).span),
+            self.join(start, end),
             NodeKind::Conditional {
                 condition,
                 consequent,
@@ -590,7 +678,7 @@ impl Parser<'_> {
         let operand = self.require_expression("expected operand")?;
         let kind = match form {
             UnaryForm::New => NodeKind::New(operand),
-            UnaryForm::Eval => NodeKind::Eval(operand),
+            UnaryForm::Do => NodeKind::Do(operand),
         };
         Ok(self.alloc(self.join(start, self.node(operand).span), kind))
     }
@@ -654,7 +742,7 @@ impl Parser<'_> {
                 | NodeKind::Import { .. }
                 | NodeKind::StaticImport { .. }
                 | NodeKind::New(_)
-                | NodeKind::Eval(_)
+                | NodeKind::Do(_)
                 | NodeKind::Attempt(_)
                 | NodeKind::Match { .. }
         )
@@ -725,7 +813,13 @@ impl Parser<'_> {
     }
 
     fn at_statement_end(&self) -> bool {
-        self.at_eof() || self.at(|kind| matches!(kind, TokenKind::Eol | TokenKind::RightBrace))
+        self.at_eof()
+            || self.at(|kind| {
+                matches!(
+                    kind,
+                    TokenKind::Eol | TokenKind::RightBrace | TokenKind::RightBracket
+                )
+            })
     }
 
     fn skip_eols(&mut self) {
@@ -766,7 +860,7 @@ impl Parser<'_> {
 #[derive(Clone, Copy)]
 enum UnaryForm {
     New,
-    Eval,
+    Do,
 }
 
 fn is_reserved(name: &str) -> bool {
@@ -775,7 +869,7 @@ fn is_reserved(name: &str) -> bool {
         "as" | "attempt"
             | "break"
             | "continue"
-            | "eval"
+            | "do"
             | "function"
             | "if"
             | "import"

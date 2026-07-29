@@ -14,5 +14,5 @@ function describe (:result) {
     )
 }
 
-set (:name :score) ("Ada" 42)
+set (name score) ("Ada" 42)
 describe (:ok (name score))
