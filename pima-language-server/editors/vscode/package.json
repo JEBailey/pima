@@ -1,0 +1,54 @@
+{
+  "name": "pima",
+  "displayName": "Pima",
+  "description": "Language support for Pima",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:pima"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "pima",
+        "aliases": [
+          "Pima",
+          "pima"
+        ],
+        "extensions": [
+          ".pima"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "Pima",
+      "properties": {
+        "pima.languageServer.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Pima language-server executable. When empty, the extension uses the workspace build."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc --watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.7.0"
+  }
+}

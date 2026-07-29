@@ -799,6 +799,7 @@ namespaces:
 | `Types.of`, `Types.is?` | Inspect and test value types |
 | `String.from`, `String.concat` | Display conversion and concatenation |
 | `String.length`, `String.slice`, `String.chars` | Unicode-aware string operations |
+| `String.code_point`, `String.from_code_point` | Convert between one-scalar strings and integer code points |
 | `Console.println` | Print all operands followed by a line ending |
 | `do` | Execute a block in the current environment |
 | `attempt` | Execute a block and return any thrown error as a value |
@@ -870,6 +871,11 @@ Core string operations are:
   `begin <= end <= length`.
 - `chars string` returns an immutable list in which each element is a
   one-scalar string.
+- `code_point string` requires exactly one Unicode scalar value and returns its
+  integer code point.
+- `from_code_point integer` returns the one-scalar string for a valid Unicode
+  scalar value. Negative integers, values above `0x10FFFF`, and the surrogate
+  range `0xD800..0xDFFF` produce `:value_error`.
 - `string value` explicitly converts a value to the same human-readable form
   used by `println`.
 
@@ -1216,6 +1222,7 @@ fibonacci.pima
 foreach.pima
 function_test.pima
 import_test.pima
+json_parser.pima
 lib.pima
 list.pima
 namespace_test.pima

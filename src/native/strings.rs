@@ -26,6 +26,16 @@ pub fn register(registry: &mut NativeRegistry) {
         call: native_chars,
     });
     registry.register(NativeDefinition {
+        name: "code_point",
+        arity: super::Arity::Exact(1),
+        call: native_code_point,
+    });
+    registry.register(NativeDefinition {
+        name: "from_code_point",
+        arity: super::Arity::Exact(1),
+        call: native_from_code_point,
+    });
+    registry.register(NativeDefinition {
         name: "string",
         arity: super::Arity::Exact(1),
         call: native_string,
@@ -112,6 +122,51 @@ fn native_chars(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
         .map(|c| Value::String(Arc::from(c.to_string())))
         .collect();
     Ok(Value::List(list))
+}
+
+fn native_code_point(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let [Value::String(string)] = args else {
+        return Err(ctx.typed_error(
+            &["error", "type_error"],
+            "code_point requires a string".to_owned(),
+        ));
+    };
+    let mut characters = string.chars();
+    let Some(character) = characters.next() else {
+        return Err(ctx.typed_error(
+            &["error", "value_error"],
+            "code_point requires exactly one Unicode scalar value".to_owned(),
+        ));
+    };
+    if characters.next().is_some() {
+        return Err(ctx.typed_error(
+            &["error", "value_error"],
+            "code_point requires exactly one Unicode scalar value".to_owned(),
+        ));
+    }
+    Ok(Value::Integer(i64::from(u32::from(character))))
+}
+
+fn native_from_code_point(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let [Value::Integer(code_point)] = args else {
+        return Err(ctx.typed_error(
+            &["error", "type_error"],
+            "from_code_point requires an integer".to_owned(),
+        ));
+    };
+    let Ok(code_point) = u32::try_from(*code_point) else {
+        return Err(ctx.typed_error(
+            &["error", "value_error"],
+            "from_code_point requires a valid Unicode scalar value".to_owned(),
+        ));
+    };
+    let Some(character) = char::from_u32(code_point) else {
+        return Err(ctx.typed_error(
+            &["error", "value_error"],
+            "from_code_point requires a valid Unicode scalar value".to_owned(),
+        ));
+    };
+    Ok(Value::String(Arc::from(character.to_string())))
 }
 
 fn native_string(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {

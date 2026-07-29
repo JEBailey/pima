@@ -3,6 +3,10 @@ name = "pima"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["pima-language-server"]
+resolver = "2"
+
 [dependencies]
 ariadne = "0.6"
 camino = "1.2"

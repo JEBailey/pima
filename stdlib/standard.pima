@@ -159,6 +159,8 @@ pub set String [new {
     pub set length String.length
     pub set slice String.slice
     pub set chars String.chars
+    pub set code_point String.code_point
+    pub set from_code_point String.from_code_point
     pub set from String.string
     pub set string String.string
     pub set lower String.lower

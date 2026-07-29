@@ -804,6 +804,62 @@ fn string_chars() {
 }
 
 #[test]
+fn string_code_point_conversions_use_unicode_scalars() {
+    let value = run_ok(
+        "import \"/pima/library/standard\"\n\
+         (\
+             [String.code_point \"A\"]\
+             [String.code_point \"😀\"]\
+             [String.from_code_point 65]\
+             [String.from_code_point 128512]\
+         )\n",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Integer(65),
+                pima::Value::Integer(128512),
+                pima::Value::String("A".into()),
+                pima::Value::String("😀".into()),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn string_code_point_conversions_reject_invalid_values() {
+    let value = run_ok(
+        "import \"/pima/library/standard\"\n\
+         set empty [attempt { String.code_point \"\" }]\n\
+         set multiple [attempt { String.code_point \"ab\" }]\n\
+         set surrogate [attempt { String.from_code_point 55296 }]\n\
+         set too_large [attempt { String.from_code_point 1114112 }]\n\
+         (\
+             [Types.is? empty :value_error]\
+             [Types.is? multiple :value_error]\
+             [Types.is? surrogate :value_error]\
+             [Types.is? too_large :value_error]\
+         )\n",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
 fn string_value_conversion() {
     let value = run_ok(r#"[string 42]"#);
     assert_eq!(value, pima::Value::String(std::sync::Arc::from("42")));

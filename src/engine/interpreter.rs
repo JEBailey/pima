@@ -259,10 +259,9 @@ fn register_natives(interpreter: &mut Interpreter) {
         let namespace = match name {
             "+" | "-" | "*" | "/" | "<" | ">" | "=" => None,
             "div" | "mod" | "int" => Some("Maths"),
-            "concat" | "length" | "slice" | "chars" | "string" | "lower" | "upper" | "trim"
-            | "contains?" | "starts_with?" | "ends_with?" | "replace" | "split" | "join" => {
-                Some("String")
-            }
+            "concat" | "length" | "slice" | "chars" | "code_point" | "from_code_point"
+            | "string" | "lower" | "upper" | "trim" | "contains?" | "starts_with?"
+            | "ends_with?" | "replace" | "split" | "join" => Some("String"),
             "push" | "append" | "head" | "rest" | "empty?" => Some("List"),
             "types" | "is?" => Some("Types"),
             "println" => Some("Console"),
