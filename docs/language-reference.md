@@ -3,7 +3,7 @@
 Status: draft normative specification, derived from the programs in `examples/`.
 
 This document defines the Pima implementation target. Java interoperability is
-not part of the language. In particular, `examples/java_support.po` is excluded
+not part of the language. In particular, `examples/java_support.pima` is excluded
 from conformance.
 
 ## 1. Language model
@@ -13,7 +13,7 @@ notation, functions are first-class values, and code blocks are first-class,
 uninstantiated chunks of code that may be stored and passed around.
 
 An implementation conforms to this specification when it can parse and execute
-all example programs other than `java_support.po`, subject to the standard
+all example programs other than `java_support.pima`, subject to the standard
 library requirements in section 10.
 
 ## 2. Source text
@@ -93,8 +93,8 @@ resolving that name as a binding.
 The reserved words are:
 
 ```text
-as  attempt  break  continue  eval  function  if  import  let  new  pub  return
-set  throw  until  var  while
+as  attempt  break  continue  eval  function  if  import  let  match  new  pub
+return  set  throw  until  var  while
 ```
 
 ## 3. Grammar
@@ -121,6 +121,7 @@ expression       = literal
                  | bracket-expression
                  | declaration
                  | assignment
+                 | match-expression
                  | conditional
                  | loop
                  | control-transfer
@@ -146,8 +147,12 @@ declaration      = [ visibility, separator+ ], ( binding
                  | function-declaration ) ;
 visibility       = "pub" ;
 binding          = ( "set" | "var" ), separator+,
-                   identifier, separator+, expression ;
-assignment       = "let", separator+, identifier, separator+, expression ;
+                   binding-pattern, separator+, expression ;
+assignment       = "let", separator+, binding-pattern, separator+, expression ;
+binding-pattern  = identifier | pattern ;
+pattern          = identifier | symbol | literal | "_" | list-pattern ;
+list-pattern     = "(", separator*, [ pattern-list ], separator*, ")" ;
+pattern-list     = pattern, { separator+, pattern } ;
 function-declaration
                  = "function", separator+, identifier, separator*,
                    parameter-list, separator*, block ;
@@ -170,6 +175,10 @@ break-expression = "break", [ separator+, expression ] ;
 throw-expression = "throw", separator+, expression ;
 attempt-expression
                  = "attempt", separator+, block ;
+match-expression = "match", separator+, expression, separator*,
+                   "(", separator*, match-arm,
+                   { separator*, match-arm }, separator*, ")" ;
+match-arm        = pattern, separator*, block ;
 import-expression
                  = "import", separator+, ( string | import-path ),
                    [ separator+, "as", separator+, identifier ] ;
@@ -365,8 +374,10 @@ The standard native error classifications are:
 (:error :syntax_error)
 (:error :name_error)
 (:error :type_error)
+(:error :value_error)
 (:error :arity_error)
 (:error :mutation_error)
+(:error :match_error)
 (:error :visibility_error)
 (:error :import_error)
 (:error :numeric_error)
@@ -425,12 +436,54 @@ The three binding forms are defined as follows:
 current environment is an error. `let` is assignment rather than declaration:
 using it with an unbound name or an immutable binding is an error.
 
+### 6.1 Patterns and destructuring
+
+A binding target may be a pattern. Symbols capture values, `_` ignores a value,
+and list patterns destructure immutable lists recursively:
+
+```pima
+set (:x (:y _)) (3 (4 5))
+
+var left 0
+var right 0
+let (:left :right) (10 20)
+```
+
+`set` creates immutable bindings for every capture, `var` creates mutable
+bindings, and `let` updates existing mutable bindings. Destructuring is atomic:
+the complete shape and every destination are validated before any declaration
+or assignment occurs. A shape mismatch throws `:match_error`.
+
+`match` evaluates its subject once and selects the first matching arm:
+
+```pima
+match result (
+    (ok :value) {
+        Console.println value
+    }
+
+    (error :error) {
+        throw error
+    }
+
+    _ {
+        Console.println "unknown result"
+    }
+)
+```
+
+Inside patterns, `:name` captures, a bare name matches the symbol with that
+name, ordinary literals require equality, and `_` is a wildcard. Thus `ok`
+matches the symbol `:ok`, while `:value` captures the corresponding value.
+Captures are immutable and visible only within their arm. If no arm matches,
+`match` throws `:match_error`.
+
 A function declaration binds its name in the current environment before its
 body can execute. This permits direct recursion. Function parameters are
 immutable bindings; algorithms that need a changing local value must declare a
 mutable copy with `var`.
 
-### 6.1 Visibility
+### 6.2 Visibility
 
 Every declaration is private unless prefixed with `pub`:
 
@@ -583,7 +636,7 @@ set greeting {
 environment. Because a block does not capture the environment in which its
 literal was created, all of its free identifiers are resolved through the
 evaluation environment. This allows a caller to supply names referenced by the
-block, as demonstrated by `examples/function_test.po`.
+block, as demonstrated by `examples/function_test.pima`.
 
 `eval` does not create a child scope. Declarations in the evaluated block are
 created in the caller's current environment, and `let` assignments update
@@ -592,24 +645,20 @@ the block's statements had been written directly at the `eval` call site.
 
 ## 10. Core operations
 
-The implementation must provide these built-ins:
+Only arithmetic and comparison operators are implicitly available to user
+modules. Other core operations are exposed by the standard library's cohesive
+namespaces:
 
 | Operation | Meaning |
 |---|---|
 | `+ - * /` | Numeric arithmetic |
-| `div` | Truncating integer division |
-| `mod` | Euclidean integer remainder |
 | `< > =` | Numeric comparison or value equality |
-| `not` | Boolean negation |
-| `types` | Return a value's immutable list of type symbols |
-| `is?` | Test whether a value has a type symbol |
-| `int` | Convert a number to an integer |
-| `string` | Explicitly convert a value to its display string |
-| `concat` | Concatenate string operands |
-| `length` | Return a string's Unicode scalar count |
-| `slice` | Return a substring by Unicode scalar positions |
-| `chars` | Return a list of one-scalar strings |
-| `println` | Print all operands followed by a line ending |
+| `Maths.div`, `Maths.mod`, `Maths.int` | Integer division, remainder, and conversion |
+| `Logic.not` | Boolean negation |
+| `Types.of`, `Types.is?` | Inspect and test value types |
+| `String.from`, `String.concat` | Display conversion and concatenation |
+| `String.length`, `String.slice`, `String.chars` | Unicode-aware string operations |
+| `Console.println` | Print all operands followed by a line ending |
 | `eval` | Execute a block in the current environment |
 | `attempt` | Execute a block and return any thrown error as a value |
 | `append` | Return a new list with a value appended |
@@ -718,17 +767,22 @@ proportional to the list's length.
 There is no mutating `pop` operation. Traversal uses `head` and `rest`, while
 construction uses `push` or `append`.
 
-The standard library imported as `/po/library/standard` must define at least:
+The standard library imported as `/pima/library/standard` exports cohesive
+namespace values rather than individual global functions:
 
-- `^`, exponentiation;
-- `<=` and `>=`;
-- `?`, conditional selection;
-- `swap`, list reversal;
-- `incr` and `decr`;
-- `..`, an inclusive ascending or descending range;
-- `foreach`;
-- `map`; and
-- constants `E` and `PI`.
+- `Maths`: `pow`, `less_or_equal`, `greater_or_equal`, `increment`,
+  `decrement`, `range`, `absolute`, `minimum`, `maximum`, `clamp`, `sum`,
+  `product`, `average`, `div`, `mod`, `int`, `E`, and `PI`;
+- `String`: `concat`, `length`, `slice`, `chars`, `from`, `lower`, `upper`,
+  `trim`, `contains?`, `starts_with?`, `ends_with?`, `replace`, `split`, and
+  `join`;
+- `List`: `push`, `append`, `head`, `rest`, `empty?`, `reverse`, `foreach`,
+  `map`, `length`, `contains?`, `fold`, `filter`, `any?`, and `all?`;
+- `Types`: `of` and `is?`;
+- `Console`: `println`; and
+- `Logic`: `not` and `select`.
+
+Arithmetic and comparison operators remain unqualified language primitives.
 
 An implementation may provide these definitions as Pima source or equivalent
 built-ins.
@@ -850,16 +904,33 @@ functions defined by that module but cannot be named by the importer.
 Both quoted and bare paths are accepted:
 
 ```pima
-import "/po/library/standard"
-import /po/library/standard
+import "/pima/library/standard"
+import /pima/library/standard
 ```
 
 An import may be assigned a namespace alias:
 
 ```pima
-import "/po/library/standard" as standard
-standard.swap (1 2 3)
+import "/pima/library/standard" as standard
+standard.List.reverse (1 2 3)
 ```
+
+A namespace's public members may be statically imported into the current
+module:
+
+```pima
+import "/pima/library/standard"
+import Maths.*
+
+[pow 2 8]
+```
+
+`import Namespace.*` is permitted only at module scope. It resolves
+`Namespace` as an ordinary identifier, requires a namespace value, and adds
+read-only live views of all its public members. The operation is atomic: if any
+member would collide with a binding already declared in the current module,
+the import fails without introducing any members. Private members are never
+imported.
 
 With an alias, the module's public declarations are available only as members
 of that alias namespace. Without an alias, public declarations are introduced
@@ -912,25 +983,48 @@ read-only views directly into the importing module.
 
 ### 12.2 Standard I/O module
 
-Filesystem I/O is provided by the bundled `/po/io` module rather than by core
+Filesystem I/O is provided by the bundled `/pima/io` module rather than by core
 syntax:
 
 ```pima
-import "/po/io" as io
+import "/pima/io" as io
 
 set text [io.read_text "input.txt"]
 io.write_text "output.txt" text
 ```
 
-The initial module API is:
+The module provides synchronous whole-file, directory, and path operations:
 
-- `read_text path` reads an entire UTF-8 text file and returns a string.
-- `write_text path text` creates or replaces a file with the UTF-8 encoding of
-  `text`, then returns unit.
+| Operation | Result |
+|---|---|
+| `read_text path` | Entire UTF-8 file as a string |
+| `read_lines path` | Immutable list of lines without line terminators |
+| `read_bytes path` | Immutable list of integer bytes from `0` through `255` |
+| `write_text path text` | Create or replace a UTF-8 text file |
+| `append_text path text` | Create or append to a UTF-8 text file |
+| `write_bytes path bytes` | Create or replace a binary file |
+| `append_bytes path bytes` | Create or append to a binary file |
+| `exists? path` | Whether any filesystem entry exists |
+| `file? path` | Whether the path is a regular file |
+| `directory? path` | Whether the path is a directory |
+| `create_directory path` | Recursively create a directory and its parents |
+| `list_directory path` | Sorted list of immediate entry names |
+| `copy_file source destination` | Copy one regular file |
+| `move source destination` | Rename or move an entry on the same filesystem |
+| `remove_file path` | Remove a regular file |
+| `remove_directory path` | Remove an empty directory |
+| `join paths...` | Join one or more path components |
+| `parent path` | Parent path, or unit when absent |
+| `file_name path` | Final path component, or unit when absent |
+| `extension path` | Extension without `.`, or unit when absent |
+| `canonicalize path` | Absolute canonical path to an existing entry |
+| `current_directory` | Interpreter working directory |
 
-Both operands must be strings. Relative filesystem paths are resolved against
-the interpreter process's working directory. The embedding host may restrict
-which paths are accessible.
+Operations that mutate the filesystem return unit. Relative paths are resolved
+against the interpreter's configured working directory. Path composition
+functions use the host platform's separators. Directory listings are sorted
+lexically to keep scripts deterministic. Binary writes require an immutable
+list containing only integers in the inclusive range `0..255`.
 
 I/O failures throw error namespaces classified with `:io_error` and a more
 specific symbol when one is known:
@@ -940,15 +1034,22 @@ specific symbol when one is known:
 (:error :io_error :permission_denied)
 (:error :io_error :invalid_encoding)
 (:error :io_error :already_exists)
+(:error :io_error :invalid_input)
+(:error :io_error :timed_out)
+(:error :io_error :unsupported_operation)
 ```
 
 The error may expose immutable public context such as `path`. Host-specific
 error details may be included in the diagnostic message but must not replace
 the portable type symbols above. `read_text` throws `:invalid_encoding` when a
-file is not valid UTF-8. `write_text` replaces an existing regular file; failure
-during writing is not specified to be atomic in this language version.
+file is not valid UTF-8. A filename that cannot be represented as UTF-8 also
+throws `:invalid_encoding`. The existence predicates return `false` for a
+missing path but propagate other inspection failures. `write_text` and
+`write_bytes` replace an existing regular file; failure during writing is not
+specified to be atomic in this language version. `remove_directory` is
+deliberately non-recursive.
 
-The virtual path `/po/library/standard` names the implementation's standard
+The virtual path `/pima/library/standard` names the implementation's standard
 library. Resolution of other relative paths is based on the importing file's
 directory.
 
@@ -967,20 +1068,20 @@ The following are not required:
 The normative behavioral suite consists of:
 
 ```text
-birthday_paradox.po
-closure.po
-curried_example.po
-fibonacci.po
-foreach.po
-function_test.po
-import_test.po
-lib.po
-list.po
-namespace_test.po
-newton.po
-test.po
-timing.po
-while.po
+birthday_paradox.pima
+closure.pima
+curried_example.pima
+fibonacci.pima
+foreach.pima
+function_test.pima
+import_test.pima
+lib.pima
+list.pima
+namespace_test.pima
+newton.pima
+test.pima
+timing.pima
+while.pima
 ```
 
-`java_support.po` is intentionally excluded.
+`java_support.pima` is intentionally excluded.

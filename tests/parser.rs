@@ -1,11 +1,38 @@
 use pima::{
     source::SourceMap,
     syntax::{
-        ast::{BindingKind, LoopKind, NodeKind, Visibility},
+        ast::{BindingKind, LoopKind, NodeKind, Pattern, Visibility},
         lexer::lex,
         parser::parse,
     },
 };
+
+#[test]
+fn parses_destructuring_binding_and_match_patterns() {
+    let module = parse_source(
+        "set (:x (:y _)) (1 (2 3))\n\
+         match (:ok 42) (\n\
+             (ok :value) { value }\n\
+             (_ _) { 0 }\n\
+         )\n",
+    );
+
+    let NodeKind::Binding { pattern, .. } = &module.node(module.statements[0]).kind else {
+        panic!("expected binding");
+    };
+    assert!(matches!(pattern, Pattern::List(elements) if elements.len() == 2));
+
+    let NodeKind::Match { arms, .. } = &module.node(module.statements[1]).kind else {
+        panic!("expected match");
+    };
+    assert_eq!(arms.len(), 2);
+    assert!(matches!(
+        &arms[0].pattern,
+        Pattern::List(elements)
+            if matches!(elements[0], Pattern::Literal(_))
+                && matches!(elements[1], Pattern::Capture(_))
+    ));
+}
 
 fn parse_source(source: &str) -> pima::syntax::ast::Module {
     let mut sources = SourceMap::default();
@@ -141,13 +168,22 @@ set account [new Account]
 
 #[test]
 fn parses_bare_import_path_and_alias() {
-    let module = parse_source("import /po/library/standard as standard\n");
+    let module = parse_source("import /pima/library/standard as standard\n");
     let NodeKind::Import { path, alias } = &module.node(module.statements[0]).kind else {
         panic!("expected import");
     };
 
-    assert_eq!(path.as_ref(), "/po/library/standard");
+    assert_eq!(path.as_ref(), "/pima/library/standard");
     assert_eq!(alias.as_deref(), Some("standard"));
+}
+
+#[test]
+fn parses_static_namespace_import() {
+    let module = parse_source("import Maths.*\n");
+    let NodeKind::StaticImport { namespace } = &module.node(module.statements[0]).kind else {
+        panic!("expected static namespace import");
+    };
+    assert_eq!(namespace.as_ref(), "Maths");
 }
 
 #[test]
@@ -206,8 +242,8 @@ fn parses_all_non_java_examples() {
 
     for entry in std::fs::read_dir(examples).expect("examples directory should exist") {
         let path = entry.expect("example entry should be readable").path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("po")
-            || path.file_name().and_then(std::ffi::OsStr::to_str) == Some("java_support.po")
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("pima")
+            || path.file_name().and_then(std::ffi::OsStr::to_str) == Some("java_support.pima")
         {
             continue;
         }

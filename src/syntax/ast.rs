@@ -39,6 +39,20 @@ pub struct Node {
 }
 
 #[derive(Clone, Debug)]
+pub enum Pattern {
+    Wildcard,
+    Capture(Arc<str>),
+    Literal(NodeId),
+    List(Vec<Pattern>),
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: BlockId,
+}
+
+#[derive(Clone, Debug)]
 pub enum NodeKind {
     Unit,
     Boolean(bool),
@@ -62,11 +76,11 @@ pub enum NodeKind {
     Binding {
         visibility: Visibility,
         mutability: BindingKind,
-        name: Arc<str>,
+        pattern: Pattern,
         value: NodeId,
     },
     Assignment {
-        name: Arc<str>,
+        pattern: Pattern,
         value: NodeId,
     },
     Function {
@@ -93,9 +107,16 @@ pub enum NodeKind {
         path: Arc<str>,
         alias: Option<Arc<str>>,
     },
+    StaticImport {
+        namespace: Arc<str>,
+    },
     New(NodeId),
     Eval(NodeId),
     Attempt(BlockId),
+    Match {
+        value: NodeId,
+        arms: Vec<MatchArm>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

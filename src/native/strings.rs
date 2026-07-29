@@ -30,6 +30,23 @@ pub fn register(registry: &mut NativeRegistry) {
         arity: super::Arity::Exact(1),
         call: native_string,
     });
+    for (name, arity, call) in [
+        ("lower", super::Arity::Exact(1), native_lower as _),
+        ("upper", super::Arity::Exact(1), native_upper as _),
+        ("trim", super::Arity::Exact(1), native_trim as _),
+        ("contains?", super::Arity::Exact(2), native_contains as _),
+        (
+            "starts_with?",
+            super::Arity::Exact(2),
+            native_starts_with as _,
+        ),
+        ("ends_with?", super::Arity::Exact(2), native_ends_with as _),
+        ("replace", super::Arity::Exact(3), native_replace as _),
+        ("split", super::Arity::Exact(2), native_split as _),
+        ("join", super::Arity::Exact(2), native_join as _),
+    ] {
+        registry.register(NativeDefinition { name, arity, call });
+    }
 }
 
 fn native_concat(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
@@ -102,6 +119,107 @@ fn native_string(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
         return Ok(Value::String(Arc::from("")));
     };
     Ok(Value::String(Arc::from(super::display::value(arg, ctx))))
+}
+
+fn unary_string(
+    ctx: &mut dyn NativeContext,
+    args: &[Value],
+    name: &str,
+    operation: impl FnOnce(&str) -> String,
+) -> NativeResult {
+    let [Value::String(input)] = args else {
+        return Err(ctx.typed_error(
+            &["error", "type_error"],
+            format!("{name} requires a string"),
+        ));
+    };
+    Ok(Value::String(Arc::from(operation(input))))
+}
+
+fn native_lower(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    unary_string(ctx, args, "lower", str::to_lowercase)
+}
+
+fn native_upper(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    unary_string(ctx, args, "upper", str::to_uppercase)
+}
+
+fn native_trim(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    unary_string(ctx, args, "trim", |input| input.trim().to_owned())
+}
+
+fn string_pair<'a>(
+    ctx: &mut dyn NativeContext,
+    args: &'a [Value],
+    name: &str,
+) -> Result<(&'a str, &'a str), Value> {
+    let [Value::String(left), Value::String(right)] = args else {
+        return Err(ctx.typed_error(
+            &["error", "type_error"],
+            format!("{name} requires two strings"),
+        ));
+    };
+    Ok((left, right))
+}
+
+fn native_contains(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let (text, pattern) = string_pair(ctx, args, "contains?")?;
+    Ok(Value::Boolean(text.contains(pattern)))
+}
+
+fn native_starts_with(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let (text, pattern) = string_pair(ctx, args, "starts_with?")?;
+    Ok(Value::Boolean(text.starts_with(pattern)))
+}
+
+fn native_ends_with(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let (text, pattern) = string_pair(ctx, args, "ends_with?")?;
+    Ok(Value::Boolean(text.ends_with(pattern)))
+}
+
+fn native_replace(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let [Value::String(text), Value::String(from), Value::String(to)] = args else {
+        return Err(ctx.typed_error(
+            &["error", "type_error"],
+            "replace requires three strings".to_owned(),
+        ));
+    };
+    Ok(Value::String(Arc::from(text.replace(from.as_ref(), to))))
+}
+
+fn native_split(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let (text, separator) = string_pair(ctx, args, "split")?;
+    if separator.is_empty() {
+        return Err(ctx.typed_error(
+            &["error", "value_error"],
+            "split separator cannot be empty".to_owned(),
+        ));
+    }
+    Ok(Value::List(
+        text.split(separator)
+            .map(|part| Value::String(Arc::from(part)))
+            .collect(),
+    ))
+}
+
+fn native_join(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let [Value::List(values), Value::String(separator)] = args else {
+        return Err(ctx.typed_error(
+            &["error", "type_error"],
+            "join requires a list and a string separator".to_owned(),
+        ));
+    };
+    let mut strings = Vec::with_capacity(values.len());
+    for value in values.iter() {
+        let Value::String(string) = value else {
+            return Err(ctx.typed_error(
+                &["error", "type_error"],
+                "join list must contain only strings".to_owned(),
+            ));
+        };
+        strings.push(string.as_ref());
+    }
+    Ok(Value::String(Arc::from(strings.join(separator))))
 }
 
 fn type_str(value: &Value) -> &'static str {

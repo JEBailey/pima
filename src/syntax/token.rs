@@ -40,6 +40,7 @@ pub enum Keyword {
     If,
     Import,
     Let,
+    Match,
     New,
     Pub,
     Return,

@@ -21,7 +21,7 @@ boundaries and invariants are described in
 The CLI accepts one source file:
 
 ```console
-cargo run -- examples/fibonacci.po
+cargo run -- examples/fibonacci.pima
 ```
 
 The interpreter is also available as a Rust library:
@@ -42,7 +42,7 @@ An unsuccessful run has no value.
 ## Example
 
 ```pima
-import "/po/library/standard"
+import "/pima/library/standard"
 
 function factorial (:number) {
     if [<= number 1] {
@@ -66,6 +66,6 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 The current implementation includes lexing, parsing, evaluation, closures,
 immutable lists, namespaces, typed errors, source-aware stack diagnostics, the
-embedded standard library, `/po/io`, and cached file imports with complete
+embedded standard library, `/pima/io`, and cached file imports with complete
 cycle reporting. The remaining standard-library and host-embedding surfaces
 are still evolving.

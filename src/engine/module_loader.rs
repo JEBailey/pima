@@ -75,13 +75,13 @@ impl ModuleLoader {
     /// Resolves an import to a canonical identity.
     ///
     /// Relative file paths use the importing file's directory when available.
-    /// Paths below `/po/` are virtual and never touch the filesystem.
+    /// Paths below `/pima/` are virtual and never touch the filesystem.
     pub fn resolve(
         &self,
         requested: &str,
         importer: Option<&Utf8Path>,
     ) -> Result<ModuleIdentity, ModulePathError> {
-        if requested.starts_with("/po/") {
+        if requested.starts_with("/pima/") {
             return resolve_virtual(requested);
         }
 

@@ -11,6 +11,7 @@ pub enum Signal {
 }
 
 pub type EvalResult = Result<Value, Signal>;
+type PatternCaptures = Vec<(std::sync::Arc<str>, Value)>;
 
 pub(super) fn typed_err(context: &mut CallContext, types: &[&str], message: String) -> Value {
     <CallContext as NativeContext>::typed_error(context, types, message)
@@ -61,10 +62,10 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         NodeKind::Binding {
             visibility,
             mutability,
-            name,
+            pattern,
             value,
-        } => evaluate_binding(context, visibility, mutability, &name, value),
-        NodeKind::Assignment { name, value } => evaluate_assignment(context, &name, value),
+        } => evaluate_binding(context, visibility, mutability, &pattern, value),
+        NodeKind::Assignment { pattern, value } => evaluate_assignment(context, &pattern, value),
         NodeKind::Function {
             visibility,
             name,
@@ -86,9 +87,11 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         NodeKind::Continue => evaluate_continue(context),
         NodeKind::Throw(value) => evaluate_throw(context, value),
         NodeKind::Import { path, alias } => evaluate_import(context, &path, alias.as_deref()),
+        NodeKind::StaticImport { namespace } => evaluate_static_import(context, &namespace),
         NodeKind::New(operand) => super::instantiate::evaluate(context, operand),
         NodeKind::Eval(operand) => evaluate_eval(context, operand),
         NodeKind::Attempt(block_id) => evaluate_attempt(context, block_id),
+        NodeKind::Match { value, arms } => evaluate_match(context, value, &arms),
     };
     context.interpreter.active_span = previous_span;
     result
@@ -180,14 +183,35 @@ fn evaluate_binding(
     context: &mut CallContext,
     visibility: crate::syntax::ast::Visibility,
     mutability: crate::syntax::ast::BindingKind,
-    name: &str,
+    pattern: &crate::syntax::ast::Pattern,
     value_id: crate::syntax::ast::NodeId,
 ) -> EvalResult {
     let value = evaluate_node(context, value_id)?;
-    let symbol = context.interpreter.symbols.intern(name);
+    let Some(captures) = match_pattern(context, pattern, &value)? else {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "match_error"],
+            "binding pattern does not match its value".to_string(),
+        )));
+    };
+    let captures = unique_captures(context, captures)?;
+    let symbols = captures
+        .iter()
+        .map(|(name, value)| {
+            (
+                context.interpreter.symbols.intern(name),
+                name.clone(),
+                value.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
 
-    let env = &context.interpreter.environments[context.interpreter.current_environment.0 as usize];
-    if env.bindings.contains_key(&symbol) {
+    let environment = context.interpreter.current_environment;
+    let env = &context.interpreter.environments[environment.0 as usize];
+    if let Some((_, name, _)) = symbols
+        .iter()
+        .find(|(symbol, _, _)| env.bindings.contains_key(symbol))
+    {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "name_error"],
@@ -195,75 +219,184 @@ fn evaluate_binding(
         )));
     }
 
-    let binding = crate::runtime::Binding {
-        value,
-        mutability: match mutability {
-            crate::syntax::ast::BindingKind::Immutable => {
-                crate::runtime::BindingMutability::Immutable
-            }
-            crate::syntax::ast::BindingKind::Mutable => crate::runtime::BindingMutability::Mutable,
-        },
-        visibility: match visibility {
-            crate::syntax::ast::Visibility::Public => crate::runtime::BindingVisibility::Public,
-            crate::syntax::ast::Visibility::Private => crate::runtime::BindingVisibility::Private,
-        },
+    let binding_mutability = match mutability {
+        crate::syntax::ast::BindingKind::Immutable => crate::runtime::BindingMutability::Immutable,
+        crate::syntax::ast::BindingKind::Mutable => crate::runtime::BindingMutability::Mutable,
     };
-
-    let env_ref =
-        &mut context.interpreter.environments[context.interpreter.current_environment.0 as usize];
-    env_ref.bindings.insert(symbol, binding);
+    let binding_visibility = match visibility {
+        crate::syntax::ast::Visibility::Public => crate::runtime::BindingVisibility::Public,
+        crate::syntax::ast::Visibility::Private => crate::runtime::BindingVisibility::Private,
+    };
+    let env = &mut context.interpreter.environments[environment.0 as usize];
+    for (symbol, _, value) in symbols {
+        env.bindings.insert(
+            symbol,
+            crate::runtime::Binding {
+                value,
+                mutability: binding_mutability,
+                visibility: binding_visibility,
+            },
+        );
+    }
 
     Ok(Value::Unit)
 }
 
 fn evaluate_assignment(
     context: &mut CallContext,
-    name: &str,
+    pattern: &crate::syntax::ast::Pattern,
     value_id: crate::syntax::ast::NodeId,
 ) -> EvalResult {
     let value = evaluate_node(context, value_id)?;
-    let symbol = context.interpreter.symbols.intern(name);
+    let Some(captures) = match_pattern(context, pattern, &value)? else {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "match_error"],
+            "assignment pattern does not match its value".to_string(),
+        )));
+    };
+    let captures = unique_captures(context, captures)?;
+    let mut assignments = Vec::with_capacity(captures.len());
 
-    // Walk environment chain to find the nearest mutable binding
-    let mut env_id = context.interpreter.current_environment;
-    loop {
-        let env = &mut context.interpreter.environments[env_id.0 as usize];
-        if let Some(binding) = env.bindings.get_mut(&symbol) {
-            match binding.mutability {
-                crate::runtime::BindingMutability::Mutable => {
-                    binding.value = value.clone();
-                    return Ok(value);
-                }
-                crate::runtime::BindingMutability::Immutable => {
-                    return Err(Signal::Throw(typed_err(
-                        context,
-                        &["error", "mutation_error"],
-                        format!("cannot assign to immutable binding `{name}`"),
-                    )));
-                }
-                crate::runtime::BindingMutability::ImportedReadOnly { .. } => {
-                    return Err(Signal::Throw(typed_err(
-                        context,
-                        &["error", "mutation_error"],
-                        format!("cannot assign to imported binding `{name}`"),
-                    )));
+    for (name, value) in captures {
+        let symbol = context.interpreter.symbols.intern(&name);
+        let mut env_id = context.interpreter.current_environment;
+        let target = loop {
+            let env = &context.interpreter.environments[env_id.0 as usize];
+            if let Some(binding) = env.bindings.get(&symbol) {
+                match binding.mutability {
+                    crate::runtime::BindingMutability::Mutable => break Some(env_id),
+                    crate::runtime::BindingMutability::Immutable => {
+                        return Err(Signal::Throw(typed_err(
+                            context,
+                            &["error", "mutation_error"],
+                            format!("cannot assign to immutable binding `{name}`"),
+                        )));
+                    }
+                    crate::runtime::BindingMutability::ImportedReadOnly { .. } => {
+                        return Err(Signal::Throw(typed_err(
+                            context,
+                            &["error", "mutation_error"],
+                            format!("cannot assign to imported binding `{name}`"),
+                        )));
+                    }
                 }
             }
+            match env.parent {
+                Some(parent) => env_id = parent,
+                None => break None,
+            }
+        };
+        let Some(env_id) = target else {
+            return Err(Signal::Throw(typed_err(
+                context,
+                &["error", "name_error"],
+                format!("unbound identifier `{name}` for assignment"),
+            )));
+        };
+        assignments.push((env_id, symbol, value));
+    }
+
+    for (environment, symbol, value) in assignments {
+        context.interpreter.environments[environment.0 as usize]
+            .bindings
+            .get_mut(&symbol)
+            .expect("assignment target was validated")
+            .value = value;
+    }
+    Ok(value)
+}
+
+// ── Functions ──
+
+fn match_pattern(
+    context: &mut CallContext,
+    pattern: &crate::syntax::ast::Pattern,
+    value: &Value,
+) -> Result<Option<PatternCaptures>, Signal> {
+    use crate::syntax::ast::Pattern;
+    match pattern {
+        Pattern::Wildcard => Ok(Some(Vec::new())),
+        Pattern::Capture(name) => Ok(Some(vec![(name.clone(), value.clone())])),
+        Pattern::Literal(node) => {
+            let expected = evaluate_node(context, *node)?;
+            Ok(crate::runtime::language_equal(&expected, value).then(Vec::new))
         }
-        match env.parent {
-            Some(parent) => env_id = parent,
-            None => break,
+        Pattern::List(patterns) => {
+            let Value::List(values) = value else {
+                return Ok(None);
+            };
+            if patterns.len() != values.len() {
+                return Ok(None);
+            }
+            let mut captures = Vec::new();
+            for (pattern, value) in patterns.iter().zip(values.iter()) {
+                let Some(mut nested) = match_pattern(context, pattern, value)? else {
+                    return Ok(None);
+                };
+                captures.append(&mut nested);
+            }
+            Ok(Some(captures))
         }
+    }
+}
+
+fn unique_captures(
+    context: &mut CallContext,
+    captures: PatternCaptures,
+) -> Result<PatternCaptures, Signal> {
+    let mut names = std::collections::HashSet::new();
+    for (name, _) in &captures {
+        if !names.insert(name.clone()) {
+            return Err(Signal::Throw(typed_err(
+                context,
+                &["error", "match_error"],
+                format!("pattern captures `{name}` more than once"),
+            )));
+        }
+    }
+    Ok(captures)
+}
+
+fn evaluate_match(
+    context: &mut CallContext,
+    value_id: crate::syntax::ast::NodeId,
+    arms: &[crate::syntax::ast::MatchArm],
+) -> EvalResult {
+    let value = evaluate_node(context, value_id)?;
+    for arm in arms {
+        let Some(captures) = match_pattern(context, &arm.pattern, &value)? else {
+            continue;
+        };
+        let captures = unique_captures(context, captures)?;
+        let parent = context.interpreter.current_environment;
+        let environment =
+            crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
+        let mut arm_environment = crate::runtime::Environment::new(Some(parent));
+        for (name, value) in captures {
+            let symbol = context.interpreter.symbols.intern(&name);
+            arm_environment.bindings.insert(
+                symbol,
+                crate::runtime::Binding {
+                    value,
+                    mutability: crate::runtime::BindingMutability::Immutable,
+                    visibility: crate::runtime::BindingVisibility::Private,
+                },
+            );
+        }
+        context.interpreter.environments.push(arm_environment);
+        context.interpreter.current_environment = environment;
+        let result = evaluate_block(context, arm.body);
+        context.interpreter.current_environment = parent;
+        return result;
     }
 
     Err(Signal::Throw(typed_err(
         context,
-        &["error", "name_error"],
-        format!("unbound identifier `{name}` for assignment"),
+        &["error", "match_error"],
+        "no match arm accepted the value".to_string(),
     )))
 }
-
-// ── Functions ──
 
 fn evaluate_function(
     context: &mut CallContext,
@@ -588,7 +721,7 @@ fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -
         .map(|source| source.name.to_string());
     let importer = importer_name
         .as_deref()
-        .filter(|name| !name.starts_with('<') && !name.starts_with("/po/"))
+        .filter(|name| !name.starts_with('<') && !name.starts_with("/pima/"))
         .map(camino::Utf8Path::new);
     let identity = context
         .interpreter
@@ -677,6 +810,66 @@ fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -
     Ok(Value::Unit)
 }
 
+fn evaluate_static_import(context: &mut CallContext, namespace: &str) -> EvalResult {
+    if !context
+        .interpreter
+        .module_environments
+        .contains(&context.interpreter.current_environment)
+    {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "import_error"],
+            "static imports are permitted only at module scope".to_owned(),
+        )));
+    }
+    let value = resolve_identifier(context, namespace)?;
+    let Value::Namespace(namespace_id) = value else {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "type_error"],
+            format!(
+                "static import requires a namespace, got {}",
+                value_type_name(&value)
+            ),
+        )));
+    };
+    let source_environment = context.interpreter.namespaces[namespace_id.0 as usize].environment;
+    let members = context.interpreter.environments[source_environment.0 as usize]
+        .bindings
+        .iter()
+        .filter(|(_, binding)| binding.visibility == crate::runtime::BindingVisibility::Public)
+        .map(|(symbol, binding)| (*symbol, binding.value.clone()))
+        .collect::<Vec<_>>();
+    let target = context.interpreter.current_environment.0 as usize;
+    for (symbol, _) in &members {
+        if context.interpreter.environments[target]
+            .bindings
+            .contains_key(symbol)
+        {
+            let name = context.interpreter.symbols.resolve(*symbol).unwrap_or("?");
+            return Err(Signal::Throw(typed_err(
+                context,
+                &["error", "name_error"],
+                format!("static import collision: `{name}` already bound"),
+            )));
+        }
+    }
+    for (symbol, value) in members {
+        context.interpreter.environments[target].bindings.insert(
+            symbol,
+            crate::runtime::Binding {
+                value,
+                mutability: crate::runtime::BindingMutability::ImportedReadOnly {
+                    environment: source_environment,
+                    symbol,
+                },
+                visibility: crate::runtime::BindingVisibility::Public,
+            },
+        );
+    }
+    Ok(Value::Unit)
+}
+
 fn load_module(
     context: &mut CallContext,
     identity: &crate::engine::ModuleIdentity,
@@ -729,14 +922,16 @@ fn load_module(
 
     if matches!(
         identity,
-        crate::engine::ModuleIdentity::Virtual(path) if path.as_str() == "/po/io"
+        crate::engine::ModuleIdentity::Virtual(path) if path.as_str() == "/pima/io"
     ) {
         return load_io_module(context, identity);
     }
 
     let source = match identity {
-        crate::engine::ModuleIdentity::Virtual(path) if path.as_str() == "/po/library/standard" => {
-            include_str!("../../stdlib/standard.po").to_owned()
+        crate::engine::ModuleIdentity::Virtual(path)
+            if path.as_str() == "/pima/library/standard" =>
+        {
+            include_str!("../../stdlib/standard.pima").to_owned()
         }
         crate::engine::ModuleIdentity::Virtual(path) => {
             return fail_module(
@@ -776,12 +971,19 @@ fn load_module(
     context.interpreter.parsed_modules.push(module);
 
     let mod_env_id = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
+    let parent_environment = if matches!(
+        identity,
+        crate::engine::ModuleIdentity::Virtual(path)
+            if path.as_str() == "/pima/library/standard"
+    ) {
+        crate::runtime::EnvironmentId(0)
+    } else {
+        crate::runtime::EnvironmentId(1)
+    };
     context
         .interpreter
         .environments
-        .push(crate::runtime::Environment::new(Some(
-            crate::runtime::EnvironmentId(0),
-        )));
+        .push(crate::runtime::Environment::new(Some(parent_environment)));
     context.interpreter.module_environments.insert(mod_env_id);
     {
         let record = context
@@ -840,17 +1042,17 @@ fn load_io_module(
 ) -> Result<crate::runtime::EnvironmentId, Signal> {
     let environment = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
     let mut module_environment =
-        crate::runtime::Environment::new(Some(crate::runtime::EnvironmentId(0)));
+        crate::runtime::Environment::new(Some(crate::runtime::EnvironmentId(1)));
 
-    for name in [crate::native::io::READ_TEXT, crate::native::io::WRITE_TEXT] {
-        let Some(native) = context.interpreter.natives.find_id(name) else {
+    for &(public_name, native_name) in crate::native::io::EXPORTS {
+        let Some(native) = context.interpreter.natives.find_id(native_name) else {
             return fail_module(
                 context,
                 identity,
-                format!("native function `{name}` is not registered"),
+                format!("native function `{native_name}` is not registered"),
             );
         };
-        let symbol = context.interpreter.symbols.intern(name);
+        let symbol = context.interpreter.symbols.intern(public_name);
         module_environment.bindings.insert(
             symbol,
             crate::runtime::Binding {

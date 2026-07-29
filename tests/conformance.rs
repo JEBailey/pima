@@ -13,10 +13,13 @@ fn every_supported_example_executes_successfully() {
     let mut paths = std::fs::read_dir(&examples)
         .expect("examples directory should be readable")
         .map(|entry| entry.expect("example entry should be readable").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "po"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "pima")
+        })
         .filter(|path| {
             path.file_name()
-                .is_some_and(|name| name != "java_support.po")
+                .is_some_and(|name| name != "java_support.pima")
         })
         .collect::<Vec<_>>();
     paths.sort();
@@ -48,7 +51,7 @@ fn representative_programs_have_exact_results() {
             Value::Integer(2),
         ),
         (
-            "set source (1 2)\nset changed [push source 0]\n[= source (1 2)]\n",
+            "import \"/pima/library/standard\"\nset source (1 2)\nset changed [List.push source 0]\n[= source (1 2)]\n",
             Value::Boolean(true),
         ),
     ];
@@ -63,7 +66,7 @@ fn representative_programs_have_exact_results() {
 
 #[test]
 fn representative_failures_preserve_portable_error_types() {
-    let source = "set result [attempt {\n    head ()\n}]\n[is? result :index_error]\n";
+    let source = "import \"/pima/library/standard\"\nset result [attempt {\n    List.head ()\n}]\n[Types.is? result :index_error]\n";
     let mut interpreter = Interpreter::default();
     let outcome = interpreter.run_source("<conformance>", source);
 

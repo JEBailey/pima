@@ -6,7 +6,10 @@ use crate::{
 };
 
 use super::{
-    ast::{BindingKind, Block, BlockId, LoopKind, Module, Node, NodeId, NodeKind, Visibility},
+    ast::{
+        BindingKind, Block, BlockId, LoopKind, MatchArm, Module, Node, NodeId, NodeKind, Pattern,
+        Visibility,
+    },
     token::{Keyword, Token, TokenKind},
 };
 
@@ -95,6 +98,7 @@ impl Parser<'_> {
                 self.parse_binding(Visibility::Private, BindingKind::Mutable)
             }
             Some(TokenKind::Keyword(Keyword::Let)) => self.parse_assignment(),
+            Some(TokenKind::Keyword(Keyword::Match)) => self.parse_match(),
             Some(TokenKind::Keyword(Keyword::Function)) => self.parse_function(Visibility::Private),
             Some(TokenKind::Keyword(Keyword::If)) => self.parse_conditional(),
             Some(TokenKind::Keyword(Keyword::While)) => self.parse_loop(LoopKind::While),
@@ -296,7 +300,7 @@ impl Parser<'_> {
         mutability: BindingKind,
     ) -> ParseResult<NodeId> {
         self.advance();
-        let (name, _) = self.expect_identifier("expected binding name")?;
+        let pattern = self.parse_binding_pattern()?;
         if self.at_statement_end() {
             self.report_here("expected binding value");
             return Err(());
@@ -308,7 +312,7 @@ impl Parser<'_> {
             NodeKind::Binding {
                 visibility,
                 mutability,
-                name,
+                pattern,
                 value,
             },
         ))
@@ -316,7 +320,7 @@ impl Parser<'_> {
 
     fn parse_assignment(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
-        let (name, _) = self.expect_identifier("expected mutable binding name after `let`")?;
+        let pattern = self.parse_binding_pattern()?;
         if self.at_statement_end() {
             self.report_here("expected assigned value");
             return Err(());
@@ -324,8 +328,95 @@ impl Parser<'_> {
         let value = self.parse_expression()?;
         Ok(self.alloc(
             self.join(start, self.node(value).span),
-            NodeKind::Assignment { name, value },
+            NodeKind::Assignment { pattern, value },
         ))
+    }
+
+    fn parse_binding_pattern(&mut self) -> ParseResult<Pattern> {
+        if let Some(TokenKind::Identifier(name)) = self.peek_kind().cloned() {
+            self.advance();
+            return Ok(Pattern::Capture(name));
+        }
+        self.parse_pattern()
+    }
+
+    fn parse_pattern(&mut self) -> ParseResult<Pattern> {
+        let token = self.peek().cloned().ok_or_else(|| {
+            self.report_eof("expected pattern");
+        })?;
+        match token.kind {
+            TokenKind::Symbol(name) => {
+                self.advance();
+                Ok(Pattern::Capture(name))
+            }
+            TokenKind::Identifier(name) => {
+                self.advance();
+                let literal = self.alloc(token.span, NodeKind::Symbol(name));
+                Ok(Pattern::Literal(literal))
+            }
+            TokenKind::Boolean(_)
+            | TokenKind::Integer(_)
+            | TokenKind::Float(_)
+            | TokenKind::String(_) => {
+                let literal = self.parse_primary()?;
+                Ok(Pattern::Literal(literal))
+            }
+            TokenKind::Underscore => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            }
+            TokenKind::LeftParen => {
+                self.advance();
+                let mut elements = Vec::new();
+                self.skip_eols();
+                while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
+                    if self.at_eof() {
+                        self.report_eof("unterminated list pattern; expected `)`");
+                        return Err(());
+                    }
+                    elements.push(self.parse_pattern()?);
+                    self.skip_eols();
+                }
+                self.advance();
+                Ok(Pattern::List(elements))
+            }
+            _ => {
+                self.report_here("expected symbol name, literal, `:capture`, `_`, or list pattern");
+                Err(())
+            }
+        }
+    }
+
+    fn parse_match(&mut self) -> ParseResult<NodeId> {
+        let start = self.advance().span;
+        if self.at_statement_end() {
+            self.report_here("expected value after `match`");
+            return Err(());
+        }
+        let value = self.parse_expression()?;
+        self.expect_simple(
+            |kind| matches!(kind, TokenKind::LeftParen),
+            "expected `(` before match arms",
+        )?;
+        self.skip_eols();
+
+        let mut arms = Vec::new();
+        while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
+            let pattern = self.parse_pattern()?;
+            self.skip_eols();
+            let (body, _) = self.parse_block()?;
+            self.skip_eols();
+            arms.push(MatchArm { pattern, body });
+        }
+        let end = self.advance().span;
+        if arms.is_empty() {
+            self.diagnostics.push(Diagnostic::at_error(
+                "match requires at least one arm",
+                self.join(start, end),
+            ));
+            return Err(());
+        }
+        Ok(self.alloc(self.join(start, end), NodeKind::Match { value, arms }))
     }
 
     fn parse_function(&mut self, visibility: Visibility) -> ParseResult<NodeId> {
@@ -453,6 +544,24 @@ impl Parser<'_> {
 
     fn parse_import(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
+        if let Some(Token {
+            kind: TokenKind::Identifier(namespace),
+            ..
+        }) = self.peek().cloned()
+            && matches!(
+                self.tokens.get(self.position + 1).map(|token| &token.kind),
+                Some(TokenKind::Dot)
+            )
+            && matches!(
+                self.tokens.get(self.position + 2).map(|token| &token.kind),
+                Some(TokenKind::Identifier(star)) if star.as_ref() == "*"
+            )
+        {
+            self.advance();
+            self.advance();
+            let end = self.advance().span;
+            return Ok(self.alloc(self.join(start, end), NodeKind::StaticImport { namespace }));
+        }
         let token = self.peek().cloned().ok_or_else(|| {
             self.report_eof("expected module path after `import`");
         })?;
@@ -543,9 +652,11 @@ impl Parser<'_> {
                 | NodeKind::Continue
                 | NodeKind::Throw(_)
                 | NodeKind::Import { .. }
+                | NodeKind::StaticImport { .. }
                 | NodeKind::New(_)
                 | NodeKind::Eval(_)
                 | NodeKind::Attempt(_)
+                | NodeKind::Match { .. }
         )
     }
 
@@ -669,6 +780,7 @@ fn is_reserved(name: &str) -> bool {
             | "if"
             | "import"
             | "let"
+            | "match"
             | "new"
             | "pub"
             | "return"

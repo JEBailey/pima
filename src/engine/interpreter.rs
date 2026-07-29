@@ -75,8 +75,13 @@ impl Interpreter {
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let working_directory = camino::Utf8PathBuf::from_path_buf(working_directory)
             .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
-        let root_env_id = crate::runtime::EnvironmentId(0);
-        let environments = vec![Environment::new(None)];
+        let primitive_env_id = crate::runtime::EnvironmentId(1);
+        let root_env_id = crate::runtime::EnvironmentId(2);
+        let environments = vec![
+            Environment::new(None),
+            Environment::new(None),
+            Environment::new(Some(primitive_env_id)),
+        ];
 
         let mut interpreter = Self {
             sources: SourceMap::default(),
@@ -245,22 +250,92 @@ fn register_natives(interpreter: &mut Interpreter) {
     crate::native::types::register(&mut interpreter.natives);
     crate::native::console::register(&mut interpreter.natives);
 
-    // Bind each native in the root environment so identifiers resolve to them
-    let root_env = &mut interpreter.environments[0];
-    for (id, def) in interpreter.natives.iter_with_ids() {
-        let sym = interpreter.symbols.intern(def.name);
-        root_env.bindings.insert(
-            sym,
+    let definitions = interpreter
+        .natives
+        .iter_with_ids()
+        .map(|(id, definition)| (id, definition.name))
+        .collect::<Vec<_>>();
+    for (id, name) in definitions {
+        let namespace = match name {
+            "+" | "-" | "*" | "/" | "<" | ">" | "=" => None,
+            "div" | "mod" | "int" => Some("Maths"),
+            "concat" | "length" | "slice" | "chars" | "string" | "lower" | "upper" | "trim"
+            | "contains?" | "starts_with?" | "ends_with?" | "replace" | "split" | "join" => {
+                Some("String")
+            }
+            "push" | "append" | "head" | "rest" | "empty?" => Some("List"),
+            "types" | "is?" => Some("Types"),
+            "println" => Some("Console"),
+            "not" => Some("Logic"),
+            _ => None,
+        };
+        if let Some(namespace) = namespace {
+            bind_native_member(interpreter, namespace, name, id);
+            // Core natives remain available to the implementation prelude.
+            bind_native(interpreter, crate::runtime::EnvironmentId(0), name, id);
+        } else {
+            bind_native(interpreter, crate::runtime::EnvironmentId(0), name, id);
+            bind_native(interpreter, crate::runtime::EnvironmentId(1), name, id);
+        }
+    }
+
+    // I/O is available only through the explicit `/pima/io` virtual module.
+    crate::native::io::register(&mut interpreter.natives);
+}
+
+fn bind_native_member(
+    interpreter: &mut Interpreter,
+    namespace_name: &str,
+    member_name: &str,
+    native: crate::runtime::NativeFunctionId,
+) {
+    let namespace_symbol = interpreter.symbols.intern(namespace_name);
+    let namespace = interpreter.environments[0]
+        .bindings
+        .get(&namespace_symbol)
+        .and_then(|binding| match binding.value {
+            Value::Namespace(id) => Some(id),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            let environment = crate::runtime::EnvironmentId(interpreter.environments.len() as u32);
+            interpreter.environments.push(Environment::new(None));
+            let namespace = crate::runtime::NamespaceId(interpreter.namespaces.len() as u32);
+            interpreter.namespaces.push(Namespace {
+                environment,
+                types: Vec::new(),
+            });
+            interpreter.environments[0].bindings.insert(
+                namespace_symbol,
+                crate::runtime::Binding {
+                    value: Value::Namespace(namespace),
+                    mutability: crate::runtime::BindingMutability::Immutable,
+                    visibility: crate::runtime::BindingVisibility::Private,
+                },
+            );
+            namespace
+        });
+    let environment = interpreter.namespaces[namespace.0 as usize].environment;
+    bind_native(interpreter, environment, member_name, native);
+}
+
+fn bind_native(
+    interpreter: &mut Interpreter,
+    environment: crate::runtime::EnvironmentId,
+    name: &str,
+    native: crate::runtime::NativeFunctionId,
+) {
+    let symbol = interpreter.symbols.intern(name);
+    interpreter.environments[environment.0 as usize]
+        .bindings
+        .insert(
+            symbol,
             crate::runtime::Binding {
-                value: crate::runtime::Value::NativeFunction(id),
+                value: Value::NativeFunction(native),
                 mutability: crate::runtime::BindingMutability::Immutable,
                 visibility: crate::runtime::BindingVisibility::Public,
             },
         );
-    }
-
-    // I/O is available only through the explicit `/po/io` virtual module.
-    crate::native::io::register(&mut interpreter.natives);
 }
 
 fn extract_error_message(interpreter: &mut Interpreter, value: &Value) -> String {

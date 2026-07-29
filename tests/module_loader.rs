@@ -6,15 +6,15 @@ fn workspace_root() -> Utf8PathBuf {
 }
 
 #[test]
-fn resolves_virtual_po_modules_without_touching_the_filesystem() {
+fn resolves_virtual_pima_modules_without_touching_the_filesystem() {
     let loader = ModuleLoader::new(workspace_root());
     let identity = loader
-        .resolve("/po/library/standard", None)
+        .resolve("/pima/library/standard", None)
         .expect("virtual path should resolve");
 
     assert_eq!(
         identity,
-        ModuleIdentity::Virtual(Utf8PathBuf::from("/po/library/standard"))
+        ModuleIdentity::Virtual(Utf8PathBuf::from("/pima/library/standard"))
     );
 }
 
@@ -22,7 +22,7 @@ fn resolves_virtual_po_modules_without_touching_the_filesystem() {
 fn rejects_virtual_module_traversal() {
     let loader = ModuleLoader::new(workspace_root());
     let error = loader
-        .resolve("/po/../private", None)
+        .resolve("/pima/../private", None)
         .expect_err("parent traversal must be rejected");
 
     assert!(error.to_string().contains("invalid virtual module path"));
@@ -47,7 +47,7 @@ fn canonicalizes_relative_file_modules() {
 fn resolves_relative_to_the_importing_file() {
     let root = workspace_root();
     let loader = ModuleLoader::new(root.clone());
-    let importer = root.join("examples/test.po");
+    let importer = root.join("examples/test.pima");
     let identity = loader
         .resolve("../Cargo.toml", Some(Utf8Path::new(importer.as_str())))
         .expect("relative import should use importing file directory");
@@ -59,7 +59,7 @@ fn resolves_relative_to_the_importing_file() {
 fn module_records_are_stable_per_canonical_identity() {
     let mut loader = ModuleLoader::new(workspace_root());
     let identity = loader
-        .resolve("/po/io", None)
+        .resolve("/pima/io", None)
         .expect("virtual path should resolve");
 
     loader.record_mut(identity.clone()).state = ModuleState::Loading;

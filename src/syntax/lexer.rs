@@ -174,6 +174,7 @@ fn word_kind(word: &str) -> TokenKind {
         "if" => Keyword::If,
         "import" => Keyword::Import,
         "let" => Keyword::Let,
+        "match" => Keyword::Match,
         "new" => Keyword::New,
         "pub" => Keyword::Pub,
         "return" => Keyword::Return,

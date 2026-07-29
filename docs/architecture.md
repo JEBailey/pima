@@ -57,7 +57,7 @@ pima/
 │       ├── console.rs
 │       └── io.rs
 ├── stdlib/
-│   └── standard.po
+│   └── standard.pima
 ├── examples/
 └── tests/
     ├── lexer.rs
@@ -73,7 +73,7 @@ pima/
 This is a responsibility map, not a requirement that every listed file exist.
 Calls and namespace instantiation live in `engine/call.rs` and
 `engine/instantiate.rs`. These modules own their complete behavior rather than
-forwarding to the AST dispatcher. `/po/io` is implemented in `native/io.rs`
+forwarding to the AST dispatcher. `/pima/io` is implemented in `native/io.rs`
 and exposed only through its virtual module.
 
 ## 2. Dependency direction
@@ -361,7 +361,7 @@ acceptable baseline performance are native:
 - immutable-list primitives;
 - core string operations;
 - console output; and
-- filesystem operations backing `/po/io`.
+- filesystem operations backing `/pima/io`.
 
 Ranges, traversal helpers, exponentiation, and similar utilities remain Pima
 standard-library code.
@@ -372,13 +372,25 @@ scope.
 
 ## 9. Standard and native modules
 
-`stdlib/standard.po` is compiled through the same lexer and parser as user code
+`stdlib/standard.pima` is compiled through the same lexer and parser as user code
 and embedded in the executable with `include_str!` for reliable availability.
 
-The virtual modules `/po/library/standard` and `/po/io` are resolved by the
-module loader. The standard library is Pima source. `/po/io` exports native
+The virtual modules `/pima/library/standard` and `/pima/io` are resolved by the
+module loader. The standard library is Pima source. `/pima/io` exports native
 functions through an ordinary immutable module namespace so its behavior at the
 language level matches other modules.
+
+I/O natives use internally qualified registry names such as `io.join`; the
+module loader maps those to public member names such as `join`. This prevents
+collisions with identically named operations in other namespaces. Filesystem
+operations resolve relative paths against the interpreter's configured working
+directory and translate host failures into portable typed Pima errors.
+
+The evaluator keeps host natives in a private implementation environment used
+to construct the standard library. User modules inherit only arithmetic and
+comparison operators. String, list, type, logic, numeric utility, and console
+operations require an explicit standard-library import and qualified access
+(or a static namespace import).
 
 ## 10. Testing strategy
 
@@ -407,7 +419,7 @@ error values or rendered uncaught-error diagnostics.
 6. Namespaces, visibility, type lists, and `new`.
 7. Typed errors, `throw`, `attempt`, and diagnostics.
 8. Module lifecycle, imports, and bundled modules.
-9. Strings, console output, and `/po/io`.
+9. Strings, console output, and `/pima/io`.
 10. Standard library and full conformance suite.
 
 Each stage should leave the crate compiling and add focused tests before the

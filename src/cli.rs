@@ -7,7 +7,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> ExitCode {
     let program = arguments.next().unwrap_or_else(|| OsString::from("pima"));
     let Some(path) = arguments.next() else {
         eprintln!(
-            "usage: {} <file.po>",
+            "usage: {} <file.pima>",
             std::path::Path::new(&program).display()
         );
         return ExitCode::from(2);

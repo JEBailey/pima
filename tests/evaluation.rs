@@ -2,7 +2,27 @@ use pima::{Config, Interpreter};
 
 fn run(source: &str) -> pima::RunOutcome {
     let mut interpreter = Interpreter::new(Config::default());
-    interpreter.run_source("<test>", source)
+    if source.contains("/pima/library/standard") {
+        interpreter.run_source("<test>", source)
+    } else {
+        let uses_list = ["push", "append", "head", "rest", "empty?"]
+            .iter()
+            .any(|name| source.contains(name));
+        let uses_string = ["concat", "length", "slice", "chars", "string"]
+            .iter()
+            .any(|name| source.contains(name));
+        let mut prelude = String::from(
+            "import \"/pima/library/standard\"\nimport Maths.*\nimport Console.*\nimport Logic.*\nset types Types.of\nset is? Types.is?\n",
+        );
+        if uses_list {
+            prelude.push_str("import List.*\n");
+        }
+        if uses_string {
+            prelude.push_str("import String.*\n");
+        }
+        prelude.push_str(source);
+        interpreter.run_source("<test>", &prelude)
+    }
 }
 
 fn run_ok(source: &str) -> pima::Value {
@@ -13,6 +33,132 @@ fn run_ok(source: &str) -> pima::Value {
         outcome.diagnostics
     );
     outcome.value.expect("expected a return value")
+}
+
+#[test]
+fn user_scope_contains_only_primitive_operators_by_default() {
+    let mut interpreter = Interpreter::default();
+    let operators = interpreter.run_source("<operators>", "[+ 20 22]\n");
+    assert!(operators.is_success(), "{:?}", operators.diagnostics);
+    assert_eq!(operators.value, Some(pima::Value::Integer(42)));
+
+    for name in ["concat", "head", "println", "int", "not", "types"] {
+        let outcome = interpreter.run_source("<name>", name);
+        assert!(
+            !outcome.is_success(),
+            "`{name}` should require its standard-library namespace"
+        );
+        assert!(outcome.diagnostics[0].message.contains("unbound"));
+    }
+}
+
+#[test]
+fn standard_library_exposes_core_functions_through_namespaces() {
+    let value = run_ok(
+        "import \"/pima/library/standard\"\n\
+         ([String.concat \"pi\" \"ma\"] [Maths.int 2.9] [Logic.not false] [Types.is? 1 :integer])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::String("pima".into()),
+                pima::Value::Integer(2),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    );
+}
+
+#[test]
+fn bindings_destructure_lists_recursively() {
+    assert_eq!(
+        run_ok("set (:x (:y _)) (3 (4 5))\n(x y)"),
+        pima::Value::List(
+            [pima::Value::Integer(3), pima::Value::Integer(4)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn let_destructuring_updates_mutable_bindings_atomically() {
+    assert_eq!(
+        run_ok(
+            "var x 1\nvar y 2\n\
+             let (:x :y) (3 4)\n\
+             (x y)"
+        ),
+        pima::Value::List(
+            [pima::Value::Integer(3), pima::Value::Integer(4)]
+                .into_iter()
+                .collect()
+        )
+    );
+
+    let value = run_ok(
+        "import \"/pima/library/standard\"\n\
+         var x 1\nset y 2\n\
+         set failure [attempt { let (:x :y) (3 4) }]\n\
+         (x [Types.is? failure :mutation_error])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Integer(1), pima::Value::Boolean(true)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn match_selects_by_literal_and_exposes_captures_to_its_arm() {
+    let value = run_ok(
+        "set result (:ok 42)\n\
+         match result (\n\
+             (ok :value) { + value 1 }\n\
+             (error :error) { error }\n\
+         )",
+    );
+    assert_eq!(value, pima::Value::Integer(43));
+}
+
+#[test]
+fn match_supports_nested_patterns_and_wildcards() {
+    let value = run_ok(
+        "match (:point (3 4)) (\n\
+             (point (3 :y)) { y }\n\
+             _ { 0 }\n\
+         )",
+    );
+    assert_eq!(value, pima::Value::Integer(4));
+}
+
+#[test]
+fn ordinary_pattern_literals_match_themselves() {
+    let value = run_ok(
+        "match \"ready\" (\n\
+             \"waiting\" { 0 }\n\
+             \"ready\" { 1 }\n\
+             _ { 2 }\n\
+         )",
+    );
+    assert_eq!(value, pima::Value::Integer(1));
+}
+
+#[test]
+fn failed_pattern_throws_match_error() {
+    let value = run_ok(
+        "import \"/pima/library/standard\"\n\
+         set failure [attempt { set (:x :y) (1) }]\n\
+         [Types.is? failure :match_error]",
+    );
+    assert_eq!(value, pima::Value::Boolean(true));
 }
 
 // ── Literals ──
@@ -648,8 +794,47 @@ fn throw_and_attempt() {
 
 #[test]
 fn import_standard_library() {
-    // This requires module loader + standard library
-    // Placeholder
+    assert_eq!(
+        run_ok("import \"/pima/library/standard\"\n[Maths.pow 2 8]\n"),
+        pima::Value::Integer(256)
+    );
+    assert_eq!(
+        run_ok("import \"/pima/library/standard\"\n[String.concat \"Pi\" \"ma\"]\n"),
+        pima::Value::String(std::sync::Arc::from("Pima"))
+    );
+}
+
+#[test]
+fn standard_library_provides_baseline_collection_and_string_utilities() {
+    assert_eq!(
+        run_ok(
+            "import \"/pima/library/standard\"\nfunction above_two (:value) { > value 2 }\nset selected [List.filter above_two (1 2 3 4)]\n[String.join [List.map String.from selected] \",\"]\n"
+        ),
+        pima::Value::String(std::sync::Arc::from("3,4"))
+    );
+    assert_eq!(
+        run_ok("import \"/pima/library/standard\"\n[Maths.sum (1 2 3 4)]\n"),
+        pima::Value::Integer(10)
+    );
+    assert_eq!(
+        run_ok("import \"/pima/library/standard\"\n[String.upper [String.trim \"  Pima  \"]]\n"),
+        pima::Value::String(std::sync::Arc::from("PIMA"))
+    );
+}
+
+#[test]
+fn static_import_exposes_public_namespace_members() {
+    assert_eq!(
+        run_ok("import \"/pima/library/standard\"\nimport Maths.*\n[pow 2 10]\n"),
+        pima::Value::Integer(1024)
+    );
+}
+
+#[test]
+fn static_import_rejects_collisions_without_partial_binding() {
+    let outcome = run("import \"/pima/library/standard\"\nset PI 3\nimport Maths.*\n");
+    assert!(!outcome.is_success());
+    assert!(outcome.diagnostics[0].message.contains("collision"));
 }
 
 // ── Call non-callable ──
@@ -840,7 +1025,7 @@ fn module_test_directory(name: &str) -> std::path::PathBuf {
 fn file_imports_resolve_from_the_working_directory() {
     let directory = module_test_directory("file-import");
     std::fs::write(
-        directory.join("answer.po"),
+        directory.join("answer.pima"),
         "pub set answer 42\nset hidden 9\n",
     )
     .unwrap();
@@ -848,7 +1033,7 @@ fn file_imports_resolve_from_the_working_directory() {
         working_directory: Some(directory),
     });
 
-    let outcome = interpreter.run_source("<test>", "import \"answer.po\"\nanswer\n");
+    let outcome = interpreter.run_source("<test>", "import \"answer.pima\"\nanswer\n");
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
 }
@@ -857,7 +1042,7 @@ fn file_imports_resolve_from_the_working_directory() {
 fn module_aliases_share_the_cached_module() {
     let directory = module_test_directory("module-cache");
     std::fs::write(
-        directory.join("identity.po"),
+        directory.join("identity.pima"),
         "pub function identity (:value) { value }\n",
     )
     .unwrap();
@@ -867,7 +1052,7 @@ fn module_aliases_share_the_cached_module() {
 
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"identity.po\" as first\nimport \"identity.po\" as second\n[= first.identity second.identity]\n",
+        "import \"identity.pima\" as first\nimport \"identity.pima\" as second\n[= first.identity second.identity]\n",
     );
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Boolean(true)));
@@ -877,7 +1062,7 @@ fn module_aliases_share_the_cached_module() {
 fn unaliased_imports_are_live_read_only_views() {
     let directory = module_test_directory("live-import");
     std::fs::write(
-        directory.join("counter.po"),
+        directory.join("counter.pima"),
         "pub var count 0\npub function bump () { let count [+ count 1] }\n",
     )
     .unwrap();
@@ -885,7 +1070,7 @@ fn unaliased_imports_are_live_read_only_views() {
         working_directory: Some(directory),
     });
 
-    let outcome = interpreter.run_source("<test>", "import \"counter.po\"\n[bump]\ncount\n");
+    let outcome = interpreter.run_source("<test>", "import \"counter.pima\"\n[bump]\ncount\n");
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(1)));
 }
@@ -893,19 +1078,21 @@ fn unaliased_imports_are_live_read_only_views() {
 #[test]
 fn import_cycles_are_reported_as_pima_errors() {
     let directory = module_test_directory("module-cycle");
-    std::fs::write(directory.join("a.po"), "import \"b.po\"\npub set a 1\n").unwrap();
-    std::fs::write(directory.join("b.po"), "import \"a.po\"\npub set b 2\n").unwrap();
+    std::fs::write(directory.join("a.pima"), "import \"b.pima\"\npub set a 1\n").unwrap();
+    std::fs::write(directory.join("b.pima"), "import \"a.pima\"\npub set b 2\n").unwrap();
     let mut interpreter = Interpreter::new(Config {
         working_directory: Some(directory),
     });
 
-    let outcome = interpreter.run_source("<test>", "import \"a.po\"\n");
+    let outcome = interpreter.run_source("<test>", "import \"a.pima\"\n");
     assert!(!outcome.is_success());
     assert!(outcome.diagnostics[0].message.contains("import cycle"));
     let message = &outcome.diagnostics[0].message;
-    let first_a = message.find("a.po").expect("cycle should include a.po");
-    let b = message.find("b.po").expect("cycle should include b.po");
-    let second_a = message.rfind("a.po").expect("cycle should close with a.po");
+    let first_a = message.find("a.pima").expect("cycle should include a.pima");
+    let b = message.find("b.pima").expect("cycle should include b.pima");
+    let second_a = message
+        .rfind("a.pima")
+        .expect("cycle should close with a.pima");
     assert!(first_a < b && b < second_a, "{message}");
 }
 
@@ -913,7 +1100,8 @@ fn import_cycles_are_reported_as_pima_errors() {
 fn runtime_diagnostics_include_origin_and_function_stack() {
     let source =
         "function inner () {\n    missing\n}\nfunction outer () {\n    [inner]\n}\n[outer]\n";
-    let outcome = run(source);
+    let mut interpreter = Interpreter::default();
+    let outcome = interpreter.run_source("<test>", source);
     assert!(!outcome.is_success());
 
     let diagnostic = &outcome.diagnostics[0];
@@ -939,7 +1127,7 @@ fn io_module_reads_and_writes_relative_to_working_directory() {
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"/po/io\" as io\n[io.write_text \"message.txt\" \"hello\"]\n[io.read_text \"message.txt\"]\n",
+        "import \"/pima/io\" as io\n[io.write_text \"message.txt\" \"hello\"]\n[io.read_text \"message.txt\"]\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -962,7 +1150,7 @@ fn io_module_classifies_invalid_utf8() {
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"/po/io\" as io\nset error [attempt {\n    [io.read_text \"invalid.txt\"]\n}]\n[is? error :invalid_encoding]\n",
+        "import \"/pima/library/standard\"\nimport \"/pima/io\" as io\nset error [attempt {\n    [io.read_text \"invalid.txt\"]\n}]\n[Types.is? error :invalid_encoding]\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -970,15 +1158,163 @@ fn io_module_classifies_invalid_utf8() {
 }
 
 #[test]
-fn imports_are_rejected_outside_module_scope() {
-    let directory = module_test_directory("nested-import");
-    std::fs::write(directory.join("dependency.po"), "pub set answer 42\n").unwrap();
+fn io_module_supports_a_complete_text_file_workflow() {
+    let directory = module_test_directory("io-workflow");
+    let mut interpreter = Interpreter::new(Config {
+        working_directory: Some(directory.clone()),
+    });
+    let outcome = interpreter.run_source(
+        "<test>",
+        "import \"/pima/io\" as io\n\
+         io.create_directory \"data\"\n\
+         io.write_text \"data/notes.txt\" \"one\\n\"\n\
+         io.append_text \"data/notes.txt\" \"two\\n\"\n\
+         set lines [io.read_lines \"data/notes.txt\"]\n\
+         io.copy_file \"data/notes.txt\" \"data/copy.txt\"\n\
+         io.move \"data/copy.txt\" \"data/moved.txt\"\n\
+         set entries [io.list_directory \"data\"]\n\
+         set file [io.file? \"data/moved.txt\"]\n\
+         set folder [io.directory? \"data\"]\n\
+         set missing [io.exists? \"data/missing.txt\"]\n\
+         io.remove_file \"data/moved.txt\"\n\
+         (lines entries file folder missing)\n",
+    );
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    let pima::Value::List(result) = outcome.value.expect("workflow returns a list") else {
+        panic!("expected workflow result list");
+    };
+    let values = result.to_vec();
+    assert_eq!(
+        values[0],
+        pima::Value::List(
+            [
+                pima::Value::String("one".into()),
+                pima::Value::String("two".into()),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+    assert_eq!(
+        values[1],
+        pima::Value::List(
+            [
+                pima::Value::String("moved.txt".into()),
+                pima::Value::String("notes.txt".into()),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+    assert_eq!(
+        &values[2..],
+        &[
+            pima::Value::Boolean(true),
+            pima::Value::Boolean(true),
+            pima::Value::Boolean(false),
+        ]
+    );
+    assert!(!directory.join("data/moved.txt").exists());
+}
+
+#[test]
+fn io_path_helpers_are_platform_aware() {
+    let directory = module_test_directory("io-paths");
+    std::fs::create_dir_all(directory.join("folder")).unwrap();
+    std::fs::write(directory.join("folder/report.txt"), "report").unwrap();
     let mut interpreter = Interpreter::new(Config {
         working_directory: Some(directory),
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "function load () {\n    import \"dependency.po\"\n}\n[load]\n",
+        "import \"/pima/io\" as io\n\
+         set path [io.join \"folder\" \"report.txt\"]\n\
+         (path [io.parent path] [io.file_name path] [io.extension path] [io.canonicalize path])\n",
+    );
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    let pima::Value::List(values) = outcome.value.unwrap() else {
+        panic!("expected path result list");
+    };
+    let values = values.to_vec();
+    assert_eq!(values[2], pima::Value::String("report.txt".into()));
+    assert_eq!(values[3], pima::Value::String("txt".into()));
+    assert!(
+        matches!(&values[4], pima::Value::String(path) if std::path::Path::new(path.as_ref()).is_absolute())
+    );
+}
+
+#[test]
+fn io_module_classifies_missing_files() {
+    let directory = module_test_directory("io-missing");
+    let mut interpreter = Interpreter::new(Config {
+        working_directory: Some(directory),
+    });
+    let outcome = interpreter.run_source(
+        "<test>",
+        "import \"/pima/library/standard\"\n\
+         import \"/pima/io\" as io\n\
+         set failure [attempt { io.read_text \"missing.txt\" }]\n\
+         [Types.is? failure :file_not_found]\n",
+    );
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.value, Some(pima::Value::Boolean(true)));
+}
+
+#[test]
+fn io_module_round_trips_binary_data_and_validates_bytes() {
+    let directory = module_test_directory("io-bytes");
+    let mut interpreter = Interpreter::new(Config {
+        working_directory: Some(directory.clone()),
+    });
+    let outcome = interpreter.run_source(
+        "<test>",
+        "import \"/pima/library/standard\"\n\
+         import \"/pima/io\" as io\n\
+         io.write_bytes \"data.bin\" (0 127 255)\n\
+         io.append_bytes \"data.bin\" (42)\n\
+         set bytes [io.read_bytes \"data.bin\"]\n\
+         set failure [attempt { io.write_bytes \"bad.bin\" (256) }]\n\
+         (bytes [Types.is? failure :value_error])\n",
+    );
+
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(
+        std::fs::read(directory.join("data.bin")).unwrap(),
+        [0, 127, 255, 42]
+    );
+    let pima::Value::List(result) = outcome.value.unwrap() else {
+        panic!("expected binary result list");
+    };
+    let values = result.to_vec();
+    assert_eq!(
+        values[0],
+        pima::Value::List(
+            [
+                pima::Value::Integer(0),
+                pima::Value::Integer(127),
+                pima::Value::Integer(255),
+                pima::Value::Integer(42),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+    assert_eq!(values[1], pima::Value::Boolean(true));
+}
+
+#[test]
+fn imports_are_rejected_outside_module_scope() {
+    let directory = module_test_directory("nested-import");
+    std::fs::write(directory.join("dependency.pima"), "pub set answer 42\n").unwrap();
+    let mut interpreter = Interpreter::new(Config {
+        working_directory: Some(directory),
+    });
+    let outcome = interpreter.run_source(
+        "<test>",
+        "function load () {\n    import \"dependency.pima\"\n}\n[load]\n",
     );
 
     assert!(!outcome.is_success());
