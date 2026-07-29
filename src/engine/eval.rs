@@ -53,7 +53,9 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
                 .store_block(block_id, context.interpreter.current_module);
             Ok(Value::Block(crate::runtime::BlockId(value_block_id as u32)))
         }
-        NodeKind::Member { object, member } => super::instantiate::member(context, object, &member),
+        NodeKind::Member { object, member } => {
+            super::instantiate::member(context, object, &member.text)
+        }
         NodeKind::Call {
             callee,
             arguments,
@@ -120,12 +122,13 @@ pub fn evaluate_block(
         (block.requirements.clone(), block.statements.clone())
     };
     for requirement in requirements {
-        if !binding_is_visible(context, &requirement) {
+        if !binding_is_visible(context, &requirement.text) {
             return Err(Signal::Throw(typed_err(
                 context,
                 &["error", "name_error", "missing_context"],
                 format!(
-                    "cannot execute block: required context binding `{requirement}` is unavailable"
+                    "cannot execute block: required context binding `{}` is unavailable",
+                    requirement.text
                 ),
             )));
         }
@@ -328,7 +331,7 @@ fn match_pattern(
     use crate::syntax::ast::Pattern;
     match pattern {
         Pattern::Wildcard => Ok(Some(Vec::new())),
-        Pattern::Capture(name) => Ok(Some(vec![(name.clone(), value.clone())])),
+        Pattern::Capture(name) => Ok(Some(vec![(name.text.clone(), value.clone())])),
         Pattern::Literal(node) => {
             let expected = evaluate_node(context, *node)?;
             Ok(crate::runtime::language_equal(&expected, value).then(Vec::new))
@@ -412,11 +415,11 @@ fn evaluate_match(
 fn evaluate_function(
     context: &mut CallContext,
     visibility: crate::syntax::ast::Visibility,
-    name: &str,
-    parameters: &[std::sync::Arc<str>],
+    name: &crate::syntax::ast::Name,
+    parameters: &[crate::syntax::ast::Name],
     body: crate::syntax::ast::BlockId,
 ) -> EvalResult {
-    let name_symbol = context.interpreter.symbols.intern(name);
+    let name_symbol = context.interpreter.symbols.intern(&name.text);
 
     // Check for duplicate
     let env = &context.interpreter.environments[context.interpreter.current_environment.0 as usize];
@@ -424,7 +427,7 @@ fn evaluate_function(
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "name_error"],
-            format!("duplicate binding `{name}` in current scope"),
+            format!("duplicate binding `{}` in current scope", name.text),
         )));
     }
 
@@ -433,22 +436,12 @@ fn evaluate_function(
         name: name_symbol,
         parameters: parameters
             .iter()
-            .map(|s| context.interpreter.symbols.intern(s.as_ref()))
+            .map(|parameter| context.interpreter.symbols.intern(&parameter.text))
             .collect(),
         body,
         body_module: context.interpreter.current_module,
         environment: context.interpreter.current_environment,
-        declaration_span: crate::source::Span::new(
-            context
-                .interpreter
-                .sources
-                .files()
-                .first()
-                .map(|f| f.id)
-                .unwrap_or(crate::source::SourceId(0)),
-            0,
-            0,
-        ),
+        declaration_span: name.span,
     };
 
     let func_id = crate::runtime::FunctionId(context.interpreter.functions.len() as u32);

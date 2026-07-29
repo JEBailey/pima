@@ -30,4 +30,4 @@ function sqrt (:number) {
 	findsqr number 1
 }
 
-Maths.int [sqrt 16]
+Math.int [sqrt 16]

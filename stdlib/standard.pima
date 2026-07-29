@@ -1,68 +1,68 @@
 // Pima standard library
 
-function maths_pow (:base :exponent) {
+function math_pow (:base :exponent) {
     if [< exponent 0] {
-        / 1 [maths_pow base [- 0 exponent]]
+        / 1 [math_pow base [- 0 exponent]]
     } {
-        if [= exponent 0] 1 [* base [maths_pow base [- exponent 1]]]
+        if [= exponent 0] 1 [* base [math_pow base [- exponent 1]]]
     }
 }
 
-function maths_lte (:left :right) {
+function math_lte (:left :right) {
     if [< left right] true [= left right]
 }
 
-function maths_gte (:left :right) {
+function math_gte (:left :right) {
     if [> left right] true [= left right]
 }
 
-function maths_increment (:value) {
+function math_increment (:value) {
     + value 1
 }
 
-function maths_decrement (:value) {
+function math_decrement (:value) {
     - value 1
 }
 
-function maths_range (:begin :end) {
-    set step [logic_select [maths_lte begin end] maths_increment maths_decrement]
+function math_range (:begin :end) {
+    set step [logic_select [math_lte begin end] math_increment math_decrement]
     if [= begin end] {
         List.append () begin
     } {
-        List.push [maths_range [step begin] end] begin
+        List.push [math_range [step begin] end] begin
     }
 }
 
-function maths_absolute (:value) {
+function math_absolute (:value) {
     if [< value 0] [- 0 value] value
 }
 
-function maths_minimum (:left :right) {
+function math_minimum (:left :right) {
     if [< left right] left right
 }
 
-function maths_maximum (:left :right) {
+function math_maximum (:left :right) {
     if [> left right] left right
 }
 
-function maths_clamp (:value :minimum :maximum) {
-    maths_minimum [maths_maximum value minimum] maximum
+function math_clamp (:value :minimum :maximum) {
+    math_minimum [math_maximum value minimum] maximum
 }
 
-function maths_sum (:list) {
+function math_sum (:list) {
     if [List.empty? list] 0 {
-        + [List.head list] [maths_sum [List.rest list]]
+        + [List.head list] [math_sum [List.rest list]]
     }
 }
 
-function maths_product (:list) {
+function math_product (:list) {
     if [List.empty? list] 1 {
-        * [List.head list] [maths_product [List.rest list]]
+        * [List.head list] [math_product [List.rest list]]
     }
 }
 
-function maths_average (:list) {
-    / [maths_sum list] [list_length list]
+function math_average (:list) {
+    / [math_sum list] [list_length list]
 }
 
 function list_reverse (:list) {
@@ -133,25 +133,25 @@ function logic_select (:predicate :when_true :when_false) {
     if predicate when_true when_false
 }
 
-pub set Maths [new {
+pub set Math [new {
     pub set E 2.718281828459045
     pub set PI 3.141592653589793
-    pub set pow maths_pow
-    pub set less_or_equal maths_lte
-    pub set greater_or_equal maths_gte
-    pub set increment maths_increment
-    pub set decrement maths_decrement
-    pub set range maths_range
-    pub set absolute maths_absolute
-    pub set minimum maths_minimum
-    pub set maximum maths_maximum
-    pub set clamp maths_clamp
-    pub set sum maths_sum
-    pub set product maths_product
-    pub set average maths_average
-    pub set div Maths.div
-    pub set mod Maths.mod
-    pub set int Maths.int
+    pub set pow math_pow
+    pub set less_or_equal math_lte
+    pub set greater_or_equal math_gte
+    pub set increment math_increment
+    pub set decrement math_decrement
+    pub set range math_range
+    pub set absolute math_absolute
+    pub set minimum math_minimum
+    pub set maximum math_maximum
+    pub set clamp math_clamp
+    pub set sum math_sum
+    pub set product math_product
+    pub set average math_average
+    pub set div Math.div
+    pub set mod Math.mod
+    pub set int Math.int
 }]
 
 pub set String [new {

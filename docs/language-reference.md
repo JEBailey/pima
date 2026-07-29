@@ -90,6 +90,25 @@ A colon immediately followed by an identifier forms a symbol literal:
 The colon is not part of the symbol's name. A symbol denotes a name without
 resolving that name as a binding.
 
+### 2.1 Naming conventions
+
+Pima programs use these naming conventions:
+
+| Kind | Convention | Examples |
+| --- | --- | --- |
+| Values, functions, and parameters | `snake_case` | `opening_balance`, `parse_value` |
+| Boolean predicates | `snake_case?` | `empty?`, `starts_with?` |
+| Namespaces and namespace templates | `PascalCase` | `String`, `InvalidOrder` |
+| Constants | `UPPER_CASE` | `PI`, `MAX_SIZE` |
+| Symbols and semantic type tags | `:snake_case` | `:good`, `:type_error` |
+| Source files | `snake_case.pima` | `json_parser.pima` |
+
+The `?` suffix communicates that a function answers a boolean question.
+Functions that validate, throw, or return a result value are not predicates
+and do not receive the suffix. PascalCase describes namespace-like values; it
+does not imply that Pima has classes. Punctuation operators such as `+`, `=`,
+and `<=` retain their symbolic spellings.
+
 The reserved words are:
 
 ```text
@@ -813,7 +832,7 @@ namespaces:
 |---|---|
 | `+ - * /` | Numeric arithmetic |
 | `< > =` | Numeric comparison or value equality |
-| `Maths.div`, `Maths.mod`, `Maths.int` | Integer division, remainder, and conversion |
+| `Math.div`, `Math.mod`, `Math.int` | Integer division, remainder, and conversion |
 | `Logic.not` | Boolean negation |
 | `Types.of`, `Types.is?` | Inspect and test value types |
 | `String.from`, `String.concat` | Display conversion and concatenation |
@@ -936,7 +955,7 @@ construction uses `push` or `append`.
 The standard library imported as `/pima/library/standard` exports cohesive
 namespace values rather than individual global functions:
 
-- `Maths`: `pow`, `less_or_equal`, `greater_or_equal`, `increment`,
+- `Math`: `pow`, `less_or_equal`, `greater_or_equal`, `increment`,
   `decrement`, `range`, `absolute`, `minimum`, `maximum`, `clamp`, `sum`,
   `product`, `average`, `div`, `mod`, `int`, `E`, and `PI`;
 - `String`: `concat`, `length`, `slice`, `chars`, `from`, `lower`, `upper`,
@@ -1086,7 +1105,7 @@ module:
 
 ```pima
 import "/pima/library/standard"
-import Maths.*
+import Math.*
 
 [pow 2 8]
 ```

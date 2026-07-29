@@ -199,11 +199,11 @@ fn parses_bare_import_path_and_alias() {
 
 #[test]
 fn parses_static_namespace_import() {
-    let module = parse_source("import Maths.*\n");
+    let module = parse_source("import Math.*\n");
     let NodeKind::StaticImport { namespace } = &module.node(module.statements[0]).kind else {
         panic!("expected static namespace import");
     };
-    assert_eq!(namespace.as_ref(), "Maths");
+    assert_eq!(namespace.as_ref(), "Math");
 }
 
 #[test]
@@ -277,6 +277,39 @@ fn parses_annotated_block_context_requirements() {
             .collect::<Vec<&str>>(),
         ["name", "score"]
     );
+}
+
+#[test]
+fn preserves_editor_spans_for_declared_names() {
+    let source = "function add (:left :right) {\n    set total [+ left right]\n    total\n}\n";
+    let module = parse_source(source);
+    let NodeKind::Function {
+        name,
+        parameters,
+        body,
+        ..
+    } = &module.node(module.statements[0]).kind
+    else {
+        panic!("expected function");
+    };
+
+    assert_eq!(&source[name.span.start..name.span.end], "add");
+    assert_eq!(
+        parameters
+            .iter()
+            .map(|parameter| &source[parameter.span.start..parameter.span.end])
+            .collect::<Vec<_>>(),
+        [":left", ":right"]
+    );
+
+    let NodeKind::Binding { pattern, .. } = &module.node(module.block(*body).statements[0]).kind
+    else {
+        panic!("expected binding");
+    };
+    let Pattern::Capture(total) = pattern else {
+        panic!("expected capture");
+    };
+    assert_eq!(&source[total.span.start..total.span.end], "total");
 }
 
 #[test]

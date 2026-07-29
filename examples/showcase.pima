@@ -54,15 +54,15 @@ function add (:left :right) {
 }
 
 set triple [multiplier 3]
-set generated [List.map triple [Maths.range 1 6]]
+set generated [List.map triple [Math.range 1 6]]
 set selected [List.filter greater_than_ten generated]
 set total [List.fold add 0 selected]
 set printable [List.map String.from selected]
 
 Console.println "Generated:" [String.join printable ", "]
 Console.println "Selected total:" total
-Console.println "Two to the tenth:" [Maths.pow 2 10]
-Console.println "PI:" Maths.PI
+Console.println "Two to the tenth:" [Math.pow 2 10]
+Console.println "PI:" Math.PI
 
 set account [create_account "Ada" total]
 account.deposit 25

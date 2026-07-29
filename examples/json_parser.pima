@@ -35,8 +35,8 @@ function skip_whitespace (:characters) {
 }
 
 function between (:value :minimum :maximum) {
-    if [Maths.greater_or_equal value minimum] {
-        Maths.less_or_equal value maximum
+    if [Math.less_or_equal minimum value] {
+        Math.less_or_equal value maximum
     } false
 }
 
@@ -73,7 +73,7 @@ function parse_exponent (:characters :number) {
             if [= count 0] {
                 json_fail "expected exponent digits"
             }
-            ([* number [Maths.pow 10 [* sign exponent]]] exponent_rest)
+            ([* number [Math.pow 10 [* sign exponent]]] exponent_rest)
         } {
             (number characters)
         }
@@ -108,7 +108,7 @@ function parse_number (:characters) {
         if [= fraction_count 0] {
             json_fail "expected digits after decimal point"
         }
-        let number [+ whole [/ fraction [Maths.pow 10 fraction_count]]]
+        let number [+ whole [/ fraction [Math.pow 10 fraction_count]]]
         let rest after_fraction
     }
 

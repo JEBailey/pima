@@ -4,7 +4,7 @@ import "/pima/library/standard"
 // Following examples indicate different ways of writing the fib sequence
 
 function fibonacci (:x) {
-    if [Maths.less_or_equal x 2] 1 [+ [fibonacci [- x 1]] [fibonacci [- x 2]]]
+    if [Math.less_or_equal x 2] 1 [+ [fibonacci [- x 1]] [fibonacci [- x 2]]]
 }
 
 function fibonacci2 (:x) {

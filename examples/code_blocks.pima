@@ -19,7 +19,7 @@ function choose_report (:detailed) {
 // The receiving function supplies the environment used by do.
 // The report block resolves name, score, and passing from this call.
 function render_report (:report :name :score) {
-    set passing [Maths.greater_or_equal score 70]
+    set passing [Math.greater_or_equal score 70]
     do report
 }
 

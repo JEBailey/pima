@@ -23,17 +23,17 @@ saysomething hello "jason"
 
 //Euclidean
 
-function euclidAlgorithmRecursive (:u :v) {
+function euclid_algorithm_recursive (:u :v) {
     if [= v 0] {
     	u
     } {
-        euclidAlgorithmRecursive v [Maths.mod u v]
+        euclid_algorithm_recursive v [Math.mod u v]
     }
 }
 
 Console.println "EUCLIDEAN GCD RECURSIVE"
-Console.println "GCD of 40902 and 24140 is " [euclidAlgorithmRecursive 40902 24140]
-Console.println "GCD of 12 and 8 is " [euclidAlgorithmRecursive 12 8]
-Console.println "GCD of 8 and 12 is " [euclidAlgorithmRecursive 8 12]
-Console.println "GCD of 3 and 7 is " [euclidAlgorithmRecursive 3 7]
+Console.println "GCD of 40902 and 24140 is " [euclid_algorithm_recursive 40902 24140]
+Console.println "GCD of 12 and 8 is " [euclid_algorithm_recursive 12 8]
+Console.println "GCD of 8 and 12 is " [euclid_algorithm_recursive 8 12]
+Console.println "GCD of 3 and 7 is " [euclid_algorithm_recursive 3 7]
 

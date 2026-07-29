@@ -1,7 +1,7 @@
 import "/pima/library/standard"
 
 Console.println "\n** FOREACH TEST - import functionality from standard lib**"
-List.foreach [Maths.range 1 12] {
+List.foreach [Math.range 1 12] {
     Console.println "hi! number " item
 }
 

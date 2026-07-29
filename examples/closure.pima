@@ -1,15 +1,15 @@
 import "/pima/library/standard"
 
 
-function exampleClosure (:arg1 :arg2) {
-    set localVar 8
-    function lambda (:innerArg) {
-        / [+ innerArg  localVar] [+ arg1 arg2]
+function example_closure (:arg1 :arg2) {
+    set local_var 8
+    function lambda (:inner_arg) {
+        / [+ inner_arg local_var] [+ arg1 arg2]
     }
 }
 
-// returns the function closureReturned mapped to exampleClosure
-set innerFunction [exampleClosure 2 3]
+// Returns the inner function closed over example_closure's environment.
+set inner_function [example_closure 2 3]
 Console.println "\n** CLOSURE TEST**"
-Console.println "correct behaviour results in 2 : " [innerFunction 2]
-Console.println "correct behaviour results in 3 : " [innerFunction 7]
+Console.println "correct behaviour results in 2 : " [inner_function 2]
+Console.println "correct behaviour results in 3 : " [inner_function 7]

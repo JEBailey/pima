@@ -1,4 +1,7 @@
+mod catalog;
+mod semantic;
 mod server;
+mod workspace;
 
 use server::Backend;
 use tower_lsp::{LspService, Server};

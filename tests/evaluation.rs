@@ -12,7 +12,7 @@ fn run(source: &str) -> pima::RunOutcome {
             .iter()
             .any(|name| source.contains(name));
         let mut prelude = String::from(
-            "import \"/pima/library/standard\"\nimport Maths.*\nimport Console.*\nimport Logic.*\nset types Types.of\nset is? Types.is?\n",
+            "import \"/pima/library/standard\"\nimport Math.*\nimport Console.*\nimport Logic.*\nset types Types.of\nset is? Types.is?\n",
         );
         if uses_list {
             prelude.push_str("import List.*\n");
@@ -56,7 +56,7 @@ fn user_scope_contains_only_primitive_operators_by_default() {
 fn standard_library_exposes_core_functions_through_namespaces() {
     let value = run_ok(
         "import \"/pima/library/standard\"\n\
-         ([String.concat \"pi\" \"ma\"] [Maths.int 2.9] [Logic.not false] [Types.is? 1 :integer])",
+         ([String.concat \"pi\" \"ma\"] [Math.int 2.9] [Logic.not false] [Types.is? 1 :integer])",
     );
     assert_eq!(
         value,
@@ -968,7 +968,7 @@ fn throw_and_attempt() {
 #[test]
 fn import_standard_library() {
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\n[Maths.pow 2 8]\n"),
+        run_ok("import \"/pima/library/standard\"\n[Math.pow 2 8]\n"),
         pima::Value::Integer(256)
     );
     assert_eq!(
@@ -986,7 +986,7 @@ fn standard_library_provides_baseline_collection_and_string_utilities() {
         pima::Value::String(std::sync::Arc::from("3,4"))
     );
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\n[Maths.sum (1 2 3 4)]\n"),
+        run_ok("import \"/pima/library/standard\"\n[Math.sum (1 2 3 4)]\n"),
         pima::Value::Integer(10)
     );
     assert_eq!(
@@ -998,14 +998,14 @@ fn standard_library_provides_baseline_collection_and_string_utilities() {
 #[test]
 fn static_import_exposes_public_namespace_members() {
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\nimport Maths.*\n[pow 2 10]\n"),
+        run_ok("import \"/pima/library/standard\"\nimport Math.*\n[pow 2 10]\n"),
         pima::Value::Integer(1024)
     );
 }
 
 #[test]
 fn static_import_rejects_collisions_without_partial_binding() {
-    let outcome = run("import \"/pima/library/standard\"\nset PI 3\nimport Maths.*\n");
+    let outcome = run("import \"/pima/library/standard\"\nset PI 3\nimport Math.*\n");
     assert!(!outcome.is_success());
     assert!(outcome.diagnostics[0].message.contains("collision"));
 }

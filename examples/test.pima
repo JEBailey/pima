@@ -14,4 +14,4 @@ function fibonacci(:x) {
 	}
 }
 
-Console.println "fiboncacci results of the number 12" [Maths.int [fibonacci 12]]
+Console.println "fiboncacci results of the number 12" [Math.int [fibonacci 12]]

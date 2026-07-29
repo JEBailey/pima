@@ -258,7 +258,7 @@ fn register_natives(interpreter: &mut Interpreter) {
     for (id, name) in definitions {
         let namespace = match name {
             "+" | "-" | "*" | "/" | "<" | ">" | "=" => None,
-            "div" | "mod" | "int" => Some("Maths"),
+            "div" | "mod" | "int" => Some("Math"),
             "concat" | "length" | "slice" | "chars" | "code_point" | "from_code_point"
             | "string" | "lower" | "upper" | "trim" | "contains?" | "starts_with?"
             | "ends_with?" | "replace" | "split" | "join" => Some("String"),

@@ -7,13 +7,27 @@ use crate::{
 
 use super::{
     ast::{
-        BindingKind, Block, BlockId, LoopKind, MatchArm, Module, Node, NodeId, NodeKind, Pattern,
-        Visibility,
+        BindingKind, Block, BlockId, LoopKind, MatchArm, Module, Name, Node, NodeId, NodeKind,
+        Pattern, Visibility,
     },
     token::{Keyword, Token, TokenKind},
 };
 
 pub fn parse(tokens: &[Token]) -> Result<Module, Vec<Diagnostic>> {
+    let output = parse_recovering(tokens);
+    if output.diagnostics.is_empty() {
+        Ok(output.module)
+    } else {
+        Err(output.diagnostics)
+    }
+}
+
+/// Parses as much of a module as possible and preserves syntax diagnostics.
+///
+/// The interpreter uses [`parse`] because it must not execute malformed input.
+/// Editor tooling can use this entry point to retain symbols and structure from
+/// valid regions while a document is being edited.
+pub fn parse_recovering(tokens: &[Token]) -> ParseOutput {
     let source = tokens
         .first()
         .map(|token| token.span.source)
@@ -28,16 +42,21 @@ pub fn parse(tokens: &[Token]) -> Result<Module, Vec<Diagnostic>> {
     };
     let statements = parser.parse_program();
 
-    if parser.diagnostics.is_empty() {
-        Ok(Module {
+    ParseOutput {
+        module: Module {
             source,
             statements,
             nodes: parser.nodes,
             blocks: parser.blocks,
-        })
-    } else {
-        Err(parser.diagnostics)
+        },
+        diagnostics: parser.diagnostics,
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ParseOutput {
+    pub module: Module,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 struct Parser<'tokens> {
@@ -127,7 +146,10 @@ impl Parser<'_> {
                 span,
                 NodeKind::Member {
                     object: expression,
-                    member,
+                    member: Name {
+                        text: member,
+                        span: member_span,
+                    },
                 },
             );
         }
@@ -307,7 +329,10 @@ impl Parser<'_> {
                 ));
                 return Err(());
             }
-            requirements.push(requirement);
+            requirements.push(Name {
+                text: requirement,
+                span: token.span,
+            });
             self.skip_eols();
         }
         self.advance();
@@ -391,7 +416,10 @@ impl Parser<'_> {
         match token.kind {
             TokenKind::Identifier(name) | TokenKind::Symbol(name) => {
                 self.advance();
-                Ok(Pattern::Capture(name))
+                Ok(Pattern::Capture(Name {
+                    text: name,
+                    span: token.span,
+                }))
             }
             TokenKind::Underscore => {
                 self.advance();
@@ -428,7 +456,10 @@ impl Parser<'_> {
         match token.kind {
             TokenKind::Symbol(name) => {
                 self.advance();
-                Ok(Pattern::Capture(name))
+                Ok(Pattern::Capture(Name {
+                    text: name,
+                    span: token.span,
+                }))
             }
             TokenKind::Identifier(name) => {
                 self.advance();
@@ -510,7 +541,7 @@ impl Parser<'_> {
             |kind| matches!(kind, TokenKind::Keyword(Keyword::Function)),
             "expected `function`",
         )?;
-        let (name, _) = self.expect_identifier("expected function name")?;
+        let (name, name_span) = self.expect_identifier("expected function name")?;
         self.expect_simple(
             |kind| matches!(kind, TokenKind::LeftParen),
             "expected `(` before parameters",
@@ -543,7 +574,10 @@ impl Parser<'_> {
                 ));
                 return Err(());
             }
-            parameters.push(parameter);
+            parameters.push(Name {
+                text: parameter,
+                span: token.span,
+            });
             self.skip_eols();
         }
         self.advance();
@@ -553,7 +587,10 @@ impl Parser<'_> {
             self.join(start, body_span),
             NodeKind::Function {
                 visibility,
-                name,
+                name: Name {
+                    text: name,
+                    span: name_span,
+                },
                 parameters,
                 body,
             },

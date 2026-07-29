@@ -29,8 +29,26 @@ impl Module {
 #[derive(Clone, Debug)]
 pub struct Block {
     pub span: Span,
-    pub requirements: Vec<Arc<str>>,
+    pub requirements: Vec<Name>,
     pub statements: Vec<NodeId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Name {
+    pub text: Arc<str>,
+    pub span: Span,
+}
+
+impl AsRef<str> for Name {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl std::fmt::Display for Name {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.text.fmt(formatter)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -42,7 +60,7 @@ pub struct Node {
 #[derive(Clone, Debug)]
 pub enum Pattern {
     Wildcard,
-    Capture(Arc<str>),
+    Capture(Name),
     Literal(NodeId),
     List(Vec<Pattern>),
 }
@@ -67,7 +85,7 @@ pub enum NodeKind {
     Block(BlockId),
     Member {
         object: NodeId,
-        member: Arc<str>,
+        member: Name,
     },
     Call {
         callee: NodeId,
@@ -86,8 +104,8 @@ pub enum NodeKind {
     },
     Function {
         visibility: Visibility,
-        name: Arc<str>,
-        parameters: Vec<Arc<str>>,
+        name: Name,
+        parameters: Vec<Name>,
         body: BlockId,
     },
     Conditional {
