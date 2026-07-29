@@ -530,16 +530,22 @@ The binding form, not the presence of `:`, determines the operation. In
 particular, `let (:left :right) ...` does not create bindings: both names must
 already resolve to mutable bindings just as they must in the bare-name form.
 
-`match` evaluates its subject once and selects the first matching arm:
+`match` evaluates its subject once and selects the first matching arm. In this
+example, `result` is a two-element immutable list. Its first element is a
+symbol that identifies the kind of result, and its second element is the
+associated value:
 
 ```pima
+set result (:error "the input was not valid")
+// A successful result might instead be (:good 42).
+
 match result (
-    (ok :value) {
+    (good :value) {
         Console.println value
     }
 
-    (error :error) {
-        throw error
+    (error :message) {
+        Console.println message
     }
 
     _ {
@@ -548,11 +554,24 @@ match result (
 )
 ```
 
-Inside `match` patterns, `:name` captures, while a bare name matches the symbol with that
-name, ordinary literals require equality, and `_` is a wildcard. Thus `ok`
-matches the symbol `:ok`, while `:value` captures the corresponding value.
-Captures are immutable and visible only within their arm. If no arm matches,
-`match` throws `:match_error`.
+The subject therefore has one of these conventional shapes:
+
+```pima
+(:error "an error message") // the symbol :error followed by a string
+(:good value)               // the symbol :good followed by any result value
+```
+
+The arm `(error :message)` is also a two-element list pattern. Its bare
+`error` matches the literal symbol `:error`, while `:message` captures the
+list's second element. Similarly, `(good :value)` matches a list beginning
+with `:good` and captures its second element as `value`. The pattern itself
+does not require `message` to be a string; that is part of this result
+representation's convention.
+
+More generally, inside `match` patterns, `:name` captures, while a bare name
+matches the symbol with that name, ordinary literals require equality, and
+`_` is a wildcard. Captures are immutable and visible only within their arm.
+If no arm matches, `match` throws `:match_error`.
 
 A function declaration binds its name in the current environment before its
 body can execute. This permits direct recursion. Function parameters are
