@@ -1,4 +1,5 @@
 mod catalog;
+mod formatting;
 mod semantic;
 mod server;
 mod workspace;

@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 pima = { path = ".." }
-tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "time"] }
 tower-lsp = "0.20"
 
 [dev-dependencies]

@@ -17,27 +17,28 @@ use tower_lsp::{
     Client, LanguageServer,
     jsonrpc::Result,
     lsp_types::{
-        CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
-        CompletionResponse, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbol,
-        DocumentSymbolParams, DocumentSymbolResponse, FoldingRange, FoldingRangeParams,
-        FoldingRangeProviderCapability, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-        HoverContents, HoverParams, InitializeParams, InitializeResult, InitializedParams,
-        InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Location, MarkedString,
-        MessageType, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions,
-        RenameParams, SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability,
-        SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
-        SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-        SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-        ServerCapabilities, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
-        SignatureInformation, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind,
-        TextEdit, Url, WorkspaceEdit,
+        CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
+        CodeActionProviderCapability, CompletionItem, CompletionItemKind, CompletionOptions,
+        CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
+        DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+        FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
+        GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams,
+        InitializeResult, InitializedParams, InlayHint, InlayHintKind, InlayHintLabel,
+        InlayHintParams, Location, MarkedString, MessageType, OneOf, Position,
+        PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, SelectionRange,
+        SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
+        SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
+        SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+        SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelp, SignatureHelpOptions,
+        SignatureHelpParams, SignatureInformation, SymbolKind, TextDocumentSyncCapability,
+        TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit,
     },
 };
 
 use crate::semantic::{IssueSeverity, SemanticModel, SymbolKind as SemanticSymbolKind};
 use crate::{
-    catalog,
+    catalog, formatting,
     semantic::Symbol,
     workspace::{IndexedSymbol, WorkspaceIndex},
 };
@@ -45,6 +46,8 @@ use crate::{
 pub struct Backend {
     client: Client,
     documents: Arc<RwLock<HashMap<Url, String>>>,
+    analyses: Arc<RwLock<HashMap<Url, Arc<Analysis>>>>,
+    versions: Arc<RwLock<HashMap<Url, i32>>>,
     workspace: Arc<RwLock<WorkspaceIndex>>,
 }
 
@@ -53,23 +56,87 @@ impl Backend {
         Self {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
+            analyses: Arc::new(RwLock::new(HashMap::new())),
+            versions: Arc::new(RwLock::new(HashMap::new())),
             workspace: Arc::new(RwLock::new(WorkspaceIndex::default())),
         }
     }
 
-    async fn update(&self, uri: Url, text: String) {
+    async fn update(&self, uri: Url, text: String, version: i32) {
+        let analysis = Arc::new(analyze(&text));
         self.documents
             .write()
             .expect("document lock poisoned")
             .insert(uri.clone(), text.clone());
+        self.analyses
+            .write()
+            .expect("analysis lock poisoned")
+            .insert(uri.clone(), analysis.clone());
+        self.versions
+            .write()
+            .expect("version lock poisoned")
+            .insert(uri.clone(), version);
         self.workspace
             .write()
             .expect("workspace lock poisoned")
             .upsert(uri.clone(), text.clone());
-        let diagnostics = analyze(&text).diagnostics;
         self.client
-            .publish_diagnostics(uri, diagnostics, None)
+            .publish_diagnostics(uri, analysis.diagnostics.clone(), None)
             .await;
+    }
+
+    fn queue_change(&self, uri: Url, text: String, version: i32) {
+        {
+            let mut versions = self.versions.write().expect("version lock poisoned");
+            if versions
+                .get(&uri)
+                .is_some_and(|current| *current >= version)
+            {
+                return;
+            }
+            versions.insert(uri.clone(), version);
+        }
+        self.documents
+            .write()
+            .expect("document lock poisoned")
+            .insert(uri.clone(), text.clone());
+        self.analyses
+            .write()
+            .expect("analysis lock poisoned")
+            .remove(&uri);
+        self.workspace
+            .write()
+            .expect("workspace lock poisoned")
+            .upsert(uri.clone(), text);
+
+        let client = self.client.clone();
+        let documents = self.documents.clone();
+        let analyses = self.analyses.clone();
+        let versions = self.versions.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+            if versions.read().expect("version lock poisoned").get(&uri) != Some(&version) {
+                return;
+            }
+            let Some(text) = documents
+                .read()
+                .expect("document lock poisoned")
+                .get(&uri)
+                .cloned()
+            else {
+                return;
+            };
+            let analysis = Arc::new(analyze(&text));
+            if versions.read().expect("version lock poisoned").get(&uri) != Some(&version) {
+                return;
+            }
+            let diagnostics = analysis.diagnostics.clone();
+            analyses
+                .write()
+                .expect("analysis lock poisoned")
+                .insert(uri.clone(), analysis);
+            client.publish_diagnostics(uri, diagnostics, None).await;
+        });
     }
 
     fn text(&self, uri: &Url) -> Option<String> {
@@ -80,6 +147,24 @@ impl Backend {
             .cloned()
     }
 
+    fn analysis(&self, uri: &Url, text: &str) -> Arc<Analysis> {
+        if let Some(analysis) = self
+            .analyses
+            .read()
+            .expect("analysis lock poisoned")
+            .get(uri)
+            .cloned()
+        {
+            return analysis;
+        }
+        let analysis = Arc::new(analyze(text));
+        self.analyses
+            .write()
+            .expect("analysis lock poisoned")
+            .insert(uri.clone(), analysis.clone());
+        analysis
+    }
+
     fn symbol_at(
         &self,
         uri: &Url,
@@ -87,8 +172,8 @@ impl Backend {
     ) -> Option<(String, SemanticModel, crate::semantic::SymbolId)> {
         let text = self.text(uri)?;
         let offset = position_to_offset(&text, position)?;
-        let analysis = analyze(&text);
-        let model = analysis.semantic?;
+        let analysis = self.analysis(uri, &text);
+        let model = analysis.semantic.clone()?;
         let symbol = model.symbol_at(offset)?;
         Some((text, model, symbol))
     }
@@ -138,6 +223,8 @@ impl LanguageServer for Backend {
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(tower_lsp::lsp_types::ServerInfo {
@@ -158,13 +245,21 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.update(params.text_document.uri, params.text_document.text)
-            .await;
+        self.update(
+            params.text_document.uri,
+            params.text_document.text,
+            params.text_document.version,
+        )
+        .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().last() {
-            self.update(params.text_document.uri, change.text).await;
+            self.queue_change(
+                params.text_document.uri,
+                change.text,
+                params.text_document.version,
+            );
         }
     }
 
@@ -172,6 +267,14 @@ impl LanguageServer for Backend {
         self.documents
             .write()
             .expect("document lock poisoned")
+            .remove(&params.text_document.uri);
+        self.analyses
+            .write()
+            .expect("analysis lock poisoned")
+            .remove(&params.text_document.uri);
+        self.versions
+            .write()
+            .expect("version lock poisoned")
             .remove(&params.text_document.uri);
         {
             let uri = &params.text_document.uri;
@@ -198,7 +301,7 @@ impl LanguageServer for Backend {
         let Some(offset) = position_to_offset(&text, position) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&document.uri, &text);
         if let Some((member, span)) = catalog_member_at(&text, &analysis.tokens, offset) {
             return Ok(Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(member.signature.into())),
@@ -285,9 +388,9 @@ impl LanguageServer for Backend {
             }
         }
 
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&uri, &text);
         let mut items = keyword_completions();
-        if let Some(model) = analysis.semantic {
+        if let Some(model) = analysis.semantic.as_ref() {
             items.extend(
                 model
                     .visible_symbols_at(offset)
@@ -331,10 +434,11 @@ impl LanguageServer for Backend {
         let Some(text) = self.text(&params.text_document.uri) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&params.text_document.uri, &text);
         Ok(analysis
             .module
-            .map(|module| DocumentSymbolResponse::Nested(document_symbols(&text, &module))))
+            .as_ref()
+            .map(|module| DocumentSymbolResponse::Nested(document_symbols(&text, module))))
     }
 
     async fn goto_definition(
@@ -349,7 +453,7 @@ impl LanguageServer for Backend {
         let Some(offset) = position_to_offset(&text, position) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&uri, &text);
         if let Some((model, symbol)) = analysis
             .semantic
             .as_ref()
@@ -453,7 +557,7 @@ impl LanguageServer for Backend {
         let Some(offset) = position_to_offset(&text, position) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&uri, &text);
         Ok(
             signature_at(&text, &analysis, offset).map(|(label, parameters, active_parameter)| {
                 SignatureHelp {
@@ -485,7 +589,7 @@ impl LanguageServer for Backend {
         let Some(text) = self.text(&params.text_document.uri) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&params.text_document.uri, &text);
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
             data: semantic_tokens(&text, &analysis),
@@ -496,7 +600,7 @@ impl LanguageServer for Backend {
         let Some(text) = self.text(&params.text_document.uri) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&params.text_document.uri, &text);
         Ok(analysis
             .module
             .as_ref()
@@ -510,7 +614,7 @@ impl LanguageServer for Backend {
         let Some(text) = self.text(&params.text_document.uri) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&params.text_document.uri, &text);
         let Some(module) = analysis.module.as_ref() else {
             return Ok(None);
         };
@@ -530,7 +634,7 @@ impl LanguageServer for Backend {
         let Some(text) = self.text(&params.text_document.uri) else {
             return Ok(None);
         };
-        let analysis = analyze(&text);
+        let analysis = self.analysis(&params.text_document.uri, &text);
         let Some(module) = analysis.module.as_ref() else {
             return Ok(None);
         };
@@ -540,6 +644,86 @@ impl LanguageServer for Backend {
             analysis.semantic.as_ref(),
             params.range,
         )))
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let Some(text) = self.text(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        let Some(formatted) = formatting::format(&text, params.options.tab_size as usize) else {
+            return Ok(None);
+        };
+        if formatted == text {
+            return Ok(Some(Vec::new()));
+        }
+        Ok(Some(vec![TextEdit::new(
+            Range::new(Position::new(0, 0), offset_to_position(&text, text.len())),
+            formatted,
+        )]))
+    }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<Vec<CodeActionOrCommand>>> {
+        let uri = params.text_document.uri;
+        let Some(text) = self.text(&uri) else {
+            return Ok(None);
+        };
+        let start = position_to_offset(&text, params.range.start).unwrap_or(0);
+        let end = position_to_offset(&text, params.range.end).unwrap_or(text.len());
+        let analysis = self.analysis(&uri, &text);
+        let Some(model) = analysis.semantic.as_ref() else {
+            return Ok(None);
+        };
+        let mut actions = Vec::new();
+        for (symbol_id, symbol) in model.symbols.iter().enumerate() {
+            if symbol.declaration.end < start
+                || symbol.declaration.start > end
+                || !matches!(
+                    symbol.kind,
+                    SemanticSymbolKind::Function
+                        | SemanticSymbolKind::Parameter
+                        | SemanticSymbolKind::PatternCapture
+                )
+                || !symbol
+                    .name
+                    .chars()
+                    .any(|character| character.is_ascii_uppercase())
+            {
+                continue;
+            }
+            let replacement_name = to_snake_case(&symbol.name);
+            let edits = model
+                .reference_spans(symbol_id, true)
+                .into_iter()
+                .map(|span| {
+                    let replacement = if text
+                        .get(span.start..span.end)
+                        .is_some_and(|source| source.starts_with(':'))
+                    {
+                        format!(":{replacement_name}")
+                    } else {
+                        replacement_name.clone()
+                    };
+                    TextEdit::new(span_to_range(&text, span), replacement)
+                })
+                .collect();
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Rename `{}` to `{replacement_name}`", symbol.name),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(params.context.diagnostics.clone()),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(HashMap::from([(uri.clone(), edits)])),
+                    ..WorkspaceEdit::default()
+                }),
+                is_preferred: Some(true),
+                disabled: None,
+                command: None,
+                data: None,
+            }));
+        }
+        Ok(Some(actions))
     }
 }
 
@@ -622,6 +806,31 @@ fn valid_identifier(name: &str) -> bool {
         && stem
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+fn to_snake_case(name: &str) -> String {
+    let characters = name.chars().collect::<Vec<_>>();
+    let mut result = String::new();
+    for (index, character) in characters.iter().copied().enumerate() {
+        if character.is_ascii_uppercase() {
+            let previous_is_lower_or_digit = index > 0
+                && (characters[index - 1].is_ascii_lowercase()
+                    || characters[index - 1].is_ascii_digit());
+            let next_is_lower = characters
+                .get(index + 1)
+                .is_some_and(char::is_ascii_lowercase);
+            if !result.is_empty()
+                && !result.ends_with('_')
+                && (previous_is_lower_or_digit || next_is_lower)
+            {
+                result.push('_');
+            }
+            result.push(character.to_ascii_lowercase());
+        } else {
+            result.push(character);
+        }
+    }
+    result
 }
 
 fn diagnostic(text: &str, value: &PimaDiagnostic) -> Diagnostic {
@@ -1286,6 +1495,9 @@ mod tests {
         assert!(!valid_identifier("empty?now"));
         assert!(!valid_identifier("set"));
         assert!(!valid_identifier(":value"));
+        assert_eq!(to_snake_case("parseValue"), "parse_value");
+        assert_eq!(to_snake_case("HTTPValue"), "http_value");
+        assert_eq!(to_snake_case("empty?"), "empty?");
     }
 
     #[test]
@@ -1403,5 +1615,32 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(labels.contains(&"left:"));
         assert!(labels.contains(&"right:"));
+    }
+
+    #[test]
+    fn large_document_analysis_stays_interactive() {
+        let mut text = String::new();
+        for index in 0..1_500 {
+            text.push_str(&format!(
+                "function function_{index} (:value) {{\n    + value {index}\n}}\n"
+            ));
+        }
+        let started = std::time::Instant::now();
+        let analysis = analyze(&text);
+        assert!(analysis.diagnostics.is_empty());
+        assert_eq!(
+            analysis
+                .semantic
+                .as_ref()
+                .expect("semantic model")
+                .symbols
+                .len(),
+            3_000
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "large document analysis took {:?}",
+            started.elapsed()
+        );
     }
 }

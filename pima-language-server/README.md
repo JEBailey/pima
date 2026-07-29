@@ -2,6 +2,9 @@
 
 An LSP server for `.pima` files, built on Pima's lexer and parser.
 
+See [docs/capabilities.md](docs/capabilities.md) for analysis behavior,
+dynamic-language limits, and the complete editor integration guide.
+
 ## Features
 
 - syntax diagnostics while a document is open;
@@ -20,6 +23,9 @@ An LSP server for `.pima` files, built on Pima's lexer and parser.
 - workspace indexing for `.pima` modules;
 - cross-file completion and go to definition through aliased and unaliased
   imports;
+- conservative document formatting with configurable indentation;
+- `snake_case` naming quick fixes that update declarations and resolved
+  references;
 - go to definition and find references;
 - scope-aware rename with symbolic declaration preservation;
 - nested namespace and function document symbols;
