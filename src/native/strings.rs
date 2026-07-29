@@ -67,7 +67,10 @@ fn native_concat(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
         } else {
             return Err(ctx.typed_error(
                 &["error", "type_error"],
-                format!("concat requires string arguments, got {}", type_str(arg)),
+                format!(
+                    "concat requires string arguments, got {}",
+                    arg.type_symbol()
+                ),
             ));
         }
     }
@@ -275,19 +278,4 @@ fn native_join(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
         strings.push(string.as_ref());
     }
     Ok(Value::String(Arc::from(strings.join(separator))))
-}
-
-fn type_str(value: &Value) -> &'static str {
-    match value {
-        Value::Unit => ":unit",
-        Value::Boolean(_) => ":boolean",
-        Value::Integer(_) => ":integer",
-        Value::Float(_) => ":float",
-        Value::String(_) => ":string",
-        Value::Symbol(_) => ":symbol",
-        Value::List(_) => ":list",
-        Value::Function(_) | Value::NativeFunction(_) => ":function",
-        Value::Block(_) => ":block",
-        Value::Namespace(_) => ":namespace",
-    }
 }

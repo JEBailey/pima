@@ -643,7 +643,7 @@ fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeI
             &["error", "type_error"],
             format!(
                 "throw requires an error value (type :error), got {}",
-                value_type_name(&value)
+                value.type_symbol()
             ),
         )));
     }
@@ -719,17 +719,7 @@ fn evaluate_attempt(
 // ── Import ──
 
 fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -> EvalResult {
-    if !context
-        .interpreter
-        .module_environments
-        .contains(&context.interpreter.current_environment)
-    {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "import_error"],
-            "imports are permitted only at module scope".to_owned(),
-        )));
-    }
+    require_module_scope(context, "imports")?;
 
     let importer_name = context
         .interpreter
@@ -829,17 +819,7 @@ fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -
 }
 
 fn evaluate_static_import(context: &mut CallContext, namespace: &str) -> EvalResult {
-    if !context
-        .interpreter
-        .module_environments
-        .contains(&context.interpreter.current_environment)
-    {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "import_error"],
-            "static imports are permitted only at module scope".to_owned(),
-        )));
-    }
+    require_module_scope(context, "static imports")?;
     let value = resolve_identifier(context, namespace)?;
     let Value::Namespace(namespace_id) = value else {
         return Err(Signal::Throw(typed_err(
@@ -847,7 +827,7 @@ fn evaluate_static_import(context: &mut CallContext, namespace: &str) -> EvalRes
             &["error", "type_error"],
             format!(
                 "static import requires a namespace, got {}",
-                value_type_name(&value)
+                value.type_symbol()
             ),
         )));
     };
@@ -886,6 +866,21 @@ fn evaluate_static_import(context: &mut CallContext, namespace: &str) -> EvalRes
         );
     }
     Ok(Value::Unit)
+}
+
+fn require_module_scope(context: &mut CallContext, operation: &str) -> Result<(), Signal> {
+    if context
+        .interpreter
+        .module_environments
+        .contains(&context.interpreter.current_environment)
+    {
+        return Ok(());
+    }
+    Err(Signal::Throw(typed_err(
+        context,
+        &["error", "import_error"],
+        format!("{operation} are permitted only at module scope"),
+    )))
 }
 
 fn load_module(
@@ -1135,21 +1130,6 @@ fn fail_module<T>(
 }
 
 // ── Helpers ──
-
-pub(super) fn value_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Unit => ":unit",
-        Value::Boolean(_) => ":boolean",
-        Value::Integer(_) => ":integer",
-        Value::Float(_) => ":float",
-        Value::String(_) => ":string",
-        Value::Symbol(_) => ":symbol",
-        Value::List(_) => ":list",
-        Value::Function(_) | Value::NativeFunction(_) => ":function",
-        Value::Block(_) => ":block",
-        Value::Namespace(_) => ":namespace",
-    }
-}
 
 // ── Call Frame ──
 

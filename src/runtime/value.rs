@@ -25,6 +25,27 @@ impl PartialEq for Value {
     }
 }
 
+impl Value {
+    pub(crate) fn type_name(&self) -> &'static str {
+        match self {
+            Self::Unit => "unit",
+            Self::Boolean(_) => "boolean",
+            Self::Integer(_) => "integer",
+            Self::Float(_) => "float",
+            Self::String(_) => "string",
+            Self::Symbol(_) => "symbol",
+            Self::List(_) => "list",
+            Self::Function(_) | Self::NativeFunction(_) => "function",
+            Self::Block(_) => "block",
+            Self::Namespace(_) => "namespace",
+        }
+    }
+
+    pub(crate) fn type_symbol(&self) -> String {
+        format!(":{}", self.type_name())
+    }
+}
+
 pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Unit, Value::Unit) => true,

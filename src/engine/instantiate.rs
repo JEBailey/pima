@@ -2,9 +2,7 @@ use std::collections::HashSet;
 
 use crate::runtime::{BindingMutability, BindingVisibility, Environment, Namespace, Value};
 
-use super::eval::{
-    CallContext, EvalResult, Signal, evaluate_block, evaluate_node, typed_err, value_type_name,
-};
+use super::eval::{CallContext, EvalResult, Signal, evaluate_block, evaluate_node, typed_err};
 
 pub(super) fn member(
     context: &mut CallContext,
@@ -18,7 +16,7 @@ pub(super) fn member(
             &["error", "type_error"],
             format!(
                 "member access `.` requires a namespace, got {}",
-                value_type_name(&value)
+                value.type_symbol()
             ),
         )));
     };

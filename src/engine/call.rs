@@ -2,7 +2,6 @@ use crate::runtime::{Binding, BindingMutability, BindingVisibility, Environment,
 
 use super::eval::{
     CallContext, CallFrame, EvalResult, Signal, evaluate_block, evaluate_node, typed_err,
-    value_type_name,
 };
 
 /// Evaluates a call expression and dispatches it to a user or native function.
@@ -33,7 +32,7 @@ pub(super) fn evaluate(
         other => Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
-            format!("cannot call value of type {}", value_type_name(&other)),
+            format!("cannot call value of type {}", other.type_symbol()),
         ))),
     }
 }

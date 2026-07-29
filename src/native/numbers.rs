@@ -82,7 +82,7 @@ fn native_add(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
 }
 
 fn do_add(ctx: &mut dyn NativeContext, a: Value, b: &Value) -> NativeResult {
-    let (a_type, b_type) = (type_str(&a), type_str(b));
+    let (a_type, b_type) = (a.type_symbol(), b.type_symbol());
     match (a, b) {
         (Value::Integer(x), Value::Integer(y)) => {
             x.checked_add(*y).map(Value::Integer).ok_or_else(|| {
@@ -115,7 +115,7 @@ fn native_subtract(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult 
 }
 
 fn do_sub(ctx: &mut dyn NativeContext, a: Value, b: &Value) -> NativeResult {
-    let (a_type, b_type) = (type_str(&a), type_str(b));
+    let (a_type, b_type) = (a.type_symbol(), b.type_symbol());
     match (a, b) {
         (Value::Integer(x), Value::Integer(y)) => {
             x.checked_sub(*y).map(Value::Integer).ok_or_else(|| {
@@ -148,7 +148,7 @@ fn native_multiply(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult 
 }
 
 fn do_mul(ctx: &mut dyn NativeContext, a: Value, b: &Value) -> NativeResult {
-    let (a_type, b_type) = (type_str(&a), type_str(b));
+    let (a_type, b_type) = (a.type_symbol(), b.type_symbol());
     match (a, b) {
         (Value::Integer(x), Value::Integer(y)) => {
             x.checked_mul(*y).map(Value::Integer).ok_or_else(|| {
@@ -176,7 +176,7 @@ fn first_numeric(ctx: &mut dyn NativeContext, first: Option<&Value>, op: &str) -
         Some(v) if matches!(v, Value::Integer(_) | Value::Float(_)) => Ok(v.clone()),
         Some(v) => Err(ctx.typed_error(
             &["error", "type_error"],
-            format!("{} requires numeric arguments, got {}", op, type_str(v)),
+            format!("{} requires numeric arguments, got {}", op, v.type_symbol()),
         )),
         None => Err(ctx.typed_error(
             &["error", "type_error"],
@@ -209,8 +209,8 @@ fn native_divide(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
             &["error", "type_error"],
             format!(
                 "division requires numeric arguments, got {} and {}",
-                type_str(a),
-                type_str(b)
+                a.type_symbol(),
+                b.type_symbol()
             ),
         )),
     }
@@ -279,8 +279,8 @@ fn cmp_num(
             &["error", "type_error"],
             format!(
                 "comparison requires numeric arguments, got {} and {}",
-                type_str(a),
-                type_str(b)
+                a.type_symbol(),
+                b.type_symbol()
             ),
         )),
     }
@@ -333,22 +333,7 @@ fn native_int(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
         }
         _ => Err(ctx.typed_error(
             &["error", "type_error"],
-            format!("int requires a number, got {}", type_str(arg)),
+            format!("int requires a number, got {}", arg.type_symbol()),
         )),
-    }
-}
-
-fn type_str(value: &Value) -> &'static str {
-    match value {
-        Value::Unit => ":unit",
-        Value::Boolean(_) => ":boolean",
-        Value::Integer(_) => ":integer",
-        Value::Float(_) => ":float",
-        Value::String(_) => ":string",
-        Value::Symbol(_) => ":symbol",
-        Value::List(_) => ":list",
-        Value::Function(_) | Value::NativeFunction(_) => ":function",
-        Value::Block(_) => ":block",
-        Value::Namespace(_) => ":namespace",
     }
 }

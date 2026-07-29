@@ -5,34 +5,10 @@ An LSP server for `.pima` files, built on Pima's lexer and parser.
 See [docs/capabilities.md](docs/capabilities.md) for analysis behavior,
 dynamic-language limits, and the complete editor integration guide.
 
-## Features
-
-- syntax diagnostics while a document is open;
-- top-level function and binding symbols;
-- recoverable analysis while a document contains syntax errors;
-- lexical hover information for functions, parameters, bindings, and pattern
-  captures;
-- standard-library member hover and member completion;
-- scope- and declaration-aware local completion;
-- signature help for standard and user-defined functions;
-- semantic highlighting for declarations, references, literals, and standard
-  members;
-- multiline block and collection folding;
-- hierarchical selection ranges;
-- parameter-name inlay hints for known calls;
-- workspace indexing for `.pima` modules;
-- cross-file completion and go to definition through aliased and unaliased
-  imports;
-- conservative document formatting with configurable indentation;
-- `snake_case` naming quick fixes that update declarations and resolved
-  references;
-- go to definition and find references;
-- scope-aware rename with symbolic declaration preservation;
-- nested namespace and function document symbols;
-- keyword completion;
-- naming-convention warnings for functions, parameters, and captures; and
-- static errors for immutable assignment and excess arguments to known user
-  functions.
+It provides diagnostics, semantic navigation and completion, signature help,
+workspace import indexing, formatting, semantic tokens, inlay hints, and
+`snake_case` quick fixes. The capability guide is the single source of truth
+for the complete feature list and known dynamic-language limits.
 
 ## Run
 
@@ -40,8 +16,7 @@ dynamic-language limits, and the complete editor integration guide.
 cargo run -p pima-language-server
 ```
 
-The server communicates over standard input and output. Configure an editor
-LSP client to launch that command for files with the `.pima` extension.
+The server communicates over standard input and output.
 
 ## VS Code
 
@@ -55,7 +30,5 @@ npm install
 npm run compile
 ```
 
-Open the `editors/vscode` directory in VS Code and press F5 to launch an
-Extension Development Host with the Pima workspace open. The extension uses
-the workspace's debug server build by default. Set `pima.languageServer.path`
-to use a server executable elsewhere.
+For launch configuration and runtime behavior, follow the
+[VS Code guide](docs/capabilities.md#vs-code).

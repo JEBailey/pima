@@ -7,7 +7,7 @@ use pima::{
     diagnostic::{Diagnostic as PimaDiagnostic, Severity},
     source::{SourceMap, Span},
     syntax::{
-        ast::{Module, NodeId, NodeKind, Pattern},
+        ast::{Module, NodeId, NodeKind},
         lexer::lex,
         parser::parse_recovering,
         token::{Token, TokenKind},
@@ -36,10 +36,11 @@ use tower_lsp::{
     },
 };
 
-use crate::semantic::{IssueSeverity, SemanticModel, SymbolKind as SemanticSymbolKind};
 use crate::{
+    ast_utils::{namespace_block, parameter_list, pattern_captures},
     catalog, formatting,
     semantic::Symbol,
+    semantic::{IssueSeverity, SemanticModel, SymbolKind as SemanticSymbolKind},
     workspace::{IndexedSymbol, WorkspaceIndex},
 };
 
@@ -320,7 +321,7 @@ impl LanguageServer for Backend {
             return Ok(Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(format!(
                     "{} `{}`",
-                    semantic_kind_name(symbol.kind),
+                    symbol.kind.description(),
                     symbol.name
                 ))),
                 range: Some(span_to_range(&text, range)),
@@ -778,15 +779,6 @@ fn analyze(text: &str) -> Analysis {
     }
 }
 
-fn semantic_kind_name(kind: SemanticSymbolKind) -> &'static str {
-    match kind {
-        SemanticSymbolKind::Binding => "binding",
-        SemanticSymbolKind::Function => "function",
-        SemanticSymbolKind::Parameter => "parameter",
-        SemanticSymbolKind::PatternCapture => "pattern capture",
-    }
-}
-
 fn valid_identifier(name: &str) -> bool {
     const RESERVED: &[&str] = &[
         "as", "attempt", "break", "continue", "do", "function", "if", "import", "let", "match",
@@ -878,14 +870,7 @@ fn symbols_for_node(text: &str, module: &Module, id: NodeId) -> Vec<DocumentSymb
         } => vec![make_document_symbol(
             text,
             name.text.to_string(),
-            Some(format!(
-                "({})",
-                parameters
-                    .iter()
-                    .map(|parameter| parameter.text.as_ref())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
+            Some(parameter_list(parameters)),
             SymbolKind::FUNCTION,
             node.span,
             name.span,
@@ -941,25 +926,6 @@ fn make_document_symbol(
     }
 }
 
-fn pattern_captures(pattern: &Pattern) -> Vec<&pima::syntax::ast::Name> {
-    match pattern {
-        Pattern::Capture(name) => vec![name],
-        Pattern::List(items) => items.iter().flat_map(pattern_captures).collect(),
-        Pattern::Wildcard | Pattern::Literal(_) => Vec::new(),
-    }
-}
-
-fn namespace_block(module: &Module, value: NodeId) -> Option<pima::syntax::ast::BlockId> {
-    match module.node(value).kind {
-        NodeKind::Block(block) => Some(block),
-        NodeKind::New(operand) => match module.node(operand).kind {
-            NodeKind::Block(block) => Some(block),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 fn describe_token(kind: &TokenKind) -> Option<String> {
     Some(match kind {
         TokenKind::Identifier(name) => format!("Pima identifier `{name}`"),
@@ -1000,7 +966,7 @@ fn symbol_completion(symbol: &Symbol) -> CompletionItem {
             | SemanticSymbolKind::Parameter
             | SemanticSymbolKind::PatternCapture => CompletionItemKind::VARIABLE,
         }),
-        detail: Some(semantic_kind_name(symbol.kind).into()),
+        detail: Some(symbol.kind.description().into()),
         ..CompletionItem::default()
     }
 }

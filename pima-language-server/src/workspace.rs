@@ -6,12 +6,14 @@ use std::{
 use pima::{
     source::{SourceMap, Span},
     syntax::{
-        ast::{Module, Name, NodeId, NodeKind, Pattern, Visibility},
+        ast::{Module, NodeId, NodeKind, Visibility},
         lexer::lex,
         parser::parse_recovering,
     },
 };
 use tower_lsp::lsp_types::{SymbolKind, Url};
+
+use crate::ast_utils::{namespace_block, parameter_list, pattern_captures};
 
 #[derive(Clone, Debug)]
 pub struct IndexedSymbol {
@@ -181,14 +183,7 @@ fn index_document(text: &str) -> Option<IndexedDocument> {
                         name: name.text.to_string(),
                         span: name.span,
                         kind: SymbolKind::FUNCTION,
-                        detail: Some(format!(
-                            "({})",
-                            parameters
-                                .iter()
-                                .map(|parameter| parameter.text.as_ref())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )),
+                        detail: Some(parameter_list(parameters)),
                         members: HashMap::new(),
                     },
                 );
@@ -199,7 +194,7 @@ fn index_document(text: &str) -> Option<IndexedDocument> {
                 value,
                 ..
             } => {
-                for name in captures(pattern) {
+                for name in pattern_captures(pattern) {
                     let members = namespace_block(&module, *value)
                         .map(|block| public_members(&module, &module.block(block).statements))
                         .unwrap_or_default();
@@ -249,14 +244,7 @@ fn public_members(module: &Module, statements: &[NodeId]) -> HashMap<String, Ind
                         name: name.text.to_string(),
                         span: name.span,
                         kind: SymbolKind::METHOD,
-                        detail: Some(format!(
-                            "({})",
-                            parameters
-                                .iter()
-                                .map(|parameter| parameter.text.as_ref())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )),
+                        detail: Some(parameter_list(parameters)),
                         members: HashMap::new(),
                     },
                 );
@@ -266,7 +254,7 @@ fn public_members(module: &Module, statements: &[NodeId]) -> HashMap<String, Ind
                 pattern,
                 ..
             } => {
-                for name in captures(pattern) {
+                for name in pattern_captures(pattern) {
                     members.insert(
                         name.text.to_string(),
                         IndexedSymbol {
@@ -283,25 +271,6 @@ fn public_members(module: &Module, statements: &[NodeId]) -> HashMap<String, Ind
         }
     }
     members
-}
-
-fn captures(pattern: &Pattern) -> Vec<&Name> {
-    match pattern {
-        Pattern::Capture(name) => vec![name],
-        Pattern::List(elements) => elements.iter().flat_map(captures).collect(),
-        Pattern::Wildcard | Pattern::Literal(_) => Vec::new(),
-    }
-}
-
-fn namespace_block(module: &Module, value: NodeId) -> Option<pima::syntax::ast::BlockId> {
-    match &module.node(value).kind {
-        NodeKind::Block(block) => Some(*block),
-        NodeKind::New(operand) => match module.node(*operand).kind {
-            NodeKind::Block(block) => Some(block),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 fn pima_files(root: &Path) -> Vec<PathBuf> {

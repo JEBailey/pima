@@ -62,8 +62,8 @@ function factorial (:number) {
 Use the same checks required by the repository:
 
 ```console
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 The current implementation includes lexing, parsing, evaluation, closures,

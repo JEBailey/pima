@@ -23,10 +23,8 @@ fn native_types(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
         ));
     };
 
-    let type_names = value_type_name(arg);
-    let mut symbols: Vec<Value> = vec![Value::Symbol(ctx.intern_symbol(type_names))];
+    let mut symbols = vec![Value::Symbol(ctx.intern_symbol(arg.type_name()))];
 
-    // For namespaces, append custom types
     if let Value::Namespace(ns_id) = arg {
         for sym_id in ctx.namespace_type_symbols(*ns_id) {
             symbols.push(Value::Symbol(sym_id));
@@ -47,13 +45,10 @@ fn native_is(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
 
     let type_name = ctx.resolve_symbol(*type_symbol).unwrap_or("");
 
-    // Check fundamental type
-    let fundamental = value_type_name(value);
-    if fundamental == type_name {
+    if value.type_name() == type_name {
         return Ok(Value::Boolean(true));
     }
 
-    // For namespaces, check custom types
     if let Value::Namespace(ns_id) = value {
         for sym_id in ctx.namespace_type_symbols(*ns_id) {
             if let Some(name) = ctx.resolve_symbol(sym_id)
@@ -65,19 +60,4 @@ fn native_is(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
     }
 
     Ok(Value::Boolean(false))
-}
-
-fn value_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Unit => "unit",
-        Value::Boolean(_) => "boolean",
-        Value::Integer(_) => "integer",
-        Value::Float(_) => "float",
-        Value::String(_) => "string",
-        Value::Symbol(_) => "symbol",
-        Value::List(_) => "list",
-        Value::Function(_) | Value::NativeFunction(_) => "function",
-        Value::Block(_) => "block",
-        Value::Namespace(_) => "namespace",
-    }
 }

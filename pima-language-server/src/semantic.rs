@@ -16,6 +16,17 @@ pub enum SymbolKind {
     PatternCapture,
 }
 
+impl SymbolKind {
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Binding => "binding",
+            Self::Function => "function",
+            Self::Parameter => "parameter",
+            Self::PatternCapture => "pattern capture",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Symbol {
     pub name: String,
@@ -144,12 +155,7 @@ impl SemanticModel {
                 span: symbol.declaration,
                 message: format!(
                     "{} `{}` should use snake_case",
-                    match symbol.kind {
-                        SymbolKind::Function => "function",
-                        SymbolKind::Parameter => "parameter",
-                        SymbolKind::PatternCapture => "pattern capture",
-                        SymbolKind::Binding => "binding",
-                    },
+                    symbol.kind.description(),
                     symbol.name
                 ),
                 severity: IssueSeverity::Warning,

@@ -1,3 +1,4 @@
+mod ast_utils;
 mod catalog;
 mod formatting;
 mod semantic;
