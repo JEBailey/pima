@@ -1,0 +1,204 @@
+// Pima standard library
+
+function maths_pow (:base :exponent) {
+    if [< exponent 0] {
+        / 1 [maths_pow base [- 0 exponent]]
+    } {
+        if [= exponent 0] 1 [* base [maths_pow base [- exponent 1]]]
+    }
+}
+
+function maths_lte (:left :right) {
+    if [< left right] true [= left right]
+}
+
+function maths_gte (:left :right) {
+    if [> left right] true [= left right]
+}
+
+function maths_increment (:value) {
+    + value 1
+}
+
+function maths_decrement (:value) {
+    - value 1
+}
+
+function maths_range (:begin :end) {
+    set step [logic_select [maths_lte begin end] maths_increment maths_decrement]
+    if [= begin end] {
+        List.append () begin
+    } {
+        List.push [maths_range [step begin] end] begin
+    }
+}
+
+function maths_absolute (:value) {
+    if [< value 0] [- 0 value] value
+}
+
+function maths_minimum (:left :right) {
+    if [< left right] left right
+}
+
+function maths_maximum (:left :right) {
+    if [> left right] left right
+}
+
+function maths_clamp (:value :minimum :maximum) {
+    maths_minimum [maths_maximum value minimum] maximum
+}
+
+function maths_sum (:list) {
+    if [List.empty? list] 0 {
+        + [List.head list] [maths_sum [List.rest list]]
+    }
+}
+
+function maths_product (:list) {
+    if [List.empty? list] 1 {
+        * [List.head list] [maths_product [List.rest list]]
+    }
+}
+
+function maths_average (:list) {
+    / [maths_sum list] [list_length list]
+}
+
+function list_reverse (:list) {
+    if [List.empty? list] () {
+        List.append [list_reverse [List.rest list]] [List.head list]
+    }
+}
+
+function list_foreach (:list :block) {
+    if [Logic.not [List.empty? list]] {
+        set item [List.head list]
+        eval block
+        list_foreach [List.rest list] block
+    } {
+    }
+}
+
+function list_map (:callable :list) {
+    if [List.empty? list] {
+        ()
+    } {
+        List.push [list_map callable [List.rest list]] [callable [List.head list]]
+    }
+}
+
+function list_length (:list) {
+    if [List.empty? list] 0 [+ 1 [list_length [List.rest list]]]
+}
+
+function list_contains (:list :value) {
+    if [List.empty? list] false {
+        if [= [List.head list] value] true [list_contains [List.rest list] value]
+    }
+}
+
+function list_fold (:callable :initial :list) {
+    if [List.empty? list] initial {
+        list_fold callable [callable initial [List.head list]] [List.rest list]
+    }
+}
+
+function list_filter (:predicate :list) {
+    if [List.empty? list] {
+        ()
+    } {
+        set tail [list_filter predicate [List.rest list]]
+        if [predicate [List.head list]] {
+            List.push tail [List.head list]
+        } {
+            tail
+        }
+    }
+}
+
+function list_any (:predicate :list) {
+    if [List.empty? list] false {
+        if [predicate [List.head list]] true [list_any predicate [List.rest list]]
+    }
+}
+
+function list_all (:predicate :list) {
+    if [List.empty? list] true {
+        if [predicate [List.head list]] [list_all predicate [List.rest list]] false
+    }
+}
+
+function logic_select (:predicate :when_true :when_false) {
+    if predicate when_true when_false
+}
+
+pub set Maths [new {
+    pub set E 2.718281828459045
+    pub set PI 3.141592653589793
+    pub set pow maths_pow
+    pub set less_or_equal maths_lte
+    pub set greater_or_equal maths_gte
+    pub set increment maths_increment
+    pub set decrement maths_decrement
+    pub set range maths_range
+    pub set absolute maths_absolute
+    pub set minimum maths_minimum
+    pub set maximum maths_maximum
+    pub set clamp maths_clamp
+    pub set sum maths_sum
+    pub set product maths_product
+    pub set average maths_average
+    pub set div Maths.div
+    pub set mod Maths.mod
+    pub set int Maths.int
+}]
+
+pub set String [new {
+    pub set concat String.concat
+    pub set length String.length
+    pub set slice String.slice
+    pub set chars String.chars
+    pub set from String.string
+    pub set string String.string
+    pub set lower String.lower
+    pub set upper String.upper
+    pub set trim String.trim
+    pub set contains? String.contains?
+    pub set starts_with? String.starts_with?
+    pub set ends_with? String.ends_with?
+    pub set replace String.replace
+    pub set split String.split
+    pub set join String.join
+}]
+
+pub set List [new {
+    pub set push List.push
+    pub set append List.append
+    pub set head List.head
+    pub set rest List.rest
+    pub set empty? List.empty?
+    pub set reverse list_reverse
+    pub set foreach list_foreach
+    pub set map list_map
+    pub set length list_length
+    pub set contains? list_contains
+    pub set fold list_fold
+    pub set filter list_filter
+    pub set any? list_any
+    pub set all? list_all
+}]
+
+pub set Types [new {
+    pub set of Types.types
+    pub set is? Types.is?
+}]
+
+pub set Console [new {
+    pub set println Console.println
+}]
+
+pub set Logic [new {
+    pub set not Logic.not
+    pub set select logic_select
+}]

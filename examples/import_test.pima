@@ -1,0 +1,14 @@
+
+import "/pima/library/standard"
+
+//this is a test
+
+function ^ (:x :y) {
+  if [< y 2] {
+    x
+  }{
+    * x [^ x [- y 1]]
+  }
+}
+
+Console.println [^ 5 2]

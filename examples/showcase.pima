@@ -1,0 +1,94 @@
+import "/pima/library/standard"
+
+// Errors are ordinary typed namespace values.
+set InvalidOpeningBalance {
+    pub set types (:error :validation_error :invalid_opening_balance)
+    pub set message "Opening balance must not be negative"
+}
+
+function create_account (:owner :opening_balance) {
+    if [< opening_balance 0] {
+        throw [new InvalidOpeningBalance]
+    } {
+        new {
+            pub set types (:account)
+
+            set owner_name owner
+            var balance opening_balance
+            var history ()
+
+            pub function deposit (:amount) {
+                let balance [+ balance amount]
+                let history [List.push history amount]
+                balance
+            }
+
+            pub function current_balance () {
+                balance
+            }
+
+            pub function transactions () {
+                List.reverse history
+            }
+
+            pub function summary () {
+                String.concat owner_name ": " [String.from balance]
+            }
+        }
+    }
+}
+
+// A returned inner function closes over factor.
+function multiplier (:factor) {
+    function apply (:value) {
+        * factor value
+    }
+}
+
+function greater_than_ten (:value) {
+    > value 10
+}
+
+function add (:left :right) {
+    + left right
+}
+
+set triple [multiplier 3]
+set generated [List.map triple [Maths.range 1 6]]
+set selected [List.filter greater_than_ten generated]
+set total [List.fold add 0 selected]
+set printable [List.map String.from selected]
+
+Console.println "Generated:" [String.join printable ", "]
+Console.println "Selected total:" total
+Console.println "Two to the tenth:" [Maths.pow 2 10]
+Console.println "PI:" Maths.PI
+
+set account [create_account "Ada" total]
+account.deposit 25
+account.deposit 10
+
+// Blocks do not capture scope; eval supplies prefix and account at the call site.
+set announce {
+    Console.println prefix [account.summary]
+}
+
+function announce_account (:prefix :account) {
+    eval announce
+}
+
+announce_account "Account" account
+Console.println "Transactions:" [account.transactions]
+
+set rejected [attempt {
+    create_account "Grace" -1
+}]
+
+if [Types.is? rejected :error] {
+    Console.println "Expected error:" rejected.message
+} {
+    Console.println "Unexpected account:" [rejected.summary]
+}
+
+// The final expression is useful when this file is run through the embedding API.
+[account.current_balance]

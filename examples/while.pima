@@ -1,0 +1,9 @@
+import "/pima/library/standard"
+
+var x 0
+
+while [< x 12000] {
+	let x [+ x 1]
+}
+
+x

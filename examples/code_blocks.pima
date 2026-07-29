@@ -1,0 +1,66 @@
+import "/pima/library/standard"
+
+// These blocks are inert values. Neither one resolves its names yet.
+set compact_report {
+    Console.println name ":" score
+}
+
+set detailed_report {
+    Console.println "Student:" name
+    Console.println "Score:" score
+    Console.println "Passing:" passing
+}
+
+// A function can select and return a block without executing it.
+function choose_report (:detailed) {
+    if detailed detailed_report compact_report
+}
+
+// The receiving function supplies the environment used by eval.
+// The report block resolves name, score, and passing from this call.
+function render_report (:report :name :score) {
+    set passing [Maths.greater_or_equal score 70]
+    eval report
+}
+
+set selected [choose_report true]
+render_report selected "Ada" 96
+render_report selected "Grace" 68
+
+// Blocks can also be stored in immutable lists and passed through another
+// block before they are eventually evaluated.
+set reports (compact_report detailed_report)
+
+function for_each_report (:remaining :action) {
+    if [Logic.not [List.empty? remaining]] {
+        set report [List.head remaining]
+        eval action
+        for_each_report [List.rest remaining] action
+    } {
+    }
+}
+
+// report is supplied by for_each_report; render_report comes from its
+// enclosing module scope.
+set render_action {
+    Console.println "--- next report ---"
+    render_report report "Linus" 88
+}
+
+for_each_report reports render_action
+
+// Declarations made by eval belong to the caller's current environment.
+set initialize_message {
+    set message [String.concat greeting ", " recipient "!"]
+}
+
+function build_message (:initializer :greeting :recipient) {
+    eval initializer
+    message
+}
+
+set message [build_message initialize_message "Hello" "Pima"]
+Console.println message
+
+// Returning the selected block proves that passing it around did not execute it.
+selected
