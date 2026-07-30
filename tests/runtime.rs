@@ -12,7 +12,7 @@ fn persistent_lists_preserve_the_original_when_pushed() {
 }
 
 #[test]
-fn persistent_list_rest_returns_a_shared_tail_value() {
+fn persistent_list_rest_returns_the_tail_value() {
     let list: PersistentList = [Value::Integer(1), Value::Integer(2)].into_iter().collect();
     let rest = list.rest().expect("non-empty list has a rest");
 

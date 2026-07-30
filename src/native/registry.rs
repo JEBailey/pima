@@ -41,7 +41,7 @@ pub trait NativeContext {
     /// Returns empty list for non-namespace values.
     fn namespace_type_symbols(
         &self,
-        id: crate::runtime::NamespaceId,
+        namespace: &crate::runtime::NamespaceRef,
     ) -> Vec<crate::runtime::SymbolId>;
     fn working_directory(&self) -> &std::path::Path;
 }

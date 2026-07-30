@@ -42,14 +42,14 @@ fn partial(
     callee: Value,
     arguments: &[crate::syntax::ast::NodeId],
 ) -> EvalResult {
-    let Value::Function(function_id) = callee else {
+    let Value::Function(function) = callee else {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
             "partial application requires a function".to_owned(),
         )));
     };
-    let source = context.interpreter.functions[function_id.0 as usize].clone();
+    let source = (*function).clone();
     if arguments.len() != source.parameters.len() {
         return Err(Signal::Throw(typed_err(
             context,
@@ -84,7 +84,6 @@ fn partial(
         }
     }
 
-    let environment = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
     let mut bindings = Environment::new(Some(source.environment));
     for (symbol, value) in bound {
         bindings.bindings.insert(
@@ -96,7 +95,7 @@ fn partial(
             },
         );
     }
-    context.interpreter.environments.push(bindings);
+    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(bindings));
 
     let function = crate::runtime::UserFunction {
         name: source.name,
@@ -106,17 +105,14 @@ fn partial(
         environment,
         declaration_span: source.declaration_span,
     };
-    let id = crate::runtime::FunctionId(context.interpreter.functions.len() as u32);
-    context.interpreter.functions.push(function);
-    Ok(Value::Function(id))
+    Ok(Value::Function(dumpster::unsync::Gc::new(function)))
 }
 
 fn call_user(
     context: &mut CallContext,
-    function_id: crate::runtime::FunctionId,
+    function: crate::runtime::FunctionRef,
     arguments: &[Value],
 ) -> EvalResult {
-    let function = &context.interpreter.functions[function_id.0 as usize];
     if arguments.len() != function.parameters.len() {
         return Err(Signal::Throw(typed_err(
             context,
@@ -129,8 +125,7 @@ fn call_user(
         )));
     }
 
-    let environment = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
-    let mut bindings = Environment::new(Some(function.environment));
+    let mut bindings = Environment::new(Some(function.environment.clone()));
     for (parameter, value) in function.parameters.iter().zip(arguments) {
         bindings.bindings.insert(
             *parameter,
@@ -141,7 +136,7 @@ fn call_user(
             },
         );
     }
-    context.interpreter.environments.push(bindings);
+    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(bindings));
 
     let name = context
         .interpreter
@@ -154,7 +149,7 @@ fn call_user(
         function_name: Some(name),
         call_span: context.interpreter.active_span,
     });
-    let previous_environment = context.interpreter.current_environment;
+    let previous_environment = context.interpreter.current_environment.clone();
     let previous_module = context.interpreter.current_module;
     context.interpreter.current_environment = environment;
     context.interpreter.current_module = function.body_module;

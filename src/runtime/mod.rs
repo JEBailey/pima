@@ -8,14 +8,13 @@ mod symbol;
 mod value;
 
 pub use binding::{Binding, BindingMutability, BindingVisibility};
-pub use environment::Environment;
+#[cfg(test)]
+pub(crate) use environment::live_environment_count;
+pub use environment::{Environment, EnvironmentRef};
 pub use error::ErrorMetadata;
-pub use function::UserFunction;
-pub use ids::{
-    BlockId, EnvironmentId, FunctionId, ModuleId, NamespaceId, NativeFunctionId, SymbolId,
-    TcpConnectionId, TcpListenerId,
-};
-pub use namespace::Namespace;
+pub use function::{FunctionRef, UserFunction};
+pub use ids::{NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId};
+pub use namespace::{Namespace, NamespaceRef};
 pub use symbol::SymbolInterner;
 pub(crate) use value::language_equal;
-pub use value::{PersistentList, Value};
+pub use value::{BlockRef, PersistentList, Value};

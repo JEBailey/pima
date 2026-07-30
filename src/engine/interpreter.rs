@@ -2,7 +2,7 @@ use crate::{
     diagnostic::Diagnostic,
     engine::{ModuleLoader, Signal, eval::CallFrame},
     native::NativeRegistry,
-    runtime::{Environment, ErrorMetadata, Namespace, SymbolInterner, UserFunction, Value},
+    runtime::{Environment, EnvironmentRef, Namespace, SymbolInterner, Value},
     source::{SourceMap, Span},
     syntax::{ast::Module, lexer::lex, parser::parse},
 };
@@ -43,25 +43,27 @@ pub struct StoredBlock {
     pub block_id: crate::syntax::ast::BlockId,
 }
 
+unsafe impl<V: dumpster::Visitor> dumpster::TraceWith<V> for StoredBlock {
+    fn accept(&self, _visitor: &mut V) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct Interpreter {
     pub(crate) sources: SourceMap,
     pub(crate) symbols: SymbolInterner,
-    pub(crate) environments: Vec<Environment>,
-    pub(crate) functions: Vec<UserFunction>,
-    pub(crate) namespaces: Vec<Namespace>,
+    pub(crate) prelude_environment: EnvironmentRef,
+    pub(crate) primitive_environment: EnvironmentRef,
     pub(crate) natives: NativeRegistry,
     pub(crate) parsed_modules: Vec<Module>,
-    pub(crate) stored_blocks: Vec<StoredBlock>,
     pub(crate) module_loader: ModuleLoader,
-    pub(crate) module_environments: std::collections::HashSet<crate::runtime::EnvironmentId>,
-    pub(crate) error_metadata:
-        std::collections::HashMap<crate::runtime::NamespaceId, ErrorMetadata>,
+    pub(crate) module_environments: Vec<EnvironmentRef>,
     pub(crate) tcp_listeners: Vec<Option<std::net::TcpListener>>,
     pub(crate) tcp_connections: Vec<Option<std::net::TcpStream>>,
 
     // Execution state
-    pub(crate) current_environment: crate::runtime::EnvironmentId,
+    pub(crate) current_environment: EnvironmentRef,
     pub(crate) current_module: usize,
     pub(crate) call_stack: Vec<CallFrame>,
     pub(crate) active_span: Option<Span>,
@@ -77,29 +79,26 @@ impl Interpreter {
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let working_directory = camino::Utf8PathBuf::from_path_buf(working_directory)
             .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
-        let primitive_env_id = crate::runtime::EnvironmentId(1);
-        let root_env_id = crate::runtime::EnvironmentId(2);
-        let environments = vec![
-            Environment::new(None),
-            Environment::new(None),
-            Environment::new(Some(primitive_env_id)),
-        ];
+        let prelude_environment =
+            dumpster::unsync::Gc::new(std::cell::RefCell::new(Environment::new(None)));
+        let primitive_environment =
+            dumpster::unsync::Gc::new(std::cell::RefCell::new(Environment::new(None)));
+        let root_environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(
+            Environment::new(Some(primitive_environment.clone())),
+        ));
 
         let mut interpreter = Self {
             sources: SourceMap::default(),
             symbols: SymbolInterner::default(),
-            environments,
-            functions: Vec::new(),
-            namespaces: Vec::new(),
+            prelude_environment,
+            primitive_environment,
             natives: NativeRegistry::default(),
             parsed_modules: Vec::new(),
-            stored_blocks: Vec::new(),
             module_loader: ModuleLoader::new(working_directory),
-            module_environments: std::iter::once(root_env_id).collect(),
-            error_metadata: std::collections::HashMap::new(),
+            module_environments: vec![root_environment.clone()],
             tcp_listeners: Vec::new(),
             tcp_connections: Vec::new(),
-            current_environment: root_env_id,
+            current_environment: root_environment,
             current_module: 0,
             call_stack: Vec::new(),
             active_span: None,
@@ -169,8 +168,8 @@ impl Interpreter {
             },
             Err(Signal::Throw(error_value)) => {
                 let message = extract_error_message(self, &error_value);
-                let metadata = match error_value {
-                    Value::Namespace(id) => self.error_metadata.get(&id),
+                let metadata = match &error_value {
+                    Value::Namespace(namespace) => namespace.error_metadata.borrow().clone(),
                     _ => None,
                 };
                 RunOutcome {
@@ -178,8 +177,9 @@ impl Interpreter {
                     diagnostics: vec![Diagnostic {
                         severity: crate::diagnostic::Severity::Error,
                         message,
-                        primary_span: metadata.map(|metadata| metadata.origin),
+                        primary_span: metadata.as_ref().map(|metadata| metadata.origin),
                         stack: metadata
+                            .as_ref()
                             .map(|metadata| metadata.stack.clone())
                             .unwrap_or_default(),
                     }],
@@ -228,13 +228,11 @@ impl Interpreter {
         &mut self,
         block_id: crate::syntax::ast::BlockId,
         module_index: usize,
-    ) -> usize {
-        let id = self.stored_blocks.len();
-        self.stored_blocks.push(StoredBlock {
+    ) -> crate::runtime::BlockRef {
+        dumpster::unsync::Gc::new(StoredBlock {
             block_id,
             module_index,
-        });
-        id
+        })
     }
 }
 
@@ -275,10 +273,25 @@ fn register_natives(interpreter: &mut Interpreter) {
         if let Some(namespace) = namespace {
             bind_native_member(interpreter, namespace, name, id);
             // Core natives remain available to the implementation prelude.
-            bind_native(interpreter, crate::runtime::EnvironmentId(0), name, id);
+            bind_native(
+                interpreter,
+                interpreter.prelude_environment.clone(),
+                name,
+                id,
+            );
         } else {
-            bind_native(interpreter, crate::runtime::EnvironmentId(0), name, id);
-            bind_native(interpreter, crate::runtime::EnvironmentId(1), name, id);
+            bind_native(
+                interpreter,
+                interpreter.prelude_environment.clone(),
+                name,
+                id,
+            );
+            bind_native(
+                interpreter,
+                interpreter.primitive_environment.clone(),
+                name,
+                id,
+            );
         }
     }
 
@@ -293,58 +306,62 @@ fn bind_native_member(
     native: crate::runtime::NativeFunctionId,
 ) {
     let namespace_symbol = interpreter.symbols.intern(namespace_name);
-    let namespace = interpreter.environments[0]
-        .bindings
-        .get(&namespace_symbol)
-        .and_then(|binding| match binding.value {
-            Value::Namespace(id) => Some(id),
-            _ => None,
-        })
-        .unwrap_or_else(|| {
-            let environment = crate::runtime::EnvironmentId(interpreter.environments.len() as u32);
-            interpreter.environments.push(Environment::new(None));
-            let namespace = crate::runtime::NamespaceId(interpreter.namespaces.len() as u32);
-            interpreter.namespaces.push(Namespace {
-                environment,
-                types: Vec::new(),
-            });
-            interpreter.environments[0].bindings.insert(
+    let namespace = {
+        let prelude = interpreter.prelude_environment.borrow();
+        prelude
+            .bindings
+            .get(&namespace_symbol)
+            .and_then(|binding| match &binding.value {
+                Value::Namespace(namespace) => Some(namespace.clone()),
+                _ => None,
+            })
+    };
+    let namespace = namespace.unwrap_or_else(|| {
+        let environment =
+            dumpster::unsync::Gc::new(std::cell::RefCell::new(Environment::new(None)));
+        let namespace = dumpster::unsync::Gc::new(Namespace {
+            environment: environment.clone(),
+            types: Vec::new(),
+            error_metadata: std::cell::RefCell::new(None),
+        });
+        interpreter
+            .prelude_environment
+            .borrow_mut()
+            .bindings
+            .insert(
                 namespace_symbol,
                 crate::runtime::Binding {
-                    value: Value::Namespace(namespace),
+                    value: Value::Namespace(namespace.clone()),
                     mutability: crate::runtime::BindingMutability::Immutable,
                     visibility: crate::runtime::BindingVisibility::Private,
                 },
             );
-            namespace
-        });
-    let environment = interpreter.namespaces[namespace.0 as usize].environment;
+        namespace
+    });
+    let environment = namespace.environment.clone();
     bind_native(interpreter, environment, member_name, native);
 }
 
 fn bind_native(
     interpreter: &mut Interpreter,
-    environment: crate::runtime::EnvironmentId,
+    environment: crate::runtime::EnvironmentRef,
     name: &str,
     native: crate::runtime::NativeFunctionId,
 ) {
     let symbol = interpreter.symbols.intern(name);
-    interpreter.environments[environment.0 as usize]
-        .bindings
-        .insert(
-            symbol,
-            crate::runtime::Binding {
-                value: Value::NativeFunction(native),
-                mutability: crate::runtime::BindingMutability::Immutable,
-                visibility: crate::runtime::BindingVisibility::Public,
-            },
-        );
+    environment.borrow_mut().bindings.insert(
+        symbol,
+        crate::runtime::Binding {
+            value: Value::NativeFunction(native),
+            mutability: crate::runtime::BindingMutability::Immutable,
+            visibility: crate::runtime::BindingVisibility::Public,
+        },
+    );
 }
 
 fn extract_error_message(interpreter: &mut Interpreter, value: &Value) -> String {
-    if let Value::Namespace(ns_id) = value {
-        let ns = &interpreter.namespaces[ns_id.0 as usize];
-        let env = &interpreter.environments[ns.environment.0 as usize];
+    if let Value::Namespace(namespace) = value {
+        let env = namespace.environment.borrow();
         let msg_symbol = interpreter.symbols.intern("message");
         if let Some(binding) = env.bindings.get(&msg_symbol)
             && let Value::String(s) = &binding.value
@@ -353,4 +370,80 @@ fn extract_error_message(interpreter: &mut Interpreter, value: &Value) -> String
         }
     }
     "<error>".to_string()
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+
+    #[test]
+    fn unreachable_recursive_closure_environments_are_collected() {
+        let baseline = crate::runtime::live_environment_count();
+        let mut interpreter = Interpreter::default();
+        let setup = interpreter.run_source(
+            "<memory-setup>",
+            r#"
+function make_cycle () {
+    function recursive () { recursive }
+}
+"#,
+        );
+        assert!(setup.is_success(), "{:?}", setup.diagnostics);
+        let rooted = crate::runtime::live_environment_count();
+
+        for _ in 0..1_000 {
+            let outcome = interpreter.run_source("<memory-call>", "[make_cycle]");
+            assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+        }
+
+        assert!(
+            crate::runtime::live_environment_count() > rooted,
+            "the test must create unreachable cyclic environments"
+        );
+        dumpster::unsync::collect();
+        assert_eq!(crate::runtime::live_environment_count(), rooted);
+
+        drop(setup);
+        drop(interpreter);
+        dumpster::unsync::collect();
+        assert_eq!(crate::runtime::live_environment_count(), baseline);
+    }
+
+    #[test]
+    fn escaped_closure_keeps_its_captured_environment_alive() {
+        let baseline = crate::runtime::live_environment_count();
+        let mut interpreter = Interpreter::default();
+        let outcome = interpreter.run_source(
+            "<escaped-closure>",
+            r#"
+function make_closure () {
+    set captured 41
+    function read () { captured }
+    read
+}
+
+set saved [make_closure]
+[saved]
+"#,
+        );
+        assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+        let live_with_closure = crate::runtime::live_environment_count();
+
+        dumpster::unsync::collect();
+        assert_eq!(
+            crate::runtime::live_environment_count(),
+            live_with_closure,
+            "collection must preserve an environment reached by an escaped closure"
+        );
+
+        let call = interpreter.run_source("<escaped-closure-call>", "[saved]");
+        assert!(call.is_success(), "{:?}", call.diagnostics);
+        assert_eq!(call.value, Some(Value::Integer(41)));
+
+        drop(call);
+        drop(outcome);
+        drop(interpreter);
+        dumpster::unsync::collect();
+        assert_eq!(crate::runtime::live_environment_count(), baseline);
+    }
 }

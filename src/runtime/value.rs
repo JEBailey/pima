@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use rpds::ListSync;
+use dumpster::{TraceWith, Visitor, unsync::Gc};
 
 use super::{
-    BlockId, FunctionId, NamespaceId, NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId,
+    FunctionRef, NamespaceRef, NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId,
 };
+
+pub type BlockRef = Gc<crate::engine::StoredBlock>;
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -15,10 +17,10 @@ pub enum Value {
     String(Arc<str>),
     Symbol(SymbolId),
     List(PersistentList),
-    Function(FunctionId),
+    Function(FunctionRef),
     NativeFunction(NativeFunctionId),
-    Block(BlockId),
-    Namespace(NamespaceId),
+    Block(BlockRef),
+    Namespace(NamespaceRef),
     TcpListener(TcpListenerId),
     TcpConnection(TcpConnectionId),
 }
@@ -72,24 +74,35 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
             let bv: Vec<_> = b.iter().collect();
             av.len() == bv.len() && av.iter().zip(bv.iter()).all(|(x, y)| x == y)
         }
-        (Value::Function(a), Value::Function(b)) => a == b,
+        (Value::Function(a), Value::Function(b)) => Gc::ptr_eq(a, b),
         (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
-        (Value::Block(a), Value::Block(b)) => a == b,
-        (Value::Namespace(a), Value::Namespace(b)) => a == b,
+        (Value::Block(a), Value::Block(b)) => Gc::ptr_eq(a, b),
+        (Value::Namespace(a), Value::Namespace(b)) => Gc::ptr_eq(a, b),
         (Value::TcpListener(a), Value::TcpListener(b)) => a == b,
         (Value::TcpConnection(a), Value::TcpConnection(b)) => a == b,
         _ => false,
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct PersistentList(ListSync<Value>);
-
-impl Default for PersistentList {
-    fn default() -> Self {
-        Self(ListSync::new_sync())
+unsafe impl<V: Visitor> TraceWith<V> for Value {
+    fn accept(&self, visitor: &mut V) -> Result<(), ()> {
+        match self {
+            Self::List(list) => {
+                for value in list.iter() {
+                    value.accept(visitor)?;
+                }
+            }
+            Self::Function(function) => function.accept(visitor)?,
+            Self::Block(block) => block.accept(visitor)?,
+            Self::Namespace(namespace) => namespace.accept(visitor)?,
+            _ => {}
+        }
+        Ok(())
     }
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct PersistentList(Vec<Value>);
 
 impl PersistentList {
     pub fn empty() -> Self {
@@ -101,11 +114,14 @@ impl PersistentList {
     }
 
     pub fn rest(&self) -> Option<Self> {
-        self.0.drop_first().map(Self)
+        (!self.0.is_empty()).then(|| Self(self.0[1..].to_vec()))
     }
 
     pub fn push_front(&self, value: Value) -> Self {
-        Self(self.0.push_front(value))
+        let mut values = Vec::with_capacity(self.0.len() + 1);
+        values.push(value);
+        values.extend(self.0.iter().cloned());
+        Self(values)
     }
 
     pub fn len(&self) -> usize {
@@ -122,16 +138,12 @@ impl PersistentList {
 
     /// Collect elements into a Vec. O(n) — use for testing/inspection.
     pub fn to_vec(&self) -> Vec<Value> {
-        self.0.iter().cloned().collect()
+        self.0.to_vec()
     }
 }
 
 impl FromIterator<Value> for PersistentList {
     fn from_iter<T: IntoIterator<Item = Value>>(values: T) -> Self {
-        let values: Vec<_> = values.into_iter().collect();
-        values
-            .into_iter()
-            .rev()
-            .fold(Self::empty(), |list, value| list.push_front(value))
+        Self(values.into_iter().collect())
     }
 }

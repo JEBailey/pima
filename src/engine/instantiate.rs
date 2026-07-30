@@ -10,7 +10,7 @@ pub(super) fn member(
     name: &str,
 ) -> EvalResult {
     let value = evaluate_node(context, object)?;
-    let Value::Namespace(namespace_id) = value else {
+    let Value::Namespace(namespace) = value else {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
@@ -21,10 +21,12 @@ pub(super) fn member(
         )));
     };
     let symbol = context.interpreter.symbols.intern(name);
-    let environment_id = context.interpreter.namespaces[namespace_id.0 as usize].environment;
-    let binding = context.interpreter.environments[environment_id.0 as usize]
+    let binding = namespace
+        .environment
+        .borrow()
         .bindings
-        .get(&symbol);
+        .get(&symbol)
+        .cloned();
     let Some(binding) = binding else {
         return Err(Signal::Throw(typed_err(
             context,
@@ -39,7 +41,7 @@ pub(super) fn member(
             format!("member `{name}` is private"),
         )));
     }
-    Ok(binding.value.clone())
+    Ok(binding.value)
 }
 
 /// Instantiates a block and publishes a namespace after successful validation.
@@ -55,37 +57,32 @@ pub(super) fn evaluate(
             "new requires a block value".to_owned(),
         )));
     };
-    let (module_index, block_id) = {
-        let stored = &context.interpreter.stored_blocks[block_reference.0 as usize];
-        (stored.module_index, stored.block_id)
-    };
+    let (module_index, block_id) = { (block_reference.module_index, block_reference.block_id) };
 
-    let environment_id =
-        crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
-    context.interpreter.environments.push(Environment::new(Some(
-        context.interpreter.current_environment,
-    )));
-    let previous_environment = context.interpreter.current_environment;
+    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(Environment::new(Some(
+        context.interpreter.current_environment.clone(),
+    ))));
+    let previous_environment = context.interpreter.current_environment.clone();
     let previous_module = context.interpreter.current_module;
-    context.interpreter.current_environment = environment_id;
+    context.interpreter.current_environment = environment.clone();
     context.interpreter.current_module = module_index;
     let result = evaluate_block(context, block_id);
     context.interpreter.current_environment = previous_environment;
     context.interpreter.current_module = previous_module;
     result?;
 
-    let types = validate_types(context, environment_id)?;
-    let namespace = crate::runtime::NamespaceId(context.interpreter.namespaces.len() as u32);
-    context.interpreter.namespaces.push(Namespace {
-        environment: environment_id,
+    let types = validate_types(context, environment.clone())?;
+    let namespace = dumpster::unsync::Gc::new(Namespace {
+        environment,
         types,
+        error_metadata: std::cell::RefCell::new(None),
     });
     Ok(Value::Namespace(namespace))
 }
 
 fn validate_types(
     context: &mut CallContext,
-    environment_id: crate::runtime::EnvironmentId,
+    environment: crate::runtime::EnvironmentRef,
 ) -> Result<Vec<crate::runtime::SymbolId>, Signal> {
     let types_symbol = context.interpreter.symbols.intern("types");
     let fundamental = [
@@ -103,15 +100,12 @@ fn validate_types(
     .into_iter()
     .map(|name| context.interpreter.symbols.intern(name))
     .collect::<HashSet<_>>();
-    let binding = context.interpreter.environments[environment_id.0 as usize]
-        .bindings
-        .get(&types_symbol)
-        .cloned();
+    let binding = environment.borrow().bindings.get(&types_symbol).cloned();
     let Some(binding) = binding else {
         return Ok(Vec::new());
     };
     if binding.visibility != BindingVisibility::Public
-        || binding.mutability != BindingMutability::Immutable
+        || !matches!(binding.mutability, BindingMutability::Immutable)
     {
         return Err(Signal::Throw(typed_err(
             context,

@@ -38,7 +38,8 @@ http.serve_once "127.0.0.1" {port} handle
         let mut interpreter = Interpreter::new(Config {
             working_directory: Some(examples),
         });
-        interpreter.run_source("<tcp-http-test>", &source)
+        let outcome = interpreter.run_source("<tcp-http-test>", &source);
+        (outcome.is_success(), format!("{:?}", outcome.diagnostics))
     });
 
     let mut stream = connect_with_retry(port);
@@ -50,8 +51,8 @@ http.serve_once "127.0.0.1" {port} handle
         .read_to_string(&mut response)
         .expect("response should be readable");
 
-    let outcome = server.join().expect("server thread should not panic");
-    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    let (success, diagnostics) = server.join().expect("server thread should not panic");
+    assert!(success, "{diagnostics}");
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(response.contains("\r\nX-Pima-Method: GET\r\n"));
     assert!(response.contains("\r\nContent-Length: 16\r\n"));

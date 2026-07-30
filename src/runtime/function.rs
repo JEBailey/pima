@@ -1,6 +1,10 @@
 use crate::{source::Span, syntax::ast::BlockId as AstBlockId};
 
-use super::{EnvironmentId, SymbolId};
+use dumpster::{TraceWith, Visitor, unsync::Gc};
+
+use super::{EnvironmentRef, SymbolId};
+
+pub type FunctionRef = Gc<UserFunction>;
 
 #[derive(Clone, Debug)]
 pub struct UserFunction {
@@ -8,6 +12,12 @@ pub struct UserFunction {
     pub parameters: Vec<SymbolId>,
     pub body: AstBlockId,
     pub body_module: usize, // Index into parsed_modules
-    pub environment: EnvironmentId,
+    pub environment: EnvironmentRef,
     pub declaration_span: Span,
+}
+
+unsafe impl<V: Visitor> TraceWith<V> for UserFunction {
+    fn accept(&self, visitor: &mut V) -> Result<(), ()> {
+        self.environment.accept(visitor)
+    }
 }

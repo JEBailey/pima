@@ -26,7 +26,7 @@ fn native_types(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
     let mut symbols = vec![Value::Symbol(ctx.intern_symbol(arg.type_name()))];
 
     if let Value::Namespace(ns_id) = arg {
-        for sym_id in ctx.namespace_type_symbols(*ns_id) {
+        for sym_id in ctx.namespace_type_symbols(ns_id) {
             symbols.push(Value::Symbol(sym_id));
         }
     }
@@ -50,7 +50,7 @@ fn native_is(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
     }
 
     if let Value::Namespace(ns_id) = value {
-        for sym_id in ctx.namespace_type_symbols(*ns_id) {
+        for sym_id in ctx.namespace_type_symbols(ns_id) {
             if let Some(name) = ctx.resolve_symbol(sym_id)
                 && name == type_name
             {

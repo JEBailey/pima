@@ -53,7 +53,7 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
             let value_block_id = context
                 .interpreter
                 .store_block(block_id, context.interpreter.current_module);
-            Ok(Value::Block(crate::runtime::BlockId(value_block_id as u32)))
+            Ok(Value::Block(value_block_id))
         }
         NodeKind::Member { object, member } => {
             super::instantiate::member(context, object, &member.text)
@@ -146,27 +146,32 @@ pub fn evaluate_block(
 
 fn resolve_identifier(context: &mut CallContext, name: &str) -> EvalResult {
     let symbol = context.interpreter.symbols.intern(name);
-    let mut env_id = context.interpreter.current_environment;
+    let mut environment = context.interpreter.current_environment.clone();
 
     loop {
-        let env = &context.interpreter.environments[env_id.0 as usize];
+        let env = environment.borrow();
         if let Some(binding) = env.bindings.get(&symbol) {
             if let crate::runtime::BindingMutability::ImportedReadOnly {
                 environment,
                 symbol,
-            } = binding.mutability
+            } = &binding.mutability
             {
-                return Ok(context.interpreter.environments[environment.0 as usize]
+                return Ok(environment
+                    .borrow()
                     .bindings
-                    .get(&symbol)
+                    .get(symbol)
                     .expect("import source binding must exist")
                     .value
                     .clone());
             }
             return Ok(binding.value.clone());
         }
-        match env.parent {
-            Some(parent) => env_id = parent,
+        match &env.parent {
+            Some(parent) => {
+                let parent = parent.clone();
+                drop(env);
+                environment = parent;
+            }
             None => break,
         }
     }
@@ -226,8 +231,8 @@ fn evaluate_binding(
         })
         .collect::<Vec<_>>();
 
-    let environment = context.interpreter.current_environment;
-    let env = &context.interpreter.environments[environment.0 as usize];
+    let environment = context.interpreter.current_environment.clone();
+    let env = environment.borrow();
     if let Some((_, name, _)) = symbols
         .iter()
         .find(|(symbol, _, _)| env.bindings.contains_key(symbol))
@@ -247,13 +252,14 @@ fn evaluate_binding(
         crate::syntax::ast::Visibility::Public => crate::runtime::BindingVisibility::Public,
         crate::syntax::ast::Visibility::Private => crate::runtime::BindingVisibility::Private,
     };
-    let env = &mut context.interpreter.environments[environment.0 as usize];
+    drop(env);
+    let mut env = environment.borrow_mut();
     for (symbol, _, value) in symbols {
         env.bindings.insert(
             symbol,
             crate::runtime::Binding {
                 value,
-                mutability: binding_mutability,
+                mutability: binding_mutability.clone(),
                 visibility: binding_visibility,
             },
         );
@@ -280,12 +286,12 @@ fn evaluate_assignment(
 
     for (name, value) in captures {
         let symbol = context.interpreter.symbols.intern(&name);
-        let mut env_id = context.interpreter.current_environment;
+        let mut environment = context.interpreter.current_environment.clone();
         let target = loop {
-            let env = &context.interpreter.environments[env_id.0 as usize];
+            let env = environment.borrow();
             if let Some(binding) = env.bindings.get(&symbol) {
-                match binding.mutability {
-                    crate::runtime::BindingMutability::Mutable => break Some(env_id),
+                match &binding.mutability {
+                    crate::runtime::BindingMutability::Mutable => break Some(environment.clone()),
                     crate::runtime::BindingMutability::Immutable => {
                         return Err(Signal::Throw(typed_err(
                             context,
@@ -302,23 +308,28 @@ fn evaluate_assignment(
                     }
                 }
             }
-            match env.parent {
-                Some(parent) => env_id = parent,
+            match &env.parent {
+                Some(parent) => {
+                    let parent = parent.clone();
+                    drop(env);
+                    environment = parent;
+                }
                 None => break None,
             }
         };
-        let Some(env_id) = target else {
+        let Some(environment) = target else {
             return Err(Signal::Throw(typed_err(
                 context,
                 &["error", "name_error"],
                 format!("unbound identifier `{name}` for assignment"),
             )));
         };
-        assignments.push((env_id, symbol, value));
+        assignments.push((environment, symbol, value));
     }
 
     for (environment, symbol, value) in assignments {
-        context.interpreter.environments[environment.0 as usize]
+        environment
+            .borrow_mut()
             .bindings
             .get_mut(&symbol)
             .expect("assignment target was validated")
@@ -389,10 +400,8 @@ fn evaluate_match(
             continue;
         };
         let captures = unique_captures(context, captures)?;
-        let parent = context.interpreter.current_environment;
-        let environment =
-            crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
-        let mut arm_environment = crate::runtime::Environment::new(Some(parent));
+        let parent = context.interpreter.current_environment.clone();
+        let mut arm_environment = crate::runtime::Environment::new(Some(parent.clone()));
         for (name, value) in captures {
             let symbol = context.interpreter.symbols.intern(&name);
             arm_environment.bindings.insert(
@@ -404,7 +413,7 @@ fn evaluate_match(
                 },
             );
         }
-        context.interpreter.environments.push(arm_environment);
+        let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(arm_environment));
         context.interpreter.current_environment = environment;
         let result = evaluate_block(context, arm.body);
         context.interpreter.current_environment = parent;
@@ -428,8 +437,13 @@ fn evaluate_function(
     let name_symbol = context.interpreter.symbols.intern(&name.text);
 
     // Check for duplicate
-    let env = &context.interpreter.environments[context.interpreter.current_environment.0 as usize];
-    if env.bindings.contains_key(&name_symbol) {
+    let duplicate = context
+        .interpreter
+        .current_environment
+        .borrow()
+        .bindings
+        .contains_key(&name_symbol);
+    if duplicate {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "name_error"],
@@ -446,15 +460,14 @@ fn evaluate_function(
             .collect(),
         body,
         body_module: context.interpreter.current_module,
-        environment: context.interpreter.current_environment,
+        environment: context.interpreter.current_environment.clone(),
         declaration_span: name.span,
     };
 
-    let func_id = crate::runtime::FunctionId(context.interpreter.functions.len() as u32);
-    context.interpreter.functions.push(func);
+    let function = dumpster::unsync::Gc::new(func);
 
     let binding = crate::runtime::Binding {
-        value: Value::Function(func_id),
+        value: Value::Function(function.clone()),
         mutability: crate::runtime::BindingMutability::Immutable,
         visibility: match visibility {
             crate::syntax::ast::Visibility::Public => crate::runtime::BindingVisibility::Public,
@@ -462,11 +475,14 @@ fn evaluate_function(
         },
     };
 
-    let env_ref =
-        &mut context.interpreter.environments[context.interpreter.current_environment.0 as usize];
-    env_ref.bindings.insert(name_symbol, binding);
+    context
+        .interpreter
+        .current_environment
+        .borrow_mut()
+        .bindings
+        .insert(name_symbol, binding);
 
-    Ok(Value::Function(func_id))
+    Ok(Value::Function(function))
 }
 
 // ── Conditionals ──
@@ -627,18 +643,20 @@ fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeI
     let error_symbol = context.interpreter.symbols.intern("error");
     let message_symbol = context.interpreter.symbols.intern("message");
     let (is_error, has_valid_message) = match &value {
-        Value::Namespace(ns_id) => {
-            let ns = &context.interpreter.namespaces[ns_id.0 as usize];
-            let environment = &context.interpreter.environments[ns.environment.0 as usize];
+        Value::Namespace(namespace) => {
+            let environment = namespace.environment.borrow();
             let valid_message = environment
                 .bindings
                 .get(&message_symbol)
                 .is_some_and(|binding| {
                     binding.visibility == crate::runtime::BindingVisibility::Public
-                        && binding.mutability == crate::runtime::BindingMutability::Immutable
+                        && matches!(
+                            binding.mutability,
+                            crate::runtime::BindingMutability::Immutable
+                        )
                         && matches!(binding.value, Value::String(_))
                 });
-            (ns.types.contains(&error_symbol), valid_message)
+            (namespace.types.contains(&error_symbol), valid_message)
         }
         _ => (false, false),
     };
@@ -662,7 +680,7 @@ fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeI
     }
 
     if let Value::Namespace(namespace) = value {
-        attach_error_metadata(context.interpreter, namespace);
+        attach_error_metadata(context.interpreter, &namespace);
         return Err(Signal::Throw(Value::Namespace(namespace)));
     }
 
@@ -674,7 +692,7 @@ fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeI
 fn evaluate_do(context: &mut CallContext, operand_id: crate::syntax::ast::NodeId) -> EvalResult {
     let value = evaluate_node(context, operand_id)?;
 
-    let Value::Block(block_ref_id) = value else {
+    let Value::Block(block) = value else {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
@@ -682,10 +700,7 @@ fn evaluate_do(context: &mut CallContext, operand_id: crate::syntax::ast::NodeId
         )));
     };
 
-    let (module_index, block_id) = {
-        let stored = &context.interpreter.stored_blocks[block_ref_id.0 as usize];
-        (stored.module_index, stored.block_id)
-    };
+    let (module_index, block_id) = { (block.module_index, block.block_id) };
 
     let previous_module = context.interpreter.current_module;
     context.interpreter.current_module = module_index;
@@ -696,13 +711,13 @@ fn evaluate_do(context: &mut CallContext, operand_id: crate::syntax::ast::NodeId
 
 fn binding_is_visible(context: &mut CallContext, name: &str) -> bool {
     let symbol = context.interpreter.symbols.intern(name);
-    let mut environment = Some(context.interpreter.current_environment);
-    while let Some(environment_id) = environment {
-        let current = &context.interpreter.environments[environment_id.0 as usize];
+    let mut environment = Some(context.interpreter.current_environment.clone());
+    while let Some(environment_ref) = environment {
+        let current = environment_ref.borrow();
         if current.bindings.contains_key(&symbol) {
             return true;
         }
-        environment = current.parent;
+        environment = current.parent.clone();
     }
     false
 }
@@ -752,7 +767,7 @@ fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -
     let mod_env_id = load_module(context, &identity)?;
 
     let public_bindings: Vec<_> = {
-        let mod_env = &context.interpreter.environments[mod_env_id.0 as usize];
+        let mod_env = mod_env_id.borrow();
         mod_env
             .bindings
             .iter()
@@ -763,56 +778,65 @@ fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -
 
     if let Some(alias_name) = alias {
         let ns = crate::runtime::Namespace {
-            environment: mod_env_id,
+            environment: mod_env_id.clone(),
             types: Vec::new(),
+            error_metadata: std::cell::RefCell::new(None),
         };
-        let ns_id = crate::runtime::NamespaceId(context.interpreter.namespaces.len() as u32);
-        context.interpreter.namespaces.push(ns);
+        let namespace = dumpster::unsync::Gc::new(ns);
 
         let alias_symbol = context.interpreter.symbols.intern(alias_name);
-        let curr_env_idx = context.interpreter.current_environment.0 as usize;
+        if context
+            .interpreter
+            .current_environment
+            .borrow()
+            .bindings
+            .contains_key(&alias_symbol)
         {
-            let curr_env = &context.interpreter.environments[curr_env_idx];
-            if curr_env.bindings.contains_key(&alias_symbol) {
-                return Err(Signal::Throw(typed_err(
-                    context,
-                    &["error", "name_error"],
-                    format!("duplicate binding `{alias_name}`"),
-                )));
-            }
+            return Err(Signal::Throw(typed_err(
+                context,
+                &["error", "name_error"],
+                format!("duplicate binding `{alias_name}`"),
+            )));
         }
-        let curr_env = &mut context.interpreter.environments[curr_env_idx];
+        let mut curr_env = context.interpreter.current_environment.borrow_mut();
         curr_env.bindings.insert(
             alias_symbol,
             crate::runtime::Binding {
-                value: Value::Namespace(ns_id),
+                value: Value::Namespace(namespace),
                 mutability: crate::runtime::BindingMutability::Immutable,
                 visibility: crate::runtime::BindingVisibility::Public,
             },
         );
     } else {
-        let curr_env_idx = context.interpreter.current_environment.0 as usize;
-        {
-            let curr_env = &context.interpreter.environments[curr_env_idx];
-            for (symbol, _) in &public_bindings {
-                if curr_env.bindings.contains_key(symbol) {
-                    let name = context.interpreter.symbols.resolve(*symbol).unwrap_or("?");
-                    return Err(Signal::Throw(typed_err(
-                        context,
-                        &["error", "name_error"],
-                        format!("import collision: `{name}` already bound"),
-                    )));
-                }
+        for (symbol, _) in &public_bindings {
+            if context
+                .interpreter
+                .current_environment
+                .borrow()
+                .bindings
+                .contains_key(symbol)
+            {
+                let name = context
+                    .interpreter
+                    .symbols
+                    .resolve(*symbol)
+                    .unwrap_or("?")
+                    .to_owned();
+                return Err(Signal::Throw(typed_err(
+                    context,
+                    &["error", "name_error"],
+                    format!("import collision: `{name}` already bound"),
+                )));
             }
         }
-        let curr_env = &mut context.interpreter.environments[curr_env_idx];
+        let mut curr_env = context.interpreter.current_environment.borrow_mut();
         for (symbol, value) in &public_bindings {
             curr_env.bindings.insert(
                 *symbol,
                 crate::runtime::Binding {
                     value: value.clone(),
                     mutability: crate::runtime::BindingMutability::ImportedReadOnly {
-                        environment: mod_env_id,
+                        environment: mod_env_id.clone(),
                         symbol: *symbol,
                     },
                     visibility: crate::runtime::BindingVisibility::Public,
@@ -842,7 +866,7 @@ fn evaluate_namespace_import(
     for segment in &path[1..] {
         namespace = namespace_member(context, &namespace, &segment.text)?.2;
     }
-    let Value::Namespace(namespace_id) = namespace else {
+    let Value::Namespace(namespace_ref) = namespace else {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
@@ -852,7 +876,7 @@ fn evaluate_namespace_import(
             ),
         )));
     };
-    let source_environment = context.interpreter.namespaces[namespace_id.0 as usize].environment;
+    let source_environment = namespace_ref.environment.clone();
 
     match selection {
         crate::syntax::ast::NamespaceImportSelection::Wildcard(_) => {
@@ -860,11 +884,13 @@ fn evaluate_namespace_import(
         }
         crate::syntax::ast::NamespaceImportSelection::Member(member) => {
             let (source_environment, source_symbol, value) =
-                namespace_member(context, &Value::Namespace(namespace_id), &member.text)?;
+                namespace_member(context, &Value::Namespace(namespace_ref), &member.text)?;
             let local_name = alias.map_or(member.text.as_ref(), |alias| alias.text.as_ref());
             let local_symbol = context.interpreter.symbols.intern(local_name);
-            let target = context.interpreter.current_environment.0 as usize;
-            if context.interpreter.environments[target]
+            if context
+                .interpreter
+                .current_environment
+                .borrow()
                 .bindings
                 .contains_key(&local_symbol)
             {
@@ -874,17 +900,22 @@ fn evaluate_namespace_import(
                     format!("namespace import collision: `{local_name}` already bound"),
                 )));
             }
-            context.interpreter.environments[target].bindings.insert(
-                local_symbol,
-                crate::runtime::Binding {
-                    value,
-                    mutability: crate::runtime::BindingMutability::ImportedReadOnly {
-                        environment: source_environment,
-                        symbol: source_symbol,
+            context
+                .interpreter
+                .current_environment
+                .borrow_mut()
+                .bindings
+                .insert(
+                    local_symbol,
+                    crate::runtime::Binding {
+                        value,
+                        mutability: crate::runtime::BindingMutability::ImportedReadOnly {
+                            environment: source_environment.clone(),
+                            symbol: source_symbol,
+                        },
+                        visibility: crate::runtime::BindingVisibility::Public,
                     },
-                    visibility: crate::runtime::BindingVisibility::Public,
-                },
-            );
+                );
             Ok(Value::Unit)
         }
     }
@@ -896,7 +927,7 @@ fn namespace_member(
     name: &str,
 ) -> Result<
     (
-        crate::runtime::EnvironmentId,
+        crate::runtime::EnvironmentRef,
         crate::runtime::SymbolId,
         Value,
     ),
@@ -912,9 +943,10 @@ fn namespace_member(
             ),
         )));
     };
-    let source_environment = context.interpreter.namespaces[namespace.0 as usize].environment;
+    let source_environment = namespace.environment.clone();
     let source_symbol = context.interpreter.symbols.intern(name);
-    let binding = context.interpreter.environments[source_environment.0 as usize]
+    let binding = source_environment
+        .borrow()
         .bindings
         .get(&source_symbol)
         .cloned()
@@ -937,17 +969,20 @@ fn namespace_member(
 
 fn import_all_namespace_members(
     context: &mut CallContext,
-    source_environment: crate::runtime::EnvironmentId,
+    source_environment: crate::runtime::EnvironmentRef,
 ) -> EvalResult {
-    let members = context.interpreter.environments[source_environment.0 as usize]
+    let members = source_environment
+        .borrow()
         .bindings
         .iter()
         .filter(|(_, binding)| binding.visibility == crate::runtime::BindingVisibility::Public)
         .map(|(symbol, binding)| (*symbol, binding.value.clone()))
         .collect::<Vec<_>>();
-    let target = context.interpreter.current_environment.0 as usize;
     for (symbol, _) in &members {
-        if context.interpreter.environments[target]
+        if context
+            .interpreter
+            .current_environment
+            .borrow()
             .bindings
             .contains_key(symbol)
         {
@@ -960,17 +995,22 @@ fn import_all_namespace_members(
         }
     }
     for (symbol, value) in members {
-        context.interpreter.environments[target].bindings.insert(
-            symbol,
-            crate::runtime::Binding {
-                value,
-                mutability: crate::runtime::BindingMutability::ImportedReadOnly {
-                    environment: source_environment,
-                    symbol,
+        context
+            .interpreter
+            .current_environment
+            .borrow_mut()
+            .bindings
+            .insert(
+                symbol,
+                crate::runtime::Binding {
+                    value,
+                    mutability: crate::runtime::BindingMutability::ImportedReadOnly {
+                        environment: source_environment.clone(),
+                        symbol,
+                    },
+                    visibility: crate::runtime::BindingVisibility::Public,
                 },
-                visibility: crate::runtime::BindingVisibility::Public,
-            },
-        );
+            );
     }
     Ok(Value::Unit)
 }
@@ -979,7 +1019,10 @@ fn require_module_scope(context: &mut CallContext, operation: &str) -> Result<()
     if context
         .interpreter
         .module_environments
-        .contains(&context.interpreter.current_environment)
+        .iter()
+        .any(|environment| {
+            dumpster::unsync::Gc::ptr_eq(environment, &context.interpreter.current_environment)
+        })
     {
         return Ok(());
     }
@@ -993,12 +1036,12 @@ fn require_module_scope(context: &mut CallContext, operation: &str) -> Result<()
 fn load_module(
     context: &mut CallContext,
     identity: &crate::engine::ModuleIdentity,
-) -> Result<crate::runtime::EnvironmentId, Signal> {
+) -> Result<crate::runtime::EnvironmentRef, Signal> {
     if let Some(record) = context.interpreter.module_loader.record(identity) {
         match record.state {
             crate::engine::ModuleState::Loaded => {
-                if let Some(environment) = record.environment {
-                    return Ok(environment);
+                if let Some(environment) = &record.environment {
+                    return Ok(environment.clone());
                 }
                 return Err(Signal::Throw(typed_err(
                     context,
@@ -1094,33 +1137,34 @@ fn load_module(
     let module_index = context.interpreter.parsed_modules.len();
     context.interpreter.parsed_modules.push(module);
 
-    let mod_env_id = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
     let parent_environment = if matches!(
         identity,
         crate::engine::ModuleIdentity::Virtual(path)
             if path.as_str() == "/pima/library/standard"
     ) {
-        crate::runtime::EnvironmentId(0)
+        context.interpreter.prelude_environment.clone()
     } else {
-        crate::runtime::EnvironmentId(1)
+        context.interpreter.primitive_environment.clone()
     };
+    let module_environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(
+        crate::runtime::Environment::new(Some(parent_environment)),
+    ));
     context
         .interpreter
-        .environments
-        .push(crate::runtime::Environment::new(Some(parent_environment)));
-    context.interpreter.module_environments.insert(mod_env_id);
+        .module_environments
+        .push(module_environment.clone());
     {
         let record = context
             .interpreter
             .module_loader
             .record_mut(identity.clone());
-        record.environment = Some(mod_env_id);
+        record.environment = Some(module_environment.clone());
         record.module_index = Some(module_index);
     }
 
-    let prev_env = context.interpreter.current_environment;
+    let prev_env = context.interpreter.current_environment.clone();
     let prev_module = context.interpreter.current_module;
-    context.interpreter.current_environment = mod_env_id;
+    context.interpreter.current_environment = module_environment.clone();
     context.interpreter.current_module = module_index;
     let statements = context.interpreter.parsed_modules[module_index]
         .statements
@@ -1137,7 +1181,7 @@ fn load_module(
                 .record_mut(identity.clone())
                 .state = crate::engine::ModuleState::Loaded;
             context.interpreter.module_loader.finish_loading(identity);
-            Ok(mod_env_id)
+            Ok(module_environment)
         }
         Err(Signal::Throw(value)) => {
             let record = context
@@ -1164,10 +1208,9 @@ fn load_native_module(
     context: &mut CallContext,
     identity: &crate::engine::ModuleIdentity,
     exports: &[(&str, &str)],
-) -> Result<crate::runtime::EnvironmentId, Signal> {
-    let environment = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
+) -> Result<crate::runtime::EnvironmentRef, Signal> {
     let mut module_environment =
-        crate::runtime::Environment::new(Some(crate::runtime::EnvironmentId(1)));
+        crate::runtime::Environment::new(Some(context.interpreter.primitive_environment.clone()));
 
     for &(public_name, native_name) in exports {
         let Some(native) = context.interpreter.natives.find_id(native_name) else {
@@ -1188,13 +1231,16 @@ fn load_native_module(
         );
     }
 
-    context.interpreter.environments.push(module_environment);
-    context.interpreter.module_environments.insert(environment);
+    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(module_environment));
+    context
+        .interpreter
+        .module_environments
+        .push(environment.clone());
     let record = context
         .interpreter
         .module_loader
         .record_mut(identity.clone());
-    record.environment = Some(environment);
+    record.environment = Some(environment.clone());
     record.state = crate::engine::ModuleState::Loaded;
     context.interpreter.module_loader.finish_loading(identity);
     Ok(environment)
@@ -1376,13 +1422,9 @@ impl crate::native::NativeContext for CallContext<'_> {
     }
     fn namespace_type_symbols(
         &self,
-        id: crate::runtime::NamespaceId,
+        namespace: &crate::runtime::NamespaceRef,
     ) -> Vec<crate::runtime::SymbolId> {
-        self.interpreter
-            .namespaces
-            .get(id.0 as usize)
-            .map(|ns| ns.types.clone())
-            .unwrap_or_default()
+        namespace.types.clone()
     }
 
     fn working_directory(&self) -> &std::path::Path {
@@ -1395,7 +1437,6 @@ impl crate::native::NativeContext for CallContext<'_> {
 
 fn create_error_value(interpreter: &mut Interpreter, types: &[&str], message: String) -> Value {
     // Create a minimal error namespace
-    let ns_env_id = crate::runtime::EnvironmentId(interpreter.environments.len() as u32);
     let mut ns_env = crate::runtime::Environment::new(None);
 
     // types list
@@ -1425,21 +1466,19 @@ fn create_error_value(interpreter: &mut Interpreter, types: &[&str], message: St
         },
     );
 
-    interpreter.environments.push(ns_env);
+    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(ns_env));
 
-    let ns = crate::runtime::Namespace {
-        environment: ns_env_id,
+    let namespace = dumpster::unsync::Gc::new(crate::runtime::Namespace {
+        environment,
         types: type_symbols,
-    };
+        error_metadata: std::cell::RefCell::new(None),
+    });
+    attach_error_metadata(interpreter, &namespace);
 
-    let ns_id = crate::runtime::NamespaceId(interpreter.namespaces.len() as u32);
-    interpreter.namespaces.push(ns);
-    attach_error_metadata(interpreter, ns_id);
-
-    Value::Namespace(ns_id)
+    Value::Namespace(namespace)
 }
 
-fn attach_error_metadata(interpreter: &mut Interpreter, namespace: crate::runtime::NamespaceId) {
+fn attach_error_metadata(interpreter: &mut Interpreter, namespace: &crate::runtime::NamespaceRef) {
     let Some(origin) = interpreter.active_span else {
         return;
     };
@@ -1454,7 +1493,5 @@ fn attach_error_metadata(interpreter: &mut Interpreter, namespace: crate::runtim
             })
         })
         .collect();
-    interpreter
-        .error_metadata
-        .insert(namespace, crate::runtime::ErrorMetadata { origin, stack });
+    *namespace.error_metadata.borrow_mut() = Some(crate::runtime::ErrorMetadata { origin, stack });
 }

@@ -3,7 +3,7 @@ use std::fmt;
 use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use indexmap::IndexMap;
 
-use crate::runtime::{EnvironmentId, Value};
+use crate::runtime::{EnvironmentRef, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Lifecycle state for a canonical module identity.
@@ -33,7 +33,7 @@ impl ModuleIdentity {
 pub struct ModuleRecord {
     pub identity: ModuleIdentity,
     pub state: ModuleState,
-    pub environment: Option<EnvironmentId>,
+    pub environment: Option<EnvironmentRef>,
     pub module_index: Option<usize>,
     pub cached_error: Option<Value>,
 }

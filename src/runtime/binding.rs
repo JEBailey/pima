@@ -1,11 +1,13 @@
-use super::{EnvironmentId, SymbolId, Value};
+use dumpster::{TraceWith, Visitor};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use super::{EnvironmentRef, SymbolId, Value};
+
+#[derive(Clone, Debug)]
 pub enum BindingMutability {
     Immutable,
     Mutable,
     ImportedReadOnly {
-        environment: EnvironmentId,
+        environment: EnvironmentRef,
         symbol: SymbolId,
     },
 }
@@ -21,4 +23,20 @@ pub struct Binding {
     pub value: Value,
     pub mutability: BindingMutability,
     pub visibility: BindingVisibility,
+}
+
+unsafe impl<V: Visitor> TraceWith<V> for BindingMutability {
+    fn accept(&self, visitor: &mut V) -> Result<(), ()> {
+        if let Self::ImportedReadOnly { environment, .. } = self {
+            environment.accept(visitor)?;
+        }
+        Ok(())
+    }
+}
+
+unsafe impl<V: Visitor> TraceWith<V> for Binding {
+    fn accept(&self, visitor: &mut V) -> Result<(), ()> {
+        self.value.accept(visitor)?;
+        self.mutability.accept(visitor)
+    }
 }
