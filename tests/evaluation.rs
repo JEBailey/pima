@@ -996,7 +996,7 @@ fn standard_library_provides_baseline_collection_and_string_utilities() {
 }
 
 #[test]
-fn static_import_exposes_public_namespace_members() {
+fn wildcard_namespace_import_exposes_public_members() {
     assert_eq!(
         run_ok("import \"/pima/library/standard\"\nimport Math.*\n[pow 2 10]\n"),
         pima::Value::Integer(1024)
@@ -1004,10 +1004,53 @@ fn static_import_exposes_public_namespace_members() {
 }
 
 #[test]
-fn static_import_rejects_collisions_without_partial_binding() {
+fn wildcard_namespace_import_rejects_collisions_without_partial_binding() {
     let outcome = run("import \"/pima/library/standard\"\nset PI 3\nimport Math.*\n");
     assert!(!outcome.is_success());
     assert!(outcome.diagnostics[0].message.contains("collision"));
+}
+
+#[test]
+fn selected_namespace_import_supports_existing_and_aliased_names() {
+    assert_eq!(
+        run_ok("import \"/pima/library/standard\"\nimport Logic.not\n[not false]\n"),
+        pima::Value::Boolean(true)
+    );
+    assert_eq!(
+        run_ok(
+            "import \"/pima/library/standard\" as standard\nimport standard.Logic.not as negate\n[negate true]\n"
+        ),
+        pima::Value::Boolean(false)
+    );
+}
+
+#[test]
+fn selected_namespace_imports_are_live_read_only_views() {
+    let outcome = run(
+        "set Template {\n    pub var count 0\n    pub function bump () { let count [+ count 1] }\n}\nset counter [new Template]\nimport counter.count\n[counter.bump]\ncount\n",
+    );
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.value, Some(pima::Value::Integer(1)));
+
+    let outcome = run(
+        "set Template { pub var count 0 }\nset counter [new Template]\nimport counter.count\nlet count 1\n",
+    );
+    assert!(!outcome.is_success());
+    assert!(outcome.diagnostics[0].message.contains("imported binding"));
+}
+
+#[test]
+fn selected_namespace_import_enforces_visibility_and_collisions() {
+    let private = run(
+        "set Template { set hidden 1 }\nset namespace [new Template]\nimport namespace.hidden\n",
+    );
+    assert!(!private.is_success());
+    assert!(private.diagnostics[0].message.contains("private"));
+
+    let collision =
+        run("import \"/pima/library/standard\"\nset negate 1\nimport Logic.not as negate\n");
+    assert!(!collision.is_success());
+    assert!(collision.diagnostics[0].message.contains("collision"));
 }
 
 // ── Call non-callable ──

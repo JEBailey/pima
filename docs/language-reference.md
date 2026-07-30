@@ -1101,8 +1101,7 @@ import "/pima/library/standard" as standard
 standard.List.reverse (1 2 3)
 ```
 
-A namespace's public members may be statically imported into the current
-module:
+A namespace's public members may be imported into the current module:
 
 ```pima
 import "/pima/library/standard"
@@ -1111,12 +1110,45 @@ import Math.*
 [pow 2 8]
 ```
 
-`import Namespace.*` is permitted only at module scope. It resolves
-`Namespace` as an ordinary identifier, requires a namespace value, and adds
-read-only live views of all its public members. The operation is atomic: if any
-member would collide with a binding already declared in the current module,
-the import fails without introducing any members. Private members are never
-imported.
+One public member may be selected, optionally under a different local name:
+
+```pima
+import Logic.not
+import Math.pow as exponentiate
+
+[not false]
+[exponentiate 2 8]
+```
+
+Namespace paths may be nested:
+
+```pima
+import "/pima/library/standard" as standard
+import standard.Logic.not as negate
+```
+
+The namespace-import forms are:
+
+```text
+import namespace-path.*
+import namespace-path.member
+import namespace-path.member as local-name
+```
+
+They are permitted only at module scope. Every path begins with an ordinary
+identifier and every intermediate segment must be a public namespace member.
+`*` adds read-only live views of all public members. A selected import adds one
+read-only live view using either the member name or its `as` name. Private
+members are never imported.
+
+Namespace imports are atomic: if a target name would collide with a binding
+already declared in the current module, the import fails without introducing
+anything. Wildcard imports cannot use `as`; preserving a namespace under
+another local name is ordinary value binding rather than an import:
+
+```pima
+set arithmetic Math
+```
 
 With an alias, the module's public declarations are available only as members
 of that alias namespace. Without an alias, public declarations are introduced
@@ -1161,11 +1193,11 @@ The error diagnostic includes the complete cycle of canonical module paths.
 Module initialization side effects performed before a failure are not rolled
 back.
 
-Imported names are read-only views of the exporting module's bindings. If a
-module internally changes a `pub var`, importers observe the new value, but
-cannot assign to it with `let`. An aliased import exposes these views through
-an immutable module namespace. An unaliased import introduces the same
-read-only views directly into the importing module.
+Imported names are read-only views of their source bindings. If a module or
+namespace internally changes a `pub var`, importers observe the new value, but
+cannot assign to it with `let`. An aliased module import exposes its views
+through an immutable module namespace. Unaliased module and namespace imports
+introduce views directly into the importing module.
 
 ### 12.2 Standard I/O module
 

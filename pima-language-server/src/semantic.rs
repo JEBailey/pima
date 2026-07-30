@@ -376,6 +376,23 @@ impl<'module> Builder<'module> {
                     self.visit_block(arm.body, arm_scope);
                 }
             }
+            NodeKind::NamespaceImport {
+                path,
+                selection,
+                alias,
+            } => {
+                if let Some(root) = path.first() {
+                    self.reference(scope, &root.text, root.span);
+                }
+                if let pima::syntax::ast::NamespaceImportSelection::Member(member) = selection {
+                    self.define(
+                        scope,
+                        alias.as_ref().unwrap_or(member),
+                        SymbolKind::Binding,
+                        false,
+                    );
+                }
+            }
             NodeKind::Unit
             | NodeKind::Boolean(_)
             | NodeKind::Integer(_)
@@ -384,8 +401,7 @@ impl<'module> Builder<'module> {
             | NodeKind::Symbol(_)
             | NodeKind::Placeholder
             | NodeKind::Continue
-            | NodeKind::Import { .. }
-            | NodeKind::StaticImport { .. } => {}
+            | NodeKind::Import { .. } => {}
         }
     }
 
@@ -587,5 +603,21 @@ mod tests {
         let issues = model.issues().collect::<Vec<_>>();
         assert_eq!(issues.len(), 1);
         assert!(issues[0].message.contains("3 were supplied"));
+    }
+
+    #[test]
+    fn selected_namespace_import_defines_its_local_name() {
+        let source =
+            "import \"/pima/library/standard\"\nimport Logic.not as negate\n[negate false]\n";
+        let model = model(source);
+        let offset = source.find("[negate").expect("call should exist") + 2;
+        let visible = model
+            .visible_symbols_at(offset)
+            .into_iter()
+            .map(|symbol| model.symbols[symbol].name.as_str())
+            .collect::<Vec<_>>();
+        assert!(visible.contains(&"negate"));
+        let symbol = model.symbol_at(offset).expect("reference should resolve");
+        assert_eq!(model.symbols[symbol].name, "negate");
     }
 }

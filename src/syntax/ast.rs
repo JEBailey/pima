@@ -126,8 +126,10 @@ pub enum NodeKind {
         path: Arc<str>,
         alias: Option<Arc<str>>,
     },
-    StaticImport {
-        namespace: Arc<str>,
+    NamespaceImport {
+        path: Vec<Name>,
+        selection: NamespaceImportSelection,
+        alias: Option<Name>,
     },
     New(NodeId),
     Do(NodeId),
@@ -136,6 +138,12 @@ pub enum NodeKind {
         value: NodeId,
         arms: Vec<MatchArm>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub enum NamespaceImportSelection {
+    Wildcard(Span),
+    Member(Name),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,5 +1,6 @@
 import "/pima/library/standard"
 import "/pima/tcp" as tcp
+import Logic.not
 
 set maximum_header_bytes 16384
 
@@ -65,13 +66,13 @@ function parse_request (:source) {
     }
 
     set request_line [String.split [List.head lines] " "]
-    if [Logic.not [= [List.length request_line] 3]] {
+    if [not [= [List.length request_line] 3]] {
         http_error "malformed HTTP request line"
     }
     set method [List.head request_line]
     set target [List.head [List.rest request_line]]
     set version [List.head [List.rest [List.rest request_line]]]
-    if [Logic.not [String.starts_with? version "HTTP/1."]] {
+    if [not [String.starts_with? version "HTTP/1."]] {
         http_error "only HTTP/1.x requests are supported"
     }
 
@@ -84,16 +85,16 @@ function parse_request (:source) {
 }
 
 function valid_header? (:header) {
-    if [Logic.not [= [List.length header] 2]] false {
+    if [not [= [List.length header] 2]] false {
         set name [List.head header]
         set value [List.head [List.rest header]]
-        if [Logic.not [Types.is? name :string]] false {
-            if [Logic.not [Types.is? value :string]] false {
+        if [not [Types.is? name :string]] false {
+            if [not [Types.is? value :string]] false {
                 if [= name ""] false {
                     if [String.contains? name "\r"] false {
                         if [String.contains? name "\n"] false {
                             if [String.contains? value "\r"] false {
-                                Logic.not [String.contains? value "\n"]
+                                not [String.contains? value "\n"]
                             }
                         }
                     }
@@ -106,7 +107,7 @@ function valid_header? (:header) {
 function serialize_headers (:headers) {
     if [List.empty? headers] "" {
         set header [List.head headers]
-        if [Logic.not [valid_header? header]] {
+        if [not [valid_header? header]] {
             http_error "invalid HTTP response header"
         }
         [String.concat
@@ -116,16 +117,16 @@ function serialize_headers (:headers) {
 }
 
 function serialize_response (:result) {
-    if [Logic.not [Types.is? result.status :integer]] {
+    if [not [Types.is? result.status :integer]] {
         http_error "HTTP response status must be an integer"
     }
-    if [Logic.not [Types.is? result.reason :string]] {
+    if [not [Types.is? result.reason :string]] {
         http_error "HTTP response reason must be a string"
     }
-    if [Logic.not [Types.is? result.headers :list]] {
+    if [not [Types.is? result.headers :list]] {
         http_error "HTTP response headers must be a list"
     }
-    if [Logic.not [Types.is? result.body :string]] {
+    if [not [Types.is? result.body :string]] {
         http_error "HTTP response body must be a string"
     }
     if [String.contains? result.reason "\r"] {

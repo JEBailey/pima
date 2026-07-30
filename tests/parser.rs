@@ -200,10 +200,60 @@ fn parses_bare_import_path_and_alias() {
 #[test]
 fn parses_static_namespace_import() {
     let module = parse_source("import Math.*\n");
-    let NodeKind::StaticImport { namespace } = &module.node(module.statements[0]).kind else {
+    let NodeKind::NamespaceImport {
+        path,
+        selection,
+        alias,
+    } = &module.node(module.statements[0]).kind
+    else {
         panic!("expected static namespace import");
     };
-    assert_eq!(namespace.as_ref(), "Math");
+    assert_eq!(path[0].text.as_ref(), "Math");
+    assert!(matches!(
+        selection,
+        pima::syntax::ast::NamespaceImportSelection::Wildcard(_)
+    ));
+    assert!(alias.is_none());
+}
+
+#[test]
+fn parses_selected_nested_namespace_import_with_alias() {
+    let module = parse_source("import standard.Logic.not as negate\n");
+    let NodeKind::NamespaceImport {
+        path,
+        selection,
+        alias,
+    } = &module.node(module.statements[0]).kind
+    else {
+        panic!("expected namespace import");
+    };
+    assert_eq!(
+        path.iter()
+            .map(|name| name.text.as_ref())
+            .collect::<Vec<_>>(),
+        ["standard", "Logic"]
+    );
+    let pima::syntax::ast::NamespaceImportSelection::Member(member) = selection else {
+        panic!("expected selected member");
+    };
+    assert_eq!(member.text.as_ref(), "not");
+    assert_eq!(
+        alias.as_ref().map(|name| name.text.as_ref()),
+        Some("negate")
+    );
+}
+
+#[test]
+fn rejects_alias_on_wildcard_namespace_import() {
+    let mut sources = SourceMap::default();
+    let source_id = sources.add("<test>", "import Logic.* as logical\n");
+    let tokens = lex(source_id, "import Logic.* as logical\n").expect("source should lex");
+    let diagnostics = parse(&tokens).expect_err("wildcard alias should not parse");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("cannot use `as`"))
+    );
 }
 
 #[test]

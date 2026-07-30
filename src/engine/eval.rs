@@ -91,7 +91,11 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         NodeKind::Continue => evaluate_continue(context),
         NodeKind::Throw(value) => evaluate_throw(context, value),
         NodeKind::Import { path, alias } => evaluate_import(context, &path, alias.as_deref()),
-        NodeKind::StaticImport { namespace } => evaluate_static_import(context, &namespace),
+        NodeKind::NamespaceImport {
+            path,
+            selection,
+            alias,
+        } => evaluate_namespace_import(context, &path, &selection, alias.as_ref()),
         NodeKind::New(operand) => super::instantiate::evaluate(context, operand),
         NodeKind::Do(operand) => evaluate_do(context, operand),
         NodeKind::Attempt(block_id) => evaluate_attempt(context, block_id),
@@ -820,20 +824,121 @@ fn evaluate_import(context: &mut CallContext, path: &str, alias: Option<&str>) -
     Ok(Value::Unit)
 }
 
-fn evaluate_static_import(context: &mut CallContext, namespace: &str) -> EvalResult {
-    require_module_scope(context, "static imports")?;
-    let value = resolve_identifier(context, namespace)?;
-    let Value::Namespace(namespace_id) = value else {
+fn evaluate_namespace_import(
+    context: &mut CallContext,
+    path: &[crate::syntax::ast::Name],
+    selection: &crate::syntax::ast::NamespaceImportSelection,
+    alias: Option<&crate::syntax::ast::Name>,
+) -> EvalResult {
+    require_module_scope(context, "namespace imports")?;
+    let Some(first) = path.first() else {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "internal_error"],
+            "namespace import path cannot be empty".to_owned(),
+        )));
+    };
+    let mut namespace = resolve_identifier(context, &first.text)?;
+    for segment in &path[1..] {
+        namespace = namespace_member(context, &namespace, &segment.text)?.2;
+    }
+    let Value::Namespace(namespace_id) = namespace else {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
             format!(
-                "static import requires a namespace, got {}",
-                value.type_symbol()
+                "namespace import path must resolve to a namespace, got {}",
+                namespace.type_symbol()
             ),
         )));
     };
     let source_environment = context.interpreter.namespaces[namespace_id.0 as usize].environment;
+
+    match selection {
+        crate::syntax::ast::NamespaceImportSelection::Wildcard(_) => {
+            import_all_namespace_members(context, source_environment)
+        }
+        crate::syntax::ast::NamespaceImportSelection::Member(member) => {
+            let (source_environment, source_symbol, value) =
+                namespace_member(context, &Value::Namespace(namespace_id), &member.text)?;
+            let local_name = alias.map_or(member.text.as_ref(), |alias| alias.text.as_ref());
+            let local_symbol = context.interpreter.symbols.intern(local_name);
+            let target = context.interpreter.current_environment.0 as usize;
+            if context.interpreter.environments[target]
+                .bindings
+                .contains_key(&local_symbol)
+            {
+                return Err(Signal::Throw(typed_err(
+                    context,
+                    &["error", "name_error"],
+                    format!("namespace import collision: `{local_name}` already bound"),
+                )));
+            }
+            context.interpreter.environments[target].bindings.insert(
+                local_symbol,
+                crate::runtime::Binding {
+                    value,
+                    mutability: crate::runtime::BindingMutability::ImportedReadOnly {
+                        environment: source_environment,
+                        symbol: source_symbol,
+                    },
+                    visibility: crate::runtime::BindingVisibility::Public,
+                },
+            );
+            Ok(Value::Unit)
+        }
+    }
+}
+
+fn namespace_member(
+    context: &mut CallContext,
+    namespace: &Value,
+    name: &str,
+) -> Result<
+    (
+        crate::runtime::EnvironmentId,
+        crate::runtime::SymbolId,
+        Value,
+    ),
+    Signal,
+> {
+    let Value::Namespace(namespace) = namespace else {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "type_error"],
+            format!(
+                "namespace import path crosses a value of type {}",
+                namespace.type_symbol()
+            ),
+        )));
+    };
+    let source_environment = context.interpreter.namespaces[namespace.0 as usize].environment;
+    let source_symbol = context.interpreter.symbols.intern(name);
+    let binding = context.interpreter.environments[source_environment.0 as usize]
+        .bindings
+        .get(&source_symbol)
+        .cloned()
+        .ok_or_else(|| {
+            Signal::Throw(typed_err(
+                context,
+                &["error", "name_error"],
+                format!("namespace has no member `{name}`"),
+            ))
+        })?;
+    if binding.visibility == crate::runtime::BindingVisibility::Private {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "visibility_error"],
+            format!("member `{name}` is private"),
+        )));
+    }
+    Ok((source_environment, source_symbol, binding.value))
+}
+
+fn import_all_namespace_members(
+    context: &mut CallContext,
+    source_environment: crate::runtime::EnvironmentId,
+) -> EvalResult {
     let members = context.interpreter.environments[source_environment.0 as usize]
         .bindings
         .iter()
@@ -850,7 +955,7 @@ fn evaluate_static_import(context: &mut CallContext, namespace: &str) -> EvalRes
             return Err(Signal::Throw(typed_err(
                 context,
                 &["error", "name_error"],
-                format!("static import collision: `{name}` already bound"),
+                format!("namespace import collision: `{name}` already bound"),
             )));
         }
     }

@@ -7,8 +7,8 @@ use crate::{
 
 use super::{
     ast::{
-        BindingKind, Block, BlockId, LoopKind, MatchArm, Module, Name, Node, NodeId, NodeKind,
-        Pattern, Visibility,
+        BindingKind, Block, BlockId, LoopKind, MatchArm, Module, Name, NamespaceImportSelection,
+        Node, NodeId, NodeKind, Pattern, Visibility,
     },
     token::{Keyword, Token, TokenKind},
 };
@@ -669,23 +669,13 @@ impl Parser<'_> {
 
     fn parse_import(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
-        if let Some(Token {
-            kind: TokenKind::Identifier(namespace),
-            ..
-        }) = self.peek().cloned()
+        if matches!(self.peek_kind(), Some(TokenKind::Identifier(_)))
             && matches!(
                 self.tokens.get(self.position + 1).map(|token| &token.kind),
                 Some(TokenKind::Dot)
             )
-            && matches!(
-                self.tokens.get(self.position + 2).map(|token| &token.kind),
-                Some(TokenKind::Identifier(star)) if star.as_ref() == "*"
-            )
         {
-            self.advance();
-            self.advance();
-            let end = self.advance().span;
-            return Ok(self.alloc(self.join(start, end), NodeKind::StaticImport { namespace }));
+            return self.parse_namespace_import(start);
         }
         let token = self.peek().cloned().ok_or_else(|| {
             self.report_eof("expected module path after `import`");
@@ -708,6 +698,65 @@ impl Parser<'_> {
 
         let end = self.previous().span;
         Ok(self.alloc(self.join(start, end), NodeKind::Import { path, alias }))
+    }
+
+    fn parse_namespace_import(&mut self, start: Span) -> ParseResult<NodeId> {
+        let mut names = Vec::new();
+        let (first, first_span) =
+            self.expect_identifier("expected namespace name after `import`")?;
+        names.push(Name {
+            text: first,
+            span: first_span,
+        });
+
+        loop {
+            self.expect_simple(
+                |kind| matches!(kind, TokenKind::Dot),
+                "expected `.` in namespace import",
+            )?;
+            let (text, span) = self.expect_identifier("expected member name or `*` after `.`")?;
+            if text.as_ref() == "*" {
+                if self.at(|kind| matches!(kind, TokenKind::Dot)) {
+                    self.report_here("`*` must be the final namespace import segment");
+                    return Err(());
+                }
+                if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
+                    self.report_here("wildcard namespace imports cannot use `as`");
+                    return Err(());
+                }
+                return Ok(self.alloc(
+                    self.join(start, span),
+                    NodeKind::NamespaceImport {
+                        path: names,
+                        selection: NamespaceImportSelection::Wildcard(span),
+                        alias: None,
+                    },
+                ));
+            }
+
+            let name = Name { text, span };
+            if self.at(|kind| matches!(kind, TokenKind::Dot)) {
+                names.push(name);
+                continue;
+            }
+
+            let alias = if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
+                self.advance();
+                let (text, span) = self.expect_identifier("expected alias name after `as`")?;
+                Some(Name { text, span })
+            } else {
+                None
+            };
+            let end = alias.as_ref().map_or(name.span, |alias| alias.span);
+            return Ok(self.alloc(
+                self.join(start, end),
+                NodeKind::NamespaceImport {
+                    path: names,
+                    selection: NamespaceImportSelection::Member(name),
+                    alias,
+                },
+            ));
+        }
     }
 
     fn parse_unary_special(&mut self, form: UnaryForm) -> ParseResult<NodeId> {
@@ -777,7 +826,7 @@ impl Parser<'_> {
                 | NodeKind::Continue
                 | NodeKind::Throw(_)
                 | NodeKind::Import { .. }
-                | NodeKind::StaticImport { .. }
+                | NodeKind::NamespaceImport { .. }
                 | NodeKind::New(_)
                 | NodeKind::Do(_)
                 | NodeKind::Attempt(_)

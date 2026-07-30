@@ -45,7 +45,7 @@ statically:
 The server reports an error only when the static model can prove it, such as an
 assignment to a resolved immutable binding or excess arguments to a known user
 function. It does not report every unresolved identifier, because the name may
-come from an import, a static import, or a caller-environment block.
+come from a module import, a namespace import, or a caller-environment block.
 
 Cross-file references and cross-file rename are not yet provided. Definition
 lookup and completion follow imports, while references and rename remain
