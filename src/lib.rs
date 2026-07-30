@@ -12,6 +12,7 @@ pub mod native;
 pub mod runtime;
 pub mod source;
 pub mod syntax;
+pub mod vm;
 
 pub use diagnostic::Diagnostic;
 pub use engine::{Config, Interpreter, PreparedProgram, RunOutcome};

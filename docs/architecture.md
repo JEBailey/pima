@@ -1,12 +1,53 @@
 # Pima Interpreter Architecture
 
-Status: implemented baseline architecture. Sections describing future work are
-called out explicitly.
+Status: tree-walk runtime implemented; register VM foundation in progress.
 
-The first implementation is a tree-walk interpreter. The architecture keeps
+The first implementation is a tree-walk interpreter. A register compiler and
+VM now run beside it for a deliberately small supported subset. The architecture keeps
 syntax, runtime data, evaluation, native functions, and host integration
-separate so that a bytecode compiler can be added later without rewriting the
-language model.
+separate so VM coverage can grow without rewriting the language model.
+
+## Register VM migration
+
+The VM pipeline is:
+
+```text
+AST -> register compiler -> register IR -> VM
+```
+
+The initial IR supports constants, moves, immutable lists, direct primitive
+calls, private immutable and mutable locals, conditional and unconditional
+jumps, `if`, `while`, `until`, `break`, `continue`, direct top-level functions,
+recursive calls, compiled capture/list patterns, and function return.
+Unsupported AST constructs produce compiler diagnostics rather than falling
+back silently to the tree walker.
+
+Nested functions compile to VM closure values containing a function id and
+captured register slots. Dynamic calls restore those captures into the callee
+frame. Mutable locals use shared cells, so closures capture the cell reference
+and observe later `let` updates instead of receiving a copied snapshot.
+
+The initial cells use reference counting. Storing closures or other cells into
+cells is rejected because it could create a reference cycle. Cyclic VM closure
+graphs must be integrated with Pima's tracing collector before the VM replaces
+the tree walker.
+
+Registers are numbered function-local value slots. The initial IR is kept
+readable and structurally explicit; compact byte encoding is deferred until the
+instruction set and semantics stabilize.
+
+The migration sequence is:
+
+1. literals, lists, primitive calls, immutable locals (implemented);
+2. branches, mutation, loops, `break`, and `continue` (implemented);
+3. direct user functions and compiled parameter patterns (implemented);
+4. immutable closures and mutable captured cells (implemented);
+5. namespaces, modules, blocks, `do`, errors, and native integration;
+6. optimized call conventions and compact bytecode.
+
+The tree walker remains the semantic oracle during this work. Every VM feature
+must have differential tests that execute the same Pima source through both
+engines. Unsupported constructs are not evidence of semantic parity.
 
 ## 1. Crate layout
 
