@@ -1,0 +1,190 @@
+import "/pima/library/standard"
+import "/pima/tcp" as tcp
+
+set maximum_header_bytes 16384
+
+function http_error (:message) {
+    throw [new {
+        pub set types (:error :http_error)
+        pub set message message
+    }]
+}
+
+function response (:status :reason :headers :body) {
+    new {
+        pub set status status
+        pub set reason reason
+        pub set headers headers
+        pub set body body
+    }
+}
+
+function error_response (:status :reason :message) {
+    response status reason (
+        ("Content-Type" "text/plain; charset=utf-8")
+    ) message
+}
+
+function read_headers (:connection :received) {
+    if [String.contains? received "\r\n\r\n"] received {
+        if [> [String.byte_length received] maximum_header_bytes] {
+            http_error "request headers are too large"
+        }
+        set chunk [tcp.read connection 1024]
+        if [= chunk ""] {
+            http_error "connection closed before request headers completed"
+        }
+        read_headers connection [String.concat received chunk]
+    }
+}
+
+function parse_header (:line) {
+    set parts [String.split line ":"]
+    if [< [List.length parts] 2] {
+        http_error "malformed HTTP header"
+    }
+    set name [String.trim [List.head parts]]
+    set value [String.trim [String.join [List.rest parts] ":"]]
+    if [= name ""] {
+        http_error "HTTP header name cannot be empty"
+    }
+    (name value)
+}
+
+function parse_headers (:lines) {
+    if [List.empty? lines] () {
+        List.push [parse_headers [List.rest lines]] [parse_header [List.head lines]]
+    }
+}
+
+function parse_request (:source) {
+    set sections [String.split source "\r\n\r\n"]
+    set lines [String.split [List.head sections] "\r\n"]
+    if [List.empty? lines] {
+        http_error "HTTP request line is missing"
+    }
+
+    set request_line [String.split [List.head lines] " "]
+    if [Logic.not [= [List.length request_line] 3]] {
+        http_error "malformed HTTP request line"
+    }
+    set method [List.head request_line]
+    set target [List.head [List.rest request_line]]
+    set version [List.head [List.rest [List.rest request_line]]]
+    if [Logic.not [String.starts_with? version "HTTP/1."]] {
+        http_error "only HTTP/1.x requests are supported"
+    }
+
+    new {
+        pub set method method
+        pub set target target
+        pub set version version
+        pub set headers [parse_headers [List.rest lines]]
+    }
+}
+
+function valid_header? (:header) {
+    if [Logic.not [= [List.length header] 2]] false {
+        set name [List.head header]
+        set value [List.head [List.rest header]]
+        if [Logic.not [Types.is? name :string]] false {
+            if [Logic.not [Types.is? value :string]] false {
+                if [= name ""] false {
+                    if [String.contains? name "\r"] false {
+                        if [String.contains? name "\n"] false {
+                            if [String.contains? value "\r"] false {
+                                Logic.not [String.contains? value "\n"]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+function serialize_headers (:headers) {
+    if [List.empty? headers] "" {
+        set header [List.head headers]
+        if [Logic.not [valid_header? header]] {
+            http_error "invalid HTTP response header"
+        }
+        [String.concat
+            [List.head header] ": " [List.head [List.rest header]] "\r\n"
+            [serialize_headers [List.rest headers]]]
+    }
+}
+
+function serialize_response (:result) {
+    if [Logic.not [Types.is? result.status :integer]] {
+        http_error "HTTP response status must be an integer"
+    }
+    if [Logic.not [Types.is? result.reason :string]] {
+        http_error "HTTP response reason must be a string"
+    }
+    if [Logic.not [Types.is? result.headers :list]] {
+        http_error "HTTP response headers must be a list"
+    }
+    if [Logic.not [Types.is? result.body :string]] {
+        http_error "HTTP response body must be a string"
+    }
+    if [String.contains? result.reason "\r"] {
+        http_error "HTTP response reason cannot contain line breaks"
+    }
+    if [String.contains? result.reason "\n"] {
+        http_error "HTTP response reason cannot contain line breaks"
+    }
+
+    [String.concat
+        "HTTP/1.1 " [String.from result.status] " " result.reason "\r\n"
+        [serialize_headers result.headers]
+        "Content-Length: " [String.from [String.byte_length result.body]] "\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        result.body]
+}
+
+function dispatch (:handler :source) {
+    set request [attempt { parse_request source }]
+    if [Types.is? request :error] {
+        error_response 400 "Bad Request" request.message
+    } {
+        set result [attempt { handler request }]
+        if [Types.is? result :error] {
+            error_response 500 "Internal Server Error" "request handler failed"
+        } {
+            result
+        }
+    }
+}
+
+function handle_connection (:connection :handler) {
+    tcp.set_timeout connection 5000
+    set outcome [attempt {
+        set source [read_headers connection ""]
+        set result [dispatch handler source]
+        tcp.write connection [serialize_response result]
+    }]
+    tcp.close connection
+    if [Types.is? outcome :error] {
+        Console.println "Connection error:" outcome.message
+    }
+}
+
+pub function serve_once (:address :port :handler) {
+    set listener [tcp.listen address port]
+    set connection [tcp.accept listener]
+    handle_connection connection handler
+    tcp.close listener
+}
+
+function accept_forever (:listener :handler) {
+    set connection [tcp.accept listener]
+    handle_connection connection handler
+    accept_forever listener handler
+}
+
+pub function listen (:address :port :handler) {
+    set listener [tcp.listen address port]
+    accept_forever listener handler
+}

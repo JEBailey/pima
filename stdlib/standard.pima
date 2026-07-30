@@ -157,6 +157,7 @@ pub set Math [new {
 pub set String [new {
     pub set concat String.concat
     pub set length String.length
+    pub set byte_length String.byte_length
     pub set slice String.slice
     pub set chars String.chars
     pub set code_point String.code_point

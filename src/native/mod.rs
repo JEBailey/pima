@@ -5,6 +5,7 @@ pub mod lists;
 pub mod numbers;
 pub mod registry;
 pub mod strings;
+pub mod tcp;
 pub mod types;
 
 pub use registry::{

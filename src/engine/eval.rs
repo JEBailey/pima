@@ -1,3 +1,5 @@
+use std::io::{Read, Write};
+
 use crate::{native::NativeContext, runtime::Value};
 
 use super::Interpreter;
@@ -933,11 +935,15 @@ fn load_module(
         .module_loader
         .begin_loading(identity.clone());
 
-    if matches!(
-        identity,
-        crate::engine::ModuleIdentity::Virtual(path) if path.as_str() == "/pima/io"
-    ) {
-        return load_io_module(context, identity);
+    if let crate::engine::ModuleIdentity::Virtual(path) = identity {
+        let exports = match path.as_str() {
+            "/pima/io" => Some(crate::native::io::EXPORTS),
+            "/pima/tcp" => Some(crate::native::tcp::EXPORTS),
+            _ => None,
+        };
+        if let Some(exports) = exports {
+            return load_native_module(context, identity, exports);
+        }
     }
 
     let source = match identity {
@@ -1049,15 +1055,16 @@ fn load_module(
     }
 }
 
-fn load_io_module(
+fn load_native_module(
     context: &mut CallContext,
     identity: &crate::engine::ModuleIdentity,
+    exports: &[(&str, &str)],
 ) -> Result<crate::runtime::EnvironmentId, Signal> {
     let environment = crate::runtime::EnvironmentId(context.interpreter.environments.len() as u32);
     let mut module_environment =
         crate::runtime::Environment::new(Some(crate::runtime::EnvironmentId(1)));
 
-    for &(public_name, native_name) in crate::native::io::EXPORTS {
+    for &(public_name, native_name) in exports {
         let Some(native) = context.interpreter.natives.find_id(native_name) else {
             return fail_module(
                 context,
@@ -1161,6 +1168,106 @@ impl crate::native::NativeContext for CallContext<'_> {
     }
     fn resolve_symbol(&self, id: crate::runtime::SymbolId) -> Option<&str> {
         self.interpreter.symbols.resolve(id)
+    }
+    fn tcp_listen(
+        &mut self,
+        address: &str,
+        port: u16,
+    ) -> Result<crate::runtime::TcpListenerId, String> {
+        let listener = std::net::TcpListener::bind((address, port))
+            .map_err(|error| format!("could not listen on {address}:{port}: {error}"))?;
+        let id = crate::runtime::TcpListenerId(self.interpreter.tcp_listeners.len() as u32);
+        self.interpreter.tcp_listeners.push(Some(listener));
+        Ok(id)
+    }
+    fn tcp_accept(
+        &mut self,
+        listener: crate::runtime::TcpListenerId,
+    ) -> Result<crate::runtime::TcpConnectionId, String> {
+        let listener = self
+            .interpreter
+            .tcp_listeners
+            .get(listener.0 as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| "TCP listener is closed".to_owned())?;
+        let (connection, _) = listener
+            .accept()
+            .map_err(|error| format!("could not accept TCP connection: {error}"))?;
+        let id = crate::runtime::TcpConnectionId(self.interpreter.tcp_connections.len() as u32);
+        self.interpreter.tcp_connections.push(Some(connection));
+        Ok(id)
+    }
+    fn tcp_read(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        maximum: usize,
+    ) -> Result<String, String> {
+        let connection = self
+            .interpreter
+            .tcp_connections
+            .get_mut(connection.0 as usize)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| "TCP connection is closed".to_owned())?;
+        let mut bytes = vec![0; maximum];
+        let count = connection
+            .read(&mut bytes)
+            .map_err(|error| format!("could not read TCP connection: {error}"))?;
+        String::from_utf8(bytes[..count].to_vec())
+            .map_err(|_| "TCP read was not valid UTF-8".to_owned())
+    }
+    fn tcp_write(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        text: &str,
+    ) -> Result<(), String> {
+        self.interpreter
+            .tcp_connections
+            .get_mut(connection.0 as usize)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| "TCP connection is closed".to_owned())?
+            .write_all(text.as_bytes())
+            .map_err(|error| format!("could not write TCP connection: {error}"))
+    }
+    fn tcp_set_timeout(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        milliseconds: u64,
+    ) -> Result<(), String> {
+        let connection = self
+            .interpreter
+            .tcp_connections
+            .get_mut(connection.0 as usize)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| "TCP connection is closed".to_owned())?;
+        let timeout = Some(std::time::Duration::from_millis(milliseconds));
+        connection
+            .set_read_timeout(timeout)
+            .and_then(|_| connection.set_write_timeout(timeout))
+            .map_err(|error| format!("could not set TCP timeout: {error}"))
+    }
+    fn tcp_close_listener(
+        &mut self,
+        listener: crate::runtime::TcpListenerId,
+    ) -> Result<(), String> {
+        self.interpreter
+            .tcp_listeners
+            .get_mut(listener.0 as usize)
+            .ok_or_else(|| "invalid TCP listener".to_owned())?
+            .take()
+            .map(|_| ())
+            .ok_or_else(|| "TCP listener is already closed".to_owned())
+    }
+    fn tcp_close_connection(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+    ) -> Result<(), String> {
+        self.interpreter
+            .tcp_connections
+            .get_mut(connection.0 as usize)
+            .ok_or_else(|| "invalid TCP connection".to_owned())?
+            .take()
+            .map(|_| ())
+            .ok_or_else(|| "TCP connection is already closed".to_owned())
     }
     fn namespace_type_symbols(
         &self,

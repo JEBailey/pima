@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use rpds::ListSync;
 
-use super::{BlockId, FunctionId, NamespaceId, NativeFunctionId, SymbolId};
+use super::{
+    BlockId, FunctionId, NamespaceId, NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId,
+};
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -17,6 +19,8 @@ pub enum Value {
     NativeFunction(NativeFunctionId),
     Block(BlockId),
     Namespace(NamespaceId),
+    TcpListener(TcpListenerId),
+    TcpConnection(TcpConnectionId),
 }
 
 impl PartialEq for Value {
@@ -38,6 +42,8 @@ impl Value {
             Self::Function(_) | Self::NativeFunction(_) => "function",
             Self::Block(_) => "block",
             Self::Namespace(_) => "namespace",
+            Self::TcpListener(_) => "tcp_listener",
+            Self::TcpConnection(_) => "tcp_connection",
         }
     }
 
@@ -70,6 +76,8 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
         (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
         (Value::Block(a), Value::Block(b)) => a == b,
         (Value::Namespace(a), Value::Namespace(b)) => a == b,
+        (Value::TcpListener(a), Value::TcpListener(b)) => a == b,
+        (Value::TcpConnection(a), Value::TcpConnection(b)) => a == b,
         _ => false,
     }
 }

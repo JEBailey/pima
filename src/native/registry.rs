@@ -7,6 +7,36 @@ pub trait NativeContext {
     fn typed_error(&mut self, types: &[&str], message: String) -> Value;
     fn intern_symbol(&mut self, name: &str) -> crate::runtime::SymbolId;
     fn resolve_symbol(&self, id: crate::runtime::SymbolId) -> Option<&str>;
+    fn tcp_listen(
+        &mut self,
+        address: &str,
+        port: u16,
+    ) -> Result<crate::runtime::TcpListenerId, String>;
+    fn tcp_accept(
+        &mut self,
+        listener: crate::runtime::TcpListenerId,
+    ) -> Result<crate::runtime::TcpConnectionId, String>;
+    fn tcp_read(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        maximum: usize,
+    ) -> Result<String, String>;
+    fn tcp_write(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        text: &str,
+    ) -> Result<(), String>;
+    fn tcp_set_timeout(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        milliseconds: u64,
+    ) -> Result<(), String>;
+    fn tcp_close_listener(&mut self, listener: crate::runtime::TcpListenerId)
+    -> Result<(), String>;
+    fn tcp_close_connection(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+    ) -> Result<(), String>;
     /// Return the type symbols for a namespace value (without the ":namespace" prefix).
     /// Returns empty list for non-namespace values.
     fn namespace_type_symbols(

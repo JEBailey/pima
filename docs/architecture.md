@@ -356,9 +356,9 @@ Native functions receive evaluated values through a narrow `NativeContext`
 interface and return `NativeResult`, conceptually
 `Result<Value, Value>`, where the error variant must contain a typed Pima error
 value. The engine converts that error into `Signal::Throw`. Native functions
-must never panic on bad Pima input. A native function cannot produce `return`,
-`break`, or `continue`, inspect caller syntax, mutate caller bindings, or bypass
-visibility.
+must never panic on bad Pima input. It cannot invoke arbitrary Pima code,
+inspect caller syntax, mutate caller bindings, bypass visibility, or transfer
+`return`, `break`, or `continue` across the native boundary.
 
 Only operations that require host access, primitive representation access, or
 acceptable baseline performance are native:
@@ -367,8 +367,9 @@ acceptable baseline performance are native:
 - primitive comparison and type inspection;
 - immutable-list primitives;
 - core string operations;
-- console output; and
-- filesystem operations backing `/pima/io`.
+- console output;
+- filesystem operations backing `/pima/io`; and
+- socket primitives backing `/pima/tcp`.
 
 Ranges, traversal helpers, exponentiation, and similar utilities remain Pima
 standard-library code.
@@ -382,16 +383,21 @@ scope.
 `stdlib/standard.pima` is compiled through the same lexer and parser as user code
 and embedded in the executable with `include_str!` for reliable availability.
 
-The virtual modules `/pima/library/standard` and `/pima/io` are resolved by the
-module loader. The standard library is Pima source. `/pima/io` exports native
-functions through an ordinary immutable module namespace so its behavior at the
-language level matches other modules.
+The virtual modules `/pima/library/standard`, `/pima/io`, and `/pima/tcp` are
+resolved by the module loader. The standard library is Pima source. Native
+modules export functions through ordinary immutable module namespaces so their
+behavior at the language level matches other modules.
 
 I/O natives use internally qualified registry names such as `io.join`; the
 module loader maps those to public member names such as `join`. This prevents
 collisions with identically named operations in other namespaces. Filesystem
 operations resolve relative paths against the interpreter's configured working
 directory and translate host failures into portable typed Pima errors.
+
+TCP listeners and connections are opaque Pima values backed by
+interpreter-owned socket arenas. Rust owns resource lifetime and operating
+system calls only. Framing and application protocols, including the example
+HTTP server, remain Pima code.
 
 The evaluator keeps host natives in a private implementation environment used
 to construct the standard library. User modules inherit only arithmetic and
@@ -426,7 +432,7 @@ error values or rendered uncaught-error diagnostics.
 6. Namespaces, visibility, type lists, and `new`.
 7. Typed errors, `throw`, `attempt`, and diagnostics.
 8. Module lifecycle, imports, and bundled modules.
-9. Strings, console output, and `/pima/io`.
+9. Strings, console output, and native host modules.
 10. Standard library and full conformance suite.
 
 Each stage should leave the crate compiling and add focused tests before the

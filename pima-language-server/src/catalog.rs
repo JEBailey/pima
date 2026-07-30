@@ -11,6 +11,8 @@ pub fn namespace_members(namespace: &str) -> Option<&'static [Member]> {
         "Types" => Some(&TYPES),
         "Console" => Some(&CONSOLE),
         "Logic" => Some(&LOGIC),
+        "io" => Some(&IO),
+        "tcp" => Some(&TCP),
         _ => None,
     }
 }
@@ -92,7 +94,7 @@ const MATH: [Member; 18] = [
     },
 ];
 
-const STRING: [Member; 17] = [
+const STRING: [Member; 18] = [
     Member {
         name: "concat",
         signature: "String.concat(values...)",
@@ -100,6 +102,10 @@ const STRING: [Member; 17] = [
     Member {
         name: "length",
         signature: "String.length(value)",
+    },
+    Member {
+        name: "byte_length",
+        signature: "String.byte_length(value)",
     },
     Member {
         name: "slice",
@@ -246,5 +252,123 @@ const LOGIC: [Member; 2] = [
     Member {
         name: "select",
         signature: "Logic.select(predicate, when_true, when_false)",
+    },
+];
+
+const TCP: [Member; 6] = [
+    Member {
+        name: "listen",
+        signature: "tcp.listen(address, port)",
+    },
+    Member {
+        name: "accept",
+        signature: "tcp.accept(listener)",
+    },
+    Member {
+        name: "read",
+        signature: "tcp.read(connection, maximum)",
+    },
+    Member {
+        name: "write",
+        signature: "tcp.write(connection, text)",
+    },
+    Member {
+        name: "set_timeout",
+        signature: "tcp.set_timeout(connection, milliseconds)",
+    },
+    Member {
+        name: "close",
+        signature: "tcp.close(resource)",
+    },
+];
+
+const IO: [Member; 22] = [
+    Member {
+        name: "read_text",
+        signature: "io.read_text(path)",
+    },
+    Member {
+        name: "read_lines",
+        signature: "io.read_lines(path)",
+    },
+    Member {
+        name: "read_bytes",
+        signature: "io.read_bytes(path)",
+    },
+    Member {
+        name: "write_text",
+        signature: "io.write_text(path, text)",
+    },
+    Member {
+        name: "append_text",
+        signature: "io.append_text(path, text)",
+    },
+    Member {
+        name: "write_bytes",
+        signature: "io.write_bytes(path, bytes)",
+    },
+    Member {
+        name: "append_bytes",
+        signature: "io.append_bytes(path, bytes)",
+    },
+    Member {
+        name: "exists?",
+        signature: "io.exists?(path)",
+    },
+    Member {
+        name: "file?",
+        signature: "io.file?(path)",
+    },
+    Member {
+        name: "directory?",
+        signature: "io.directory?(path)",
+    },
+    Member {
+        name: "create_directory",
+        signature: "io.create_directory(path)",
+    },
+    Member {
+        name: "list_directory",
+        signature: "io.list_directory(path)",
+    },
+    Member {
+        name: "copy_file",
+        signature: "io.copy_file(source, destination)",
+    },
+    Member {
+        name: "move",
+        signature: "io.move(source, destination)",
+    },
+    Member {
+        name: "remove_file",
+        signature: "io.remove_file(path)",
+    },
+    Member {
+        name: "remove_directory",
+        signature: "io.remove_directory(path)",
+    },
+    Member {
+        name: "join",
+        signature: "io.join(paths...)",
+    },
+    Member {
+        name: "parent",
+        signature: "io.parent(path)",
+    },
+    Member {
+        name: "file_name",
+        signature: "io.file_name(path)",
+    },
+    Member {
+        name: "extension",
+        signature: "io.extension(path)",
+    },
+    Member {
+        name: "canonicalize",
+        signature: "io.canonicalize(path)",
+    },
+    Member {
+        name: "current_directory",
+        signature: "io.current_directory()",
     },
 ];

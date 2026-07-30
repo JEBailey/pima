@@ -16,6 +16,11 @@ pub fn register(registry: &mut NativeRegistry) {
         call: native_length,
     });
     registry.register(NativeDefinition {
+        name: "byte_length",
+        arity: super::Arity::Exact(1),
+        call: native_byte_length,
+    });
+    registry.register(NativeDefinition {
         name: "slice",
         arity: super::Arity::Exact(3),
         call: native_slice,
@@ -85,6 +90,16 @@ fn native_length(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
         ));
     };
     Ok(Value::Integer(s.chars().count() as i64))
+}
+
+fn native_byte_length(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
+    let [Value::String(value)] = args else {
+        return Err(ctx.typed_error(
+            &["error", "type_error"],
+            "byte_length requires a string".to_owned(),
+        ));
+    };
+    Ok(Value::Integer(value.len() as i64))
 }
 
 fn native_slice(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {

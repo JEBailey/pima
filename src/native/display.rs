@@ -28,5 +28,7 @@ pub(crate) fn value(input: &Value, context: &mut dyn NativeContext) -> String {
         Value::NativeFunction(_) => "#<native>".to_owned(),
         Value::Block(_) => "#<block>".to_owned(),
         Value::Namespace(_) => "#<namespace>".to_owned(),
+        Value::TcpListener(_) => "#<tcp-listener>".to_owned(),
+        Value::TcpConnection(_) => "#<tcp-connection>".to_owned(),
     }
 }

@@ -836,7 +836,8 @@ namespaces:
 | `Logic.not` | Boolean negation |
 | `Types.of`, `Types.is?` | Inspect and test value types |
 | `String.from`, `String.concat` | Display conversion and concatenation |
-| `String.length`, `String.slice`, `String.chars` | Unicode-aware string operations |
+| `String.length`, `String.slice`, `String.chars` | Unicode-scalar string operations |
+| `String.byte_length` | UTF-8 encoded byte length |
 | `String.code_point`, `String.from_code_point` | Convert between one-scalar strings and integer code points |
 | `Console.println` | Print all operands followed by a line ending |
 | `do` | Execute a block in the current environment |
@@ -1237,6 +1238,43 @@ deliberately non-recursive.
 The virtual path `/pima/library/standard` names the implementation's standard
 library. Resolution of other relative paths is based on the importing file's
 directory.
+
+### 12.3 TCP module
+
+The `/pima/tcp` module exposes synchronous TCP primitives:
+
+```pima
+import "/pima/tcp" as tcp
+
+set listener [tcp.listen "127.0.0.1" 8080]
+set connection [tcp.accept listener]
+tcp.set_timeout connection 5000
+set request [tcp.read connection 1024]
+tcp.write connection "response"
+tcp.close connection
+tcp.close listener
+```
+
+| Operation | Result |
+|---|---|
+| `listen address port` | Opaque TCP listener |
+| `accept listener` | Opaque TCP connection |
+| `read connection maximum` | Up to `maximum` bytes decoded as UTF-8 |
+| `write connection text` | Write the complete UTF-8 encoding |
+| `set_timeout connection milliseconds` | Set read and write timeouts |
+| `close resource` | Close a listener or connection |
+
+`accept` and `read` block the current interpreter thread. `read` performs one
+socket read rather than imposing message framing; an empty string denotes an
+orderly peer shutdown. Its maximum must be between 1 and 1,048,576 bytes.
+Reads that are not valid UTF-8 and operating-system socket failures throw
+`:tcp_error`. Closed resources cannot be reused.
+
+TCP deliberately does not parse or generate application protocols. The
+repository's `examples/http_server_lib.pima` implements request framing,
+HTTP/1.x parsing, handler dispatch, response validation, and serialization in
+Pima. `demos/http_file_server.pima` combines it with the static file-serving
+example.
 
 ## 13. Excluded functionality
 

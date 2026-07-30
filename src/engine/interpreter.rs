@@ -57,6 +57,8 @@ pub struct Interpreter {
     pub(crate) module_environments: std::collections::HashSet<crate::runtime::EnvironmentId>,
     pub(crate) error_metadata:
         std::collections::HashMap<crate::runtime::NamespaceId, ErrorMetadata>,
+    pub(crate) tcp_listeners: Vec<Option<std::net::TcpListener>>,
+    pub(crate) tcp_connections: Vec<Option<std::net::TcpStream>>,
 
     // Execution state
     pub(crate) current_environment: crate::runtime::EnvironmentId,
@@ -95,6 +97,8 @@ impl Interpreter {
             module_loader: ModuleLoader::new(working_directory),
             module_environments: std::iter::once(root_env_id).collect(),
             error_metadata: std::collections::HashMap::new(),
+            tcp_listeners: Vec::new(),
+            tcp_connections: Vec::new(),
             current_environment: root_env_id,
             current_module: 0,
             call_stack: Vec::new(),
@@ -259,9 +263,9 @@ fn register_natives(interpreter: &mut Interpreter) {
         let namespace = match name {
             "+" | "-" | "*" | "/" | "<" | ">" | "=" => None,
             "div" | "mod" | "int" => Some("Math"),
-            "concat" | "length" | "slice" | "chars" | "code_point" | "from_code_point"
-            | "string" | "lower" | "upper" | "trim" | "contains?" | "starts_with?"
-            | "ends_with?" | "replace" | "split" | "join" => Some("String"),
+            "concat" | "length" | "byte_length" | "slice" | "chars" | "code_point"
+            | "from_code_point" | "string" | "lower" | "upper" | "trim" | "contains?"
+            | "starts_with?" | "ends_with?" | "replace" | "split" | "join" => Some("String"),
             "push" | "append" | "head" | "rest" | "empty?" => Some("List"),
             "types" | "is?" => Some("Types"),
             "println" => Some("Console"),
@@ -278,8 +282,8 @@ fn register_natives(interpreter: &mut Interpreter) {
         }
     }
 
-    // I/O is available only through the explicit `/pima/io` virtual module.
     crate::native::io::register(&mut interpreter.natives);
+    crate::native::tcp::register(&mut interpreter.natives);
 }
 
 fn bind_native_member(

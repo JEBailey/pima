@@ -57,6 +57,17 @@ function factorial (:number) {
 [factorial 6]
 ```
 
+More complete programs live in `examples/`, including a JSON parser and a
+directory-backed static file server core.
+
+The TCP module can run the Pima HTTP implementation as a real local server:
+
+```console
+cargo run -- demos/http_file_server.pima
+```
+
+Then open `http://127.0.0.1:8080` or request it with `curl`.
+
 ## Development
 
 Use the same checks required by the repository:
@@ -68,6 +79,6 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 The current implementation includes lexing, parsing, evaluation, closures,
 immutable lists, namespaces, typed errors, source-aware stack diagnostics, the
-embedded standard library, `/pima/io`, and cached file imports with complete
-cycle reporting. The remaining standard-library and host-embedding surfaces
-are still evolving.
+embedded standard library, `/pima/io`, low-level `/pima/tcp` sockets, and
+cached file imports with complete cycle reporting. The remaining
+standard-library and host-embedding surfaces are still evolving.

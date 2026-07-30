@@ -1,0 +1,139 @@
+import "/pima/library/standard"
+import "/pima/io" as io
+
+// Transport-independent static file handling. The `/pima/http` module can pass
+// its request values to server.handle and encode the returned response.
+
+function response (:status :reason :headers :body) {
+    new {
+        pub set status status
+        pub set reason reason
+        pub set headers headers
+        pub set body body
+    }
+}
+
+function text_response (:status :reason :message) {
+    response status reason (
+        ("Content-Type" "text/plain; charset=utf-8")
+    ) message
+}
+
+function content_type (:path) {
+    set extension [io.extension path]
+    if [Types.is? extension :unit] "application/octet-stream" {
+        match [String.lower extension] (
+            "css" { "text/css; charset=utf-8" }
+            "gif" { "image/gif" }
+            "htm" { "text/html; charset=utf-8" }
+            "html" { "text/html; charset=utf-8" }
+            "ico" { "image/x-icon" }
+            "jpeg" { "image/jpeg" }
+            "jpg" { "image/jpeg" }
+            "js" { "text/javascript; charset=utf-8" }
+            "json" { "application/json" }
+            "png" { "image/png" }
+            "svg" { "image/svg+xml" }
+            "txt" { "text/plain; charset=utf-8" }
+            _ { "application/octet-stream" }
+        )
+    }
+}
+
+// Canonical paths make this check robust against `..` components and symbolic
+// links. The separator-terminated prefix avoids treating `/srv/site-backup` as
+// though it were inside `/srv/site`. Deriving it with io.join keeps this
+// portable across Unix and Windows.
+function root_prefix (:root) {
+    set marker "__pima_document_root_boundary__"
+    set joined [io.join root marker]
+    String.slice joined 0 [- [String.length joined] [String.length marker]]
+}
+
+function within_root? (:root :candidate) {
+    if [= candidate root] true [String.starts_with? candidate [root_prefix root]]
+}
+
+function strip_query (:target) {
+    List.head [String.split target "?"]
+}
+
+function relative_target (:target) {
+    set path [strip_query target]
+    if [= path "/"] "index.html" {
+        var relative path
+        if [String.starts_with? relative "/"] {
+            let relative [String.slice relative 1 [String.length relative]]
+        }
+        if [String.ends_with? relative "/"] {
+            String.concat relative "index.html"
+        } {
+            relative
+        }
+    }
+}
+
+pub function create_file_server (:directory) {
+    set root [io.canonicalize directory]
+
+    new {
+        pub set document_root root
+
+        pub function handle (:method :target) {
+            if [Logic.not [List.contains? ("GET" "HEAD") method]] {
+                response 405 "Method Not Allowed" (
+                    ("Allow" "GET, HEAD")
+                    ("Content-Type" "text/plain; charset=utf-8")
+                ) [String.chars "method not allowed"]
+            } {
+                set relative [relative_target target]
+                set requested [io.join root relative]
+                set canonical [attempt { io.canonicalize requested }]
+
+                if [Types.is? canonical :error] {
+                    text_response 404 "Not Found" "file not found"
+                } {
+                    if [Logic.not [within_root? root canonical]] {
+                        text_response 403 "Forbidden" "path escapes the document root"
+                    } {
+                        if [Logic.not [io.file? canonical]] {
+                            text_response 404 "Not Found" "file not found"
+                        } {
+                            set body [attempt { io.read_text canonical }]
+                            if [Types.is? body :error] {
+                                if [Types.is? body :invalid_encoding] {
+                                    text_response 415 "Unsupported Media Type" "file is not UTF-8 text"
+                                } {
+                                    text_response 500 "Internal Server Error" "file could not be read"
+                                }
+                            } {
+                                set headers (
+                                    ("Content-Type" [content_type canonical])
+                                )
+                                if [= method "HEAD"] {
+                                    response 200 "OK" headers ""
+                                } {
+                                    response 200 "OK" headers body
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub function header (:response :name) {
+    function find (:headers) {
+        if [List.empty? headers] :missing {
+            set entry [List.head headers]
+            if [= [List.head entry] name] {
+                List.head [List.rest entry]
+            } {
+                find [List.rest headers]
+            }
+        }
+    }
+    find response.headers
+}

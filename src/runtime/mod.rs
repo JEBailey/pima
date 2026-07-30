@@ -13,6 +13,7 @@ pub use error::ErrorMetadata;
 pub use function::UserFunction;
 pub use ids::{
     BlockId, EnvironmentId, FunctionId, ModuleId, NamespaceId, NativeFunctionId, SymbolId,
+    TcpConnectionId, TcpListenerId,
 };
 pub use namespace::Namespace;
 pub use symbol::SymbolInterner;
