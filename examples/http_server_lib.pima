@@ -2,21 +2,21 @@ import "/pima/library/standard"
 import "/pima/tcp" as tcp
 import Logic.not
 
-set maximum_header_bytes 16384
+val maximum_header_bytes 16384
 
 function http_error (:message) {
     throw [new {
-        pub set types (:error :http_error)
-        pub set message message
+        pub val types (:error :http_error)
+        pub val message message
     }]
 }
 
 function response (:status :reason :headers :body) {
     new {
-        pub set status status
-        pub set reason reason
-        pub set headers headers
-        pub set body body
+        pub val status status
+        pub val reason reason
+        pub val headers headers
+        pub val body body
     }
 }
 
@@ -31,7 +31,7 @@ function read_headers (:connection :received) {
         if [> [String.byte_length received] maximum_header_bytes] {
             http_error "request headers are too large"
         }
-        set chunk [tcp.read connection 1024]
+        val chunk [tcp.read connection 1024]
         if [= chunk ""] {
             http_error "connection closed before request headers completed"
         }
@@ -40,12 +40,12 @@ function read_headers (:connection :received) {
 }
 
 function parse_header (:line) {
-    set parts [String.split line ":"]
+    val parts [String.split line ":"]
     if [< [List.length parts] 2] {
         http_error "malformed HTTP header"
     }
-    set name [String.trim [List.head parts]]
-    set value [String.trim [String.join [List.rest parts] ":"]]
+    val name [String.trim [List.head parts]]
+    val value [String.trim [String.join [List.rest parts] ":"]]
     if [= name ""] {
         http_error "HTTP header name cannot be empty"
     }
@@ -59,35 +59,35 @@ function parse_headers (:lines) {
 }
 
 function parse_request (:source) {
-    set sections [String.split source "\r\n\r\n"]
-    set lines [String.split [List.head sections] "\r\n"]
+    val sections [String.split source "\r\n\r\n"]
+    val lines [String.split [List.head sections] "\r\n"]
     if [List.empty? lines] {
         http_error "HTTP request line is missing"
     }
 
-    set request_line [String.split [List.head lines] " "]
+    val request_line [String.split [List.head lines] " "]
     if [not [= [List.length request_line] 3]] {
         http_error "malformed HTTP request line"
     }
-    set method [List.head request_line]
-    set target [List.head [List.rest request_line]]
-    set version [List.head [List.rest [List.rest request_line]]]
+    val method [List.head request_line]
+    val target [List.head [List.rest request_line]]
+    val version [List.head [List.rest [List.rest request_line]]]
     if [not [String.starts_with? version "HTTP/1."]] {
         http_error "only HTTP/1.x requests are supported"
     }
 
     new {
-        pub set method method
-        pub set target target
-        pub set version version
-        pub set headers [parse_headers [List.rest lines]]
+        pub val method method
+        pub val target target
+        pub val version version
+        pub val headers [parse_headers [List.rest lines]]
     }
 }
 
 function valid_header? (:header) {
     if [not [= [List.length header] 2]] false {
-        set name [List.head header]
-        set value [List.head [List.rest header]]
+        val name [List.head header]
+        val value [List.head [List.rest header]]
         if [not [Types.is? name :string]] false {
             if [not [Types.is? value :string]] false {
                 if [= name ""] false {
@@ -106,7 +106,7 @@ function valid_header? (:header) {
 
 function serialize_headers (:headers) {
     if [List.empty? headers] "" {
-        set header [List.head headers]
+        val header [List.head headers]
         if [not [valid_header? header]] {
             http_error "invalid HTTP response header"
         }
@@ -146,11 +146,11 @@ function serialize_response (:result) {
 }
 
 function dispatch (:handler :source) {
-    set request [attempt { parse_request source }]
+    val request [attempt { parse_request source }]
     if [Types.is? request :error] {
         error_response 400 "Bad Request" request.message
     } {
-        set result [attempt { handler request }]
+        val result [attempt { handler request }]
         if [Types.is? result :error] {
             error_response 500 "Internal Server Error" "request handler failed"
         } {
@@ -161,9 +161,9 @@ function dispatch (:handler :source) {
 
 function handle_connection (:connection :handler) {
     tcp.set_timeout connection 5000
-    set outcome [attempt {
-        set source [read_headers connection ""]
-        set result [dispatch handler source]
+    val outcome [attempt {
+        val source [read_headers connection ""]
+        val result [dispatch handler source]
         tcp.write connection [serialize_response result]
     }]
     tcp.close connection
@@ -173,19 +173,19 @@ function handle_connection (:connection :handler) {
 }
 
 pub function serve_once (:address :port :handler) {
-    set listener [tcp.listen address port]
-    set connection [tcp.accept listener]
+    val listener [tcp.listen address port]
+    val connection [tcp.accept listener]
     handle_connection connection handler
     tcp.close listener
 }
 
 function accept_forever (:listener :handler) {
-    set connection [tcp.accept listener]
+    val connection [tcp.accept listener]
     handle_connection connection handler
     accept_forever listener handler
 }
 
 pub function listen (:address :port :handler) {
-    set listener [tcp.listen address port]
+    val listener [tcp.listen address port]
     accept_forever listener handler
 }

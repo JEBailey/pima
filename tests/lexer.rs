@@ -71,7 +71,7 @@ fn distinguishes_member_dot_range_and_numbers() {
 
 #[test]
 fn preserves_line_endings_inside_block_comments() {
-    let kinds = lex_kinds("set x 1 /* first\nsecond */\nset y 2");
+    let kinds = lex_kinds("val x 1 /* first\nsecond */\nval y 2");
     let eol_count = kinds
         .iter()
         .filter(|kind| matches!(kind, TokenKind::Eol))

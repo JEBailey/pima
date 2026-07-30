@@ -45,7 +45,7 @@ pub enum Keyword {
     New,
     Pub,
     Return,
-    Set,
+    Val,
     Throw,
     Until,
     Var,

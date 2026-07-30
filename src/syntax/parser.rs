@@ -110,7 +110,7 @@ impl Parser<'_> {
     fn parse_expression(&mut self) -> ParseResult<NodeId> {
         match self.peek_kind() {
             Some(TokenKind::Keyword(Keyword::Pub)) => self.parse_public_declaration(),
-            Some(TokenKind::Keyword(Keyword::Set)) => {
+            Some(TokenKind::Keyword(Keyword::Val)) => {
                 self.parse_binding(Visibility::Private, BindingKind::Immutable)
             }
             Some(TokenKind::Keyword(Keyword::Var)) => {
@@ -345,7 +345,7 @@ impl Parser<'_> {
     fn parse_public_declaration(&mut self) -> ParseResult<NodeId> {
         let public = self.advance().span;
         match self.peek_kind() {
-            Some(TokenKind::Keyword(Keyword::Set)) => {
+            Some(TokenKind::Keyword(Keyword::Val)) => {
                 self.parse_binding_from(public, Visibility::Public, BindingKind::Immutable)
             }
             Some(TokenKind::Keyword(Keyword::Var)) => {
@@ -355,7 +355,7 @@ impl Parser<'_> {
                 self.parse_function_from(public, Visibility::Public)
             }
             _ => {
-                self.report_here("`pub` must prefix `set`, `var`, or `function`");
+                self.report_here("`pub` must prefix `val`, `var`, or `function`");
                 Err(())
             }
         }
@@ -964,7 +964,7 @@ fn is_reserved(name: &str) -> bool {
             | "new"
             | "pub"
             | "return"
-            | "set"
+            | "val"
             | "throw"
             | "until"
             | "var"

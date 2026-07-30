@@ -782,7 +782,7 @@ fn analyze(text: &str) -> Analysis {
 fn valid_identifier(name: &str) -> bool {
     const RESERVED: &[&str] = &[
         "as", "attempt", "break", "continue", "do", "function", "if", "import", "let", "match",
-        "new", "pub", "return", "set", "throw", "until", "var", "while",
+        "new", "pub", "return", "val", "throw", "until", "var", "while",
     ];
     if RESERVED.contains(&name) {
         return false;
@@ -945,7 +945,7 @@ fn describe_token(kind: &TokenKind) -> Option<String> {
 fn keyword_completions() -> Vec<CompletionItem> {
     const KEYWORDS: &[&str] = &[
         "attempt", "break", "continue", "do", "function", "if", "import", "let", "match", "new",
-        "pub", "return", "set", "throw", "until", "var", "while",
+        "pub", "return", "val", "throw", "until", "var", "while",
     ];
     KEYWORDS
         .iter()
@@ -1413,7 +1413,7 @@ mod tests {
 
     #[test]
     fn reports_parser_diagnostics() {
-        let result = analyze("set value\n");
+        let result = analyze("val value\n");
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].source.as_deref(), Some("pima"));
         assert!(result.module.is_some());
@@ -1421,7 +1421,7 @@ mod tests {
 
     #[test]
     fn retains_symbols_around_an_incomplete_statement() {
-        let text = "set before 1\nset incomplete\nset after 2\n";
+        let text = "val before 1\nval incomplete\nval after 2\n";
         let result = analyze(text);
         let module = result.module.expect("recoverable module");
         let symbols = document_symbols(text, &module);
@@ -1436,10 +1436,10 @@ mod tests {
 
     #[test]
     fn extracts_top_level_symbols() {
-        let result = analyze("set answer 42\nfunction double (:x) {\n  * x 2\n}\n");
+        let result = analyze("val answer 42\nfunction double (:x) {\n  * x 2\n}\n");
         let module = result.module.expect("valid module");
         let symbols = document_symbols(
-            "set answer 42\nfunction double (:x) {\n  * x 2\n}\n",
+            "val answer 42\nfunction double (:x) {\n  * x 2\n}\n",
             &module,
         );
         assert_eq!(symbols.len(), 2);
@@ -1459,7 +1459,7 @@ mod tests {
         assert!(valid_identifier("parse_value"));
         assert!(valid_identifier("empty?"));
         assert!(!valid_identifier("empty?now"));
-        assert!(!valid_identifier("set"));
+        assert!(!valid_identifier("val"));
         assert!(!valid_identifier(":value"));
         assert_eq!(to_snake_case("parseValue"), "parse_value");
         assert_eq!(to_snake_case("HTTPValue"), "http_value");
@@ -1469,13 +1469,13 @@ mod tests {
     #[test]
     fn recognizes_standard_namespace_member_completion_context() {
         assert_eq!(member_receiver("Math.", 5), Some("Math"));
-        assert_eq!(member_receiver("set result String.", 18), Some("String"));
+        assert_eq!(member_receiver("val result String.", 18), Some("String"));
         assert_eq!(member_receiver("value", 5), None);
     }
 
     #[test]
     fn document_symbols_include_namespace_members() {
-        let text = "set Point {\n    pub set x 0\n    pub function move (:amount) {\n        x\n    }\n}\n";
+        let text = "val Point {\n    pub val x 0\n    pub function move (:amount) {\n        x\n    }\n}\n";
         let result = analyze(text);
         let symbols = document_symbols(text, &result.module.expect("module"));
         assert_eq!(symbols.len(), 1);
@@ -1530,7 +1530,7 @@ mod tests {
 
     #[test]
     fn folding_ranges_include_multiline_blocks_and_lists() {
-        let text = "set values (\n    1\n    2\n)\nfunction read () {\n    values\n}\n";
+        let text = "val values (\n    1\n    2\n)\nfunction read () {\n    values\n}\n";
         let analysis = analyze(text);
         let ranges = folding_ranges(text, analysis.module.as_ref().expect("module"));
         assert!(ranges.len() >= 2);

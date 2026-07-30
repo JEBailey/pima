@@ -417,12 +417,12 @@ function make_cycle () {
             "<escaped-closure>",
             r#"
 function make_closure () {
-    set captured 41
+    val captured 41
     function read () { captured }
     read
 }
 
-set saved [make_closure]
+val saved [make_closure]
 [saved]
 "#,
         );

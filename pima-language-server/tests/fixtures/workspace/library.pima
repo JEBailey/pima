@@ -2,4 +2,4 @@ pub function greet (:name) {
     String.concat "Hello, " name
 }
 
-pub set DEFAULT_NAME "Pima"
+pub val DEFAULT_NAME "Pima"

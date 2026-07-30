@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn resolves_parameters_locals_and_recursive_functions() {
-        let source = "function sum (:value) {\n    set next [+ value 1]\n    sum next\n}\n";
+        let source = "function sum (:value) {\n    val next [+ value 1]\n    sum next\n}\n";
         let model = model(source);
         assert_eq!(model.symbols.len(), 3);
 
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn resolves_match_captures_only_inside_the_arm() {
-        let source = "set result (:good 42)\nmatch result (\n    (good :value) { value }\n)\n";
+        let source = "val result (:good 42)\nmatch result (\n    (good :value) { value }\n)\n";
         let model = model(source);
         let capture = model
             .symbols
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn lexical_shadowing_keeps_references_with_the_nearest_definition() {
-        let source = "set value 1\nfunction read (:value) {\n    value\n}\nvalue\n";
+        let source = "val value 1\nfunction read (:value) {\n    value\n}\nvalue\n";
         let model = model(source);
         let values = model
             .symbols
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn completion_visibility_follows_scope_and_declaration_order() {
         let source =
-            "set outer 1\nfunction calculate (:input) {\n    set local input\n    local\n}\n";
+            "val outer 1\nfunction calculate (:input) {\n    val local input\n    local\n}\n";
         let model = model(source);
         let inside = source.find("    local\n").expect("inside function");
         let names = model
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn reports_only_unambiguous_naming_convention_violations() {
-        let source = "set Point {}\nfunction parseValue (:inputValue) { inputValue }\n";
+        let source = "val Point {}\nfunction parseValue (:inputValue) { inputValue }\n";
         let model = model(source);
         let issues = model.naming_issues();
         assert_eq!(issues.len(), 2);
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn reports_assignment_to_a_resolved_immutable_binding() {
-        let source = "set fixed 1\nlet fixed 2\nvar changing 1\nlet changing 2\n";
+        let source = "val fixed 1\nlet fixed 2\nvar changing 1\nlet changing 2\n";
         let model = model(source);
         let issues = model.issues().collect::<Vec<_>>();
         assert_eq!(issues.len(), 1);
@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn reports_only_excess_user_function_arguments() {
         let source =
-            "function pair (:left :right) { (left right) }\nset partial [pair 1]\npair 1 2 3\n";
+            "function pair (:left :right) { (left right) }\nval partial [pair 1]\npair 1 2 3\n";
         let model = model(source);
         let issues = model.issues().collect::<Vec<_>>();
         assert_eq!(issues.len(), 1);

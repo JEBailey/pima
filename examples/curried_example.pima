@@ -5,7 +5,7 @@ function curry_sample (:x :y :z) {
 	Console.println "This is an example of currying " [Math.int [+ x [+ y z]]]
 }
 
-set curry [curry_sample 2 3 _ ]
+val curry [curry_sample 2 3 _ ]
 
 Console.println "\n** CURRY TEST**"
 curry 12

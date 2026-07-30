@@ -1,11 +1,11 @@
 import "/pima/library/standard"
 
 // These blocks are inert values. Neither one resolves its names yet.
-set compact_report @(:name :score) {
+val compact_report @(:name :score) {
     Console.println name ":" score
 }
 
-set detailed_report @(:name :score :passing) {
+val detailed_report @(:name :score :passing) {
     Console.println "Student:" name
     Console.println "Score:" score
     Console.println "Passing:" passing
@@ -19,21 +19,21 @@ function choose_report (:detailed) {
 // The receiving function supplies the environment used by do.
 // The report block resolves name, score, and passing from this call.
 function render_report (:report :name :score) {
-    set passing [Math.greater_or_equal score 70]
+    val passing [Math.greater_or_equal score 70]
     do report
 }
 
-set selected [choose_report true]
+val selected [choose_report true]
 render_report selected "Ada" 96
 render_report selected "Grace" 68
 
 // Blocks can also be stored in immutable lists and passed through another
 // block before they are eventually evaluated.
-set reports (compact_report detailed_report)
+val reports (compact_report detailed_report)
 
 function for_each_report (:remaining :action) {
     if [Logic.not [List.empty? remaining]] {
-        set report [List.head remaining]
+        val report [List.head remaining]
         do action
         for_each_report [List.rest remaining] action
     } {
@@ -42,7 +42,7 @@ function for_each_report (:remaining :action) {
 
 // report is supplied by for_each_report; render_report comes from its
 // enclosing module scope.
-set render_action @(:report) {
+val render_action @(:report) {
     Console.println "--- next report ---"
     render_report report "Linus" 88
 }
@@ -50,8 +50,8 @@ set render_action @(:report) {
 for_each_report reports render_action
 
 // Declarations made by do belong to the caller's current environment.
-set initialize_message @(:greeting :recipient) {
-    set message [String.concat greeting ", " recipient "!"]
+val initialize_message @(:greeting :recipient) {
+    val message [String.concat greeting ", " recipient "!"]
 }
 
 function build_message (:initializer :greeting :recipient) {
@@ -59,7 +59,7 @@ function build_message (:initializer :greeting :recipient) {
     message
 }
 
-set message [build_message initialize_message "Hello" "Pima"]
+val message [build_message initialize_message "Hello" "Pima"]
 Console.println message
 
 // Returning the selected block proves that passing it around did not execute it.

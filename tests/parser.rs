@@ -10,7 +10,7 @@ use pima::{
 #[test]
 fn parses_destructuring_binding_and_match_patterns() {
     let module = parse_source(
-        "set (x (y _)) (1 (2 3))\n\
+        "val (x (y _)) (1 (2 3))\n\
          match (:ok 42) (\n\
              (ok :value) { value }\n\
              (_ _) { 0 }\n\
@@ -37,7 +37,7 @@ fn parses_destructuring_binding_and_match_patterns() {
 #[test]
 fn binding_patterns_treat_bare_and_symbol_names_as_captures() {
     let module = parse_source(
-        "set (left :right) (1 2)\n\
+        "val (left :right) (1 2)\n\
          let (left :right) (3 4)\n",
     );
     for &statement in &module.statements {
@@ -152,10 +152,10 @@ println "done"
 #[test]
 fn parses_public_types_binding_and_constructor_expression() {
     let module = parse_source(
-        r#"set Account {
-    pub set types (:account)
+        r#"val Account {
+    pub val types (:account)
 }
-set account [new Account]
+val account [new Account]
 "#,
     );
 
@@ -287,7 +287,7 @@ fn rejects_duplicate_function_parameters() {
 #[test]
 fn parses_do_as_a_caller_scoped_special_form() {
     let module = parse_source(
-        r#"set code {
+        r#"val code {
     println "hello"
 }
 do code
@@ -309,7 +309,7 @@ do code
 #[test]
 fn parses_annotated_block_context_requirements() {
     let module = parse_source(
-        "set report @(:name :score) {\n\
+        "val report @(:name :score) {\n\
              Console.println name score\n\
          }\n",
     );
@@ -331,7 +331,7 @@ fn parses_annotated_block_context_requirements() {
 
 #[test]
 fn preserves_editor_spans_for_declared_names() {
-    let source = "function add (:left :right) {\n    set total [+ left right]\n    total\n}\n";
+    let source = "function add (:left :right) {\n    val total [+ left right]\n    total\n}\n";
     let module = parse_source(source);
     let NodeKind::Function {
         name,
@@ -365,7 +365,7 @@ fn preserves_editor_spans_for_declared_names() {
 #[test]
 fn rejects_duplicate_annotated_block_requirements() {
     let mut sources = SourceMap::default();
-    let text = "set report @(:name :name) {}\n";
+    let text = "val report @(:name :name) {}\n";
     let source_id = sources.add("<test>", text);
     let tokens = lex(source_id, text).expect("source should lex");
     let diagnostics = parse(&tokens).expect_err("source should not parse");

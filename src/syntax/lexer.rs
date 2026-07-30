@@ -182,7 +182,7 @@ fn word_kind(word: &str) -> TokenKind {
         "new" => Keyword::New,
         "pub" => Keyword::Pub,
         "return" => Keyword::Return,
-        "set" => Keyword::Set,
+        "val" => Keyword::Val,
         "throw" => Keyword::Throw,
         "until" => Keyword::Until,
         "var" => Keyword::Var,

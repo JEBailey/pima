@@ -19,10 +19,10 @@ fn pima_implements_http_over_native_tcp_primitives() {
 
 function response (:status :reason :headers :body) {{
     new {{
-        pub set status status
-        pub set reason reason
-        pub set headers headers
-        pub set body body
+        pub val status status
+        pub val reason reason
+        pub val headers headers
+        pub val body body
     }}
 }}
 

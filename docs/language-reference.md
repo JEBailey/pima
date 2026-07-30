@@ -113,7 +113,7 @@ The reserved words are:
 
 ```text
 as  attempt  break  continue  do  function  if  import  let  match  new  pub
-return  set  throw  until  var  while
+return  val  throw  until  var  while
 ```
 
 ## 3. Grammar
@@ -172,7 +172,7 @@ expression-list  = expression, { separator+, expression } ;
 declaration      = [ visibility, separator+ ], ( binding
                  | function-declaration ) ;
 visibility       = "pub" ;
-binding          = ( "set" | "var" ), separator+,
+binding          = ( "val" | "var" ), separator+,
                    binding-pattern, separator+, expression ;
 assignment       = "let", separator+, binding-pattern, separator+, expression ;
 binding-pattern  = binding-name | "_" | binding-list-pattern ;
@@ -319,11 +319,11 @@ A namespace template may declare additional semantic types with an immutable,
 public `types` member:
 
 ```pima
-set Square {
-    pub set types (:square :shape)
+val Square {
+    pub val types (:square :shape)
 }
 
-set square [new Square]
+val square [new Square]
 [types square]          // (:namespace :square :shape)
 [is? square :shape]     // true
 ```
@@ -331,7 +331,7 @@ set square [new Square]
 For a namespace, the runtime prepends `:namespace` to the declared type list.
 The declared list may contain application-defined symbols but cannot contain a
 fundamental runtime type symbol. `new` validates the member when present:
-`types` must be declared with `pub set`, its value must be a list of unique
+`types` must be declared with `pub val`, its value must be a list of unique
 symbols, and it cannot be reassigned. A namespace without this member has the
 type list `(:namespace)`.
 
@@ -362,7 +362,7 @@ An annotated block declares context bindings that must be visible when `do`
 executes it:
 
 ```pima
-set report @(:name :score) {
+val report @(:name :score) {
     Console.println name score
 }
 ```
@@ -394,7 +394,7 @@ is its resulting value. This lets a multi-statement block serve anywhere that
 form would otherwise accept a single result-producing expression.
 
 Calls evaluate the callee and ordinary arguments from left to right, then invoke
-the callee. The special forms `if`, `while`, `until`, `function`, `set`, `let`,
+the callee. The special forms `if`, `while`, `until`, `function`, `val`, `let`,
 `var`, `pub`, `import`, `new`, `do`, `attempt`, `return`, `break`,
 `continue`, and `throw` control evaluation of one or more operands.
 
@@ -412,10 +412,10 @@ Operations fail by throwing typed error values. Error conditions include:
 Every error is a namespace classified with at least `:error`:
 
 ```pima
-set InvalidOrder {
-    pub set types (:error :validation_error :invalid_order)
-    pub set message "The order is invalid"
-    pub set order_id 42
+val InvalidOrder {
+    pub val types (:error :validation_error :invalid_order)
+    pub val message "The order is invalid"
+    pub val order_id 42
 }
 
 throw [new InvalidOrder]
@@ -470,7 +470,7 @@ error's declared type list.
 executes it:
 
 ```pima
-set result [attempt {
+val result [attempt {
     read_file path
 }]
 
@@ -503,11 +503,13 @@ local environment linked to the environment in which it was created.
 
 The three binding forms are defined as follows:
 
-- `set name value` creates an immutable binding in the current environment.
+- `val name value` creates a stable, immutable binding in the current
+  environment. The binding cannot be reassigned; this does not require its
+  value to be known at compile time.
 - `var name value` creates a mutable binding in the current environment.
 - `let name value` updates the nearest existing mutable binding named `name`.
 
-`set` and `var` are declarations. Declaring a name that already exists in the
+`val` and `var` are declarations. Declaring a name that already exists in the
 current environment is an error. `let` is assignment rather than declaration:
 using it with an unbound name or an immutable binding is an error.
 
@@ -518,26 +520,26 @@ destination bindings, `_` ignores a value, and list patterns destructure
 immutable lists recursively:
 
 ```pima
-set (x (y _)) (3 (4 5))
+val (x (y _)) (3 (4 5))
 
 var left 0
 var right 0
 let (left right) (10 20)
 ```
 
-`set` creates immutable bindings for every capture, `var` creates mutable
+`val` creates immutable bindings for every capture, `var` creates mutable
 bindings, and `let` updates existing mutable bindings. Destructuring is atomic:
 the complete shape and every destination are validated before any declaration
 or assignment occurs. A shape mismatch throws `:match_error`.
 
 Within a binding target, `name` and `:name` have the same meaning. The symbol
 spelling is accepted as a convenient name descriptor but is redundant because
-`set`, `var`, or `let` already establishes that the expression is a binding
+`val`, `var`, or `let` already establishes that the expression is a binding
 target:
 
 ```pima
-set (x y) (1 2)
-set (:x :y) (1 2)       // equivalent spelling
+val (x y) (1 2)
+val (:x :y) (1 2)       // equivalent spelling
 
 var left 0
 var right 0
@@ -555,7 +557,7 @@ symbol that identifies the kind of result, and its second element is the
 associated value:
 
 ```pima
-set result (:error "the input was not valid")
+val result (:error "the input was not valid")
 // A successful result might instead be (:good 42).
 
 match result (
@@ -602,8 +604,8 @@ mutable copy with `var`.
 Every declaration is private unless prefixed with `pub`:
 
 ```pima
-set internal_limit 10
-pub set PI 3.141592653589793
+val internal_limit 10
+pub val PI 3.141592653589793
 
 function helper (:x) {
     * x 2
@@ -663,7 +665,7 @@ not invoke the function; it returns a partially applied function whose
 parameters correspond, from left to right, to the placeholders:
 
 ```pima
-set add_five [add 5 _]
+val add_five [add 5 _]
 add_five 3
 ```
 
@@ -673,10 +675,10 @@ A function name used without invocation evaluates to the function value.
 Brackets perform immediate invocation, including zero-argument invocation:
 
 ```pima
-set operation calculate
+val operation calculate
 [operation]
 
-set area_function square.area
+val area_function square.area
 [square.area]
 ```
 
@@ -768,7 +770,7 @@ inside another function, that function call remains a boundary.
 Blocks are first-class, uninstantiated chunks of code:
 
 ```pima
-set greeting {
+val greeting {
     println "hello " name
 }
 ```
@@ -782,7 +784,7 @@ block, as demonstrated by `examples/function_test.pima`.
 An annotated block makes important environmental dependencies visible:
 
 ```pima
-set report @(:name :score) {
+val report @(:name :score) {
     Console.println name score
 }
 
@@ -928,8 +930,8 @@ Lists cannot be modified after creation. Every list operation leaves its input
 unchanged:
 
 ```pima
-set original (1 2)
-set extended [push original 0]
+val original (1 2)
+val extended [push original 0]
 
 // original is still (1 2)
 // extended is (0 1 2)
@@ -978,7 +980,7 @@ built-ins.
 A block may be used as a namespace template:
 
 ```pima
-set Counter {
+val Counter {
     var value 0
 
     function increment () {
@@ -986,7 +988,7 @@ set Counter {
     }
 }
 
-set counter [new Counter]
+val counter [new Counter]
 ```
 
 `new template` instantiates the template block in a fresh namespace environment
@@ -998,9 +1000,9 @@ Pima has no reserved initializer method. A function that accepts values and
 creates a namespace is an ordinary constructor:
 
 ```pima
-set InvalidBalance {
-    pub set types (:error :validation_error :invalid_balance)
-    pub set message "Opening balance cannot be negative"
+val InvalidBalance {
+    pub val types (:error :validation_error :invalid_balance)
+    pub val message "Opening balance cannot be negative"
 }
 
 function create_account (:opening_balance) {
@@ -1008,7 +1010,7 @@ function create_account (:opening_balance) {
         throw [new InvalidBalance]
     } {
         new {
-            pub set types (:account)
+            pub val types (:account)
 
             var balance opening_balance
 
@@ -1024,7 +1026,7 @@ function create_account (:opening_balance) {
     }
 }
 
-set account [create_account 100]
+val account [create_account 100]
 ```
 
 The block passed to `new` is instantiated in a fresh namespace whose enclosing
@@ -1147,7 +1149,7 @@ anything. Wildcard imports cannot use `as`; preserving a namespace under
 another local name is ordinary value binding rather than an import:
 
 ```pima
-set arithmetic Math
+val arithmetic Math
 ```
 
 With an alias, the module's public declarations are available only as members
@@ -1207,7 +1209,7 @@ syntax:
 ```pima
 import "/pima/io" as io
 
-set text [io.read_text "input.txt"]
+val text [io.read_text "input.txt"]
 io.write_text "output.txt" text
 ```
 
@@ -1278,10 +1280,10 @@ The `/pima/tcp` module exposes synchronous TCP primitives:
 ```pima
 import "/pima/tcp" as tcp
 
-set listener [tcp.listen "127.0.0.1" 8080]
-set connection [tcp.accept listener]
+val listener [tcp.listen "127.0.0.1" 8080]
+val connection [tcp.accept listener]
 tcp.set_timeout connection 5000
-set request [tcp.read connection 1024]
+val request [tcp.read connection 1024]
 tcp.write connection "response"
 tcp.close connection
 tcp.close listener

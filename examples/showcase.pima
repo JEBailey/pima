@@ -1,9 +1,9 @@
 import "/pima/library/standard"
 
 // Errors are ordinary typed namespace values.
-set InvalidOpeningBalance {
-    pub set types (:error :validation_error :invalid_opening_balance)
-    pub set message "Opening balance must not be negative"
+val InvalidOpeningBalance {
+    pub val types (:error :validation_error :invalid_opening_balance)
+    pub val message "Opening balance must not be negative"
 }
 
 function create_account (:owner :opening_balance) {
@@ -11,9 +11,9 @@ function create_account (:owner :opening_balance) {
         throw [new InvalidOpeningBalance]
     } {
         new {
-            pub set types (:account)
+            pub val types (:account)
 
-            set owner_name owner
+            val owner_name owner
             var balance opening_balance
             var history ()
 
@@ -53,23 +53,23 @@ function add (:left :right) {
     + left right
 }
 
-set triple [multiplier 3]
-set generated [List.map triple [Math.range 1 6]]
-set selected [List.filter greater_than_ten generated]
-set total [List.fold add 0 selected]
-set printable [List.map String.from selected]
+val triple [multiplier 3]
+val generated [List.map triple [Math.range 1 6]]
+val selected [List.filter greater_than_ten generated]
+val total [List.fold add 0 selected]
+val printable [List.map String.from selected]
 
 Console.println "Generated:" [String.join printable ", "]
 Console.println "Selected total:" total
 Console.println "Two to the tenth:" [Math.pow 2 10]
 Console.println "PI:" Math.PI
 
-set account [create_account "Ada" total]
+val account [create_account "Ada" total]
 account.deposit 25
 account.deposit 10
 
 // Blocks do not capture scope; do supplies prefix and account at the call site.
-set announce @(:prefix :account) {
+val announce @(:prefix :account) {
     Console.println prefix [account.summary]
 }
 
@@ -80,7 +80,7 @@ function announce_account (:prefix :account) {
 announce_account "Account" account
 Console.println "Transactions:" [account.transactions]
 
-set rejected [attempt {
+val rejected [attempt {
     create_account "Grace" -1
 }]
 

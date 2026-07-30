@@ -110,7 +110,7 @@ fn validate_types(
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
-            "namespace `types` must be declared with `pub set`".to_owned(),
+            "namespace `types` must be declared with `pub val`".to_owned(),
         )));
     }
     let Value::List(list) = binding.value else {

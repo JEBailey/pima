@@ -89,10 +89,10 @@ mod tests {
 
     #[test]
     fn formats_multiline_lists_and_calls() {
-        let source = "set values (\n1\n[+ 2\n3]\n)\n";
+        let source = "val values (\n1\n[+ 2\n3]\n)\n";
         assert_eq!(
             format(source, 2).expect("format"),
-            "set values (\n  1\n  [+ 2\n    3]\n)\n"
+            "val values (\n  1\n  [+ 2\n    3]\n)\n"
         );
     }
 

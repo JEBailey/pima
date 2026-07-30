@@ -9,7 +9,7 @@ import "/pima/library/standard"
 Console.println "##DO TEST"
 Console.println "following test prints \"hello world my name is jason\" "
 
-set hello @(:name) {
+val hello @(:name) {
 	//note that at this point name is undefined
 	Console.println "hello world my name is " name
 }

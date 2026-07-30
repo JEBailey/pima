@@ -2,7 +2,7 @@ import "/pima/library/standard"
 import "../examples/file_server_lib.pima" as files
 import "../examples/http_server_lib.pima" as http
 
-set server [files.create_file_server "examples/public"]
+val server [files.create_file_server "examples/public"]
 
 function handle_request (:request) {
     server.handle request.method request.target

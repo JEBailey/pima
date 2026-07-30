@@ -1,7 +1,7 @@
 import "/pima/library/standard"
 
-set Square {
-	set length 	5
+val Square {
+	val length 	5
 	var width 	80
 	
 	var total_area 15
@@ -15,8 +15,8 @@ set Square {
 	}
 }
 
-set square1 [new Square]
-set square2 [new Square]
+val square1 [new Square]
+val square2 [new Square]
 
 Console.println "\n** CREATE NAMESPACE(OBJECT)**"
 Console.println "square1 area :  " [square1.area]
