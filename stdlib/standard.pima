@@ -1,116 +1,116 @@
 // Pima standard library
 
 function math_pow (:base :exponent) {
-    if [< exponent 0] {
-        / 1 [math_pow base [- 0 exponent]]
+    if [< (exponent 0)] {
+        / (1 [math_pow (base [- (0 exponent)])])
     } {
-        if [= exponent 0] 1 [* base [math_pow base [- exponent 1]]]
+        if [= (exponent 0)] 1 [* (base [math_pow (base [- (exponent 1)])])]
     }
 }
 
 function math_lte (:left :right) {
-    if [< left right] true [= left right]
+    if [< (left right)] true [= (left right)]
 }
 
 function math_gte (:left :right) {
-    if [> left right] true [= left right]
+    if [> (left right)] true [= (left right)]
 }
 
 function math_increment (:value) {
-    + value 1
+    + (value 1)
 }
 
 function math_decrement (:value) {
-    - value 1
+    - (value 1)
 }
 
 function math_range (:begin :end) {
-    val step [logic_select [math_lte begin end] math_increment math_decrement]
-    if [= begin end] {
-        List.append () begin
+    val step [logic_select ([math_lte (begin end)] math_increment math_decrement)]
+    if [= (begin end)] {
+        List.append (() begin)
     } {
-        List.push [math_range [step begin] end] begin
+        List.push ([math_range ([step (begin)] end)] begin)
     }
 }
 
 function math_absolute (:value) {
-    if [< value 0] [- 0 value] value
+    if [< (value 0)] [- (0 value)] value
 }
 
 function math_minimum (:left :right) {
-    if [< left right] left right
+    if [< (left right)] left right
 }
 
 function math_maximum (:left :right) {
-    if [> left right] left right
+    if [> (left right)] left right
 }
 
 function math_clamp (:value :minimum :maximum) {
-    math_minimum [math_maximum value minimum] maximum
+    math_minimum ([math_maximum (value minimum)] maximum)
 }
 
 function math_sum (:list) {
-    if [List.empty? list] 0 {
-        + [List.head list] [math_sum [List.rest list]]
+    if [List.empty? (list)] 0 {
+        + ([List.head (list)] [math_sum ([List.rest (list)])])
     }
 }
 
 function math_product (:list) {
-    if [List.empty? list] 1 {
-        * [List.head list] [math_product [List.rest list]]
+    if [List.empty? (list)] 1 {
+        * ([List.head (list)] [math_product ([List.rest (list)])])
     }
 }
 
 function math_average (:list) {
-    / [math_sum list] [list_length list]
+    / ([math_sum (list)] [list_length (list)])
 }
 
 function list_reverse (:list) {
-    if [List.empty? list] () {
-        List.append [list_reverse [List.rest list]] [List.head list]
+    if [List.empty? (list)] () {
+        List.append ([list_reverse ([List.rest (list)])] [List.head (list)])
     }
 }
 
 function list_foreach (:list :block) {
-    if [Logic.not [List.empty? list]] {
-        val item [List.head list]
+    if [Logic.not ([List.empty? (list)])] {
+        val item [List.head (list)]
         do block
-        list_foreach [List.rest list] block
+        list_foreach ([List.rest (list)] block)
     } {
     }
 }
 
 function list_map (:callable :list) {
-    if [List.empty? list] {
+    if [List.empty? (list)] {
         ()
     } {
-        List.push [list_map callable [List.rest list]] [callable [List.head list]]
+        List.push ([list_map (callable [List.rest (list)])] [callable ([List.head (list)])])
     }
 }
 
 function list_length (:list) {
-    if [List.empty? list] 0 [+ 1 [list_length [List.rest list]]]
+    if [List.empty? (list)] 0 [+ (1 [list_length ([List.rest (list)])])]
 }
 
 function list_contains (:list :value) {
-    if [List.empty? list] false {
-        if [= [List.head list] value] true [list_contains [List.rest list] value]
+    if [List.empty? (list)] false {
+        if [= ([List.head (list)] value)] true [list_contains ([List.rest (list)] value)]
     }
 }
 
 function list_fold (:callable :initial :list) {
-    if [List.empty? list] initial {
-        list_fold callable [callable initial [List.head list]] [List.rest list]
+    if [List.empty? (list)] initial {
+        list_fold (callable [callable (initial [List.head (list)])] [List.rest (list)])
     }
 }
 
 function list_filter (:predicate :list) {
-    if [List.empty? list] {
+    if [List.empty? (list)] {
         ()
     } {
-        val tail [list_filter predicate [List.rest list]]
-        if [predicate [List.head list]] {
-            List.push tail [List.head list]
+        val tail [list_filter (predicate [List.rest (list)])]
+        if [predicate ([List.head (list)])] {
+            List.push (tail [List.head (list)])
         } {
             tail
         }
@@ -118,14 +118,14 @@ function list_filter (:predicate :list) {
 }
 
 function list_any (:predicate :list) {
-    if [List.empty? list] false {
-        if [predicate [List.head list]] true [list_any predicate [List.rest list]]
+    if [List.empty? (list)] false {
+        if [predicate ([List.head (list)])] true [list_any (predicate [List.rest (list)])]
     }
 }
 
 function list_all (:predicate :list) {
-    if [List.empty? list] true {
-        if [predicate [List.head list]] [list_all predicate [List.rest list]] false
+    if [List.empty? (list)] true {
+        if [predicate ([List.head (list)])] [list_all (predicate [List.rest (list)])] false
     }
 }
 

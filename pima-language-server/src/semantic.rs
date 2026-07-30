@@ -5,6 +5,8 @@ use pima::{
     syntax::ast::{BindingKind, BlockId, Module, Name, NodeId, NodeKind, Pattern},
 };
 
+use crate::ast_utils::pattern_captures;
+
 pub type SymbolId = usize;
 type ScopeId = usize;
 
@@ -284,28 +286,10 @@ impl<'module> Builder<'module> {
             NodeKind::Block(block) => self.visit_block(*block, scope),
             NodeKind::Member { object, .. } => self.visit_node(*object, scope),
             NodeKind::Call {
-                callee, arguments, ..
+                callee, argument, ..
             } => {
-                if let NodeKind::Identifier(name) = &self.module.node(*callee).kind
-                    && let Some(symbol) = self.resolve(scope, name)
-                    && self.model.symbols[symbol].kind == SymbolKind::Function
-                    && arguments.len() > self.model.symbols[symbol].parameters.len()
-                {
-                    self.model.issues.push(SemanticIssue {
-                        span: self.module.node(*callee).span,
-                        message: format!(
-                            "function `{}` accepts at most {} arguments, but {} were supplied",
-                            name,
-                            self.model.symbols[symbol].parameters.len(),
-                            arguments.len()
-                        ),
-                        severity: IssueSeverity::Error,
-                    });
-                }
                 self.visit_node(*callee, scope);
-                for argument in arguments {
-                    self.visit_node(*argument, scope);
-                }
+                self.visit_node(*argument, scope);
             }
             NodeKind::Binding {
                 pattern,
@@ -327,20 +311,21 @@ impl<'module> Builder<'module> {
             }
             NodeKind::Function {
                 name,
-                parameters,
+                parameter,
                 body,
                 ..
             } => {
                 let function = self.define(scope, name, SymbolKind::Function, false);
+                let parameters = pattern_captures(parameter);
                 self.model.symbols[function].parameters = parameters
                     .iter()
                     .map(|parameter| parameter.text.to_string())
                     .collect();
-                let function_scope = self.child_scope(scope, self.module.block(*body).span);
+                let function_scope = self.child_scope(scope, self.module.node(*body).span);
                 for parameter in parameters {
                     self.define(function_scope, parameter, SymbolKind::Parameter, false);
                 }
-                self.visit_block(*body, function_scope);
+                self.visit_node(*body, function_scope);
             }
             NodeKind::Conditional {
                 condition,
@@ -471,7 +456,7 @@ mod tests {
 
     #[test]
     fn resolves_parameters_locals_and_recursive_functions() {
-        let source = "function sum (:value) {\n    val next [+ value 1]\n    sum next\n}\n";
+        let source = "function sum (:value) {\n    val next [+ (value 1)]\n    sum (next)\n}\n";
         let model = model(source);
         assert_eq!(model.symbols.len(), 3);
 
@@ -520,7 +505,7 @@ mod tests {
 
     #[test]
     fn assignments_are_references_not_new_definitions() {
-        let source = "var count 0\nlet count [+ count 1]\n";
+        let source = "var count 0\nlet count [+ (count 1)]\n";
         let model = model(source);
         assert_eq!(
             model
@@ -596,13 +581,11 @@ mod tests {
     }
 
     #[test]
-    fn reports_only_excess_user_function_arguments() {
-        let source =
-            "function pair (:left :right) { (left right) }\nval partial [pair 1]\npair 1 2 3\n";
+    fn leaves_function_pattern_matching_to_runtime() {
+        let source = "function pair (:left :right) { (left right) }\nval value [pair (1 2)]\n";
         let model = model(source);
         let issues = model.issues().collect::<Vec<_>>();
-        assert_eq!(issues.len(), 1);
-        assert!(issues[0].message.contains("3 were supplied"));
+        assert!(issues.is_empty());
     }
 
     #[test]

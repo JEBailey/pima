@@ -103,7 +103,7 @@ impl Parser<'_> {
         if expressions.len() == 1 {
             Ok(first)
         } else {
-            Ok(self.make_call(expressions, false))
+            self.make_call(expressions, false)
         }
     }
 
@@ -246,12 +246,21 @@ impl Parser<'_> {
             return Ok(expressions[0]);
         }
 
-        let callee = expressions.remove(0);
+        if expressions.len() != 2 {
+            self.diagnostics.push(Diagnostic::at_error(
+                "a call requires exactly one argument expression",
+                self.join(start, end),
+            ));
+            return Err(());
+        }
+
+        let callee = expressions[0];
+        let argument = expressions[1];
         Ok(self.alloc(
             self.join(start, end),
             NodeKind::Call {
                 callee,
-                arguments: expressions,
+                argument,
                 immediate: true,
             },
         ))
@@ -542,47 +551,21 @@ impl Parser<'_> {
             "expected `function`",
         )?;
         let (name, name_span) = self.expect_identifier("expected function name")?;
-        self.expect_simple(
-            |kind| matches!(kind, TokenKind::LeftParen),
-            "expected `(` before parameters",
-        )?;
-
-        let mut parameters = Vec::new();
-        let mut names = HashSet::new();
-        self.skip_eols();
-        while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
-            let token = self.peek().cloned().ok_or_else(|| {
-                self.report_eof("unterminated parameter list");
-            })?;
-            let TokenKind::Symbol(parameter) = token.kind else {
-                self.report_here("function parameters must be symbols such as `:value`");
-                return Err(());
-            };
-            self.advance();
-
-            if is_reserved(&parameter) {
-                self.diagnostics.push(Diagnostic::at_error(
-                    "reserved words cannot be parameter names",
-                    token.span,
-                ));
-                return Err(());
-            }
-            if !names.insert(parameter.clone()) {
-                self.diagnostics.push(Diagnostic::at_error(
-                    format!("duplicate parameter `:{parameter}`"),
-                    token.span,
-                ));
-                return Err(());
-            }
-            parameters.push(Name {
-                text: parameter,
-                span: token.span,
-            });
-            self.skip_eols();
+        let parameter = self.parse_binding_pattern()?;
+        let mut captures = HashSet::new();
+        if let Some(duplicate) = duplicate_capture(&parameter, &mut captures) {
+            self.diagnostics.push(Diagnostic::at_error(
+                format!("duplicate function parameter `{}`", duplicate.text),
+                duplicate.span,
+            ));
+            return Err(());
         }
-        self.advance();
-
-        let (body, body_span) = self.parse_block()?;
+        if self.at_statement_end() {
+            self.report_here("expected function body expression");
+            return Err(());
+        }
+        let body = self.parse_expression()?;
+        let body_span = self.node(body).span;
         Ok(self.alloc(
             self.join(start, body_span),
             NodeKind::Function {
@@ -591,7 +574,7 @@ impl Parser<'_> {
                     text: name,
                     span: name_span,
                 },
-                parameters,
+                parameter,
                 body,
             },
         ))
@@ -784,7 +767,7 @@ impl Parser<'_> {
         if expressions.len() == 1 {
             Ok(first)
         } else {
-            Ok(self.make_call(expressions, false))
+            self.make_call(expressions, false)
         }
     }
 
@@ -797,20 +780,31 @@ impl Parser<'_> {
         }
     }
 
-    fn make_call(&mut self, mut expressions: Vec<NodeId>, immediate: bool) -> NodeId {
-        let callee = expressions.remove(0);
-        let end = expressions
-            .last()
-            .map(|id| self.node(*id).span)
-            .unwrap_or(self.node(callee).span);
-        self.alloc(
+    fn make_call(&mut self, expressions: Vec<NodeId>, immediate: bool) -> ParseResult<NodeId> {
+        if expressions.len() != 2 {
+            let span = self.join(
+                self.node(expressions[0]).span,
+                self.node(*expressions.last().expect("call has a callee"))
+                    .span,
+            );
+            self.diagnostics.push(Diagnostic::at_error(
+                "a call requires exactly one argument expression",
+                span,
+            ));
+            return Err(());
+        }
+
+        let callee = expressions[0];
+        let argument = expressions[1];
+        let end = self.node(argument).span;
+        Ok(self.alloc(
             self.join(self.node(callee).span, end),
             NodeKind::Call {
                 callee,
-                arguments: expressions,
+                argument,
                 immediate,
             },
-        )
+        ))
     }
 
     fn is_special_form(&self, id: NodeId) -> bool {
@@ -970,4 +964,17 @@ fn is_reserved(name: &str) -> bool {
             | "var"
             | "while"
     )
+}
+
+fn duplicate_capture<'a>(
+    pattern: &'a Pattern,
+    captures: &mut HashSet<std::sync::Arc<str>>,
+) -> Option<&'a Name> {
+    match pattern {
+        Pattern::Capture(name) => (!captures.insert(name.text.clone())).then_some(name),
+        Pattern::List(elements) => elements
+            .iter()
+            .find_map(|element| duplicate_capture(element, captures)),
+        Pattern::Wildcard | Pattern::Literal(_) => None,
+    }
 }

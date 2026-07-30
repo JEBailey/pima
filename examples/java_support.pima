@@ -1,8 +1,8 @@
-val map [java java.util.HashMap]
+val map [java (java.util.HashMap)]
 
-[map put "key" "this is a message in a bottle" ]
+[map (put "key" "this is a message in a bottle") ]
 
-println "map has " [map get "key"]
-println "doing something else now"
-val time [java java.util.Date]
-println "the current time is " [time toString]
+println ("map has " [map (get "key")])
+println ("doing something else now")
+val time [java (java.util.Date)]
+println ("the current time is " [time (toString)])

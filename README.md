@@ -32,7 +32,7 @@ The interpreter is also available as a Rust library:
 use pima::{Config, Interpreter};
 
 let mut pima = Interpreter::new(Config::default());
-let outcome = pima.run_source("<embedded>", "[+ 20 22]\n");
+let outcome = pima.run_source("<embedded>", "[+ (20 22)]\n");
 
 assert!(outcome.is_success());
 assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
@@ -47,18 +47,31 @@ An unsuccessful run has no value.
 import "/pima/library/standard"
 
 function factorial (:number) {
-    if [<= number 1] {
+    if [<= (number 1)] {
         1
     } {
-        * number [factorial [- number 1]]
+        * (number [factorial ([- (number 1)])])
     }
 }
 
-[factorial 6]
+[factorial (6)]
 ```
 
 More complete programs live in `examples/`, including a JSON parser and a
 directory-backed static file server core.
+
+## Performance
+
+Run the Criterion benchmark suite with:
+
+```console
+cargo bench
+```
+
+The suite measures syntax processing, interpreter startup, repeated evaluation,
+recursion, closures, and larger list workloads. See
+[docs/benchmarking.md](docs/benchmarking.md) for individual commands and
+comparison guidance.
 
 The TCP module can run the Pima HTTP implementation as a real local server:
 

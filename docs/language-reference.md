@@ -186,11 +186,8 @@ match-list-pattern
                    { separator+, match-pattern } ], separator*, ")" ;
 function-declaration
                  = "function", separator+, identifier, separator*,
-                   parameter-list, separator*, block ;
+                   binding-pattern, separator+, expression ;
 member-access    = identifier, ".", identifier, { ".", identifier } ;
-parameter-list   = "(", separator*,
-                   [ symbol, { separator+, symbol } ],
-                   separator*, ")" ;
 
 conditional      = "if", separator+, expression, separator+,
                    expression, [ separator+, expression ] ;
@@ -216,24 +213,22 @@ import-expression
 new-expression   = "new", separator+, expression ;
 do-expression    = "do", separator+, expression ;
 
-call             = expression, { separator+, expression } ;
+call             = expression, separator+, expression ;
 ```
 
-At statement level, the first expression is the callee and the remaining
-expressions on the same logical line are its arguments. The call ends at the
-logical line ending; parsing does not depend on the callee's runtime arity. A
-bracket expression explicitly invokes its first expression with the remaining
-expressions as arguments and provides a boundary when a call is nested:
+Every call has exactly two expressions: a callee and one argument expression.
+A list is conventionally used to supply several values to a list parameter
+pattern. A bracket expression provides a boundary when a call is nested:
 
 ```pima
-println [fibonacci 12]
-+ [fibonacci 5] [fibonacci 6]
+println ([fibonacci (12)])
++ ([fibonacci (5)] [fibonacci (6)])
 ```
 
-Built-ins such as `println` receive every remaining operand on their logical
-line. User functions must receive the arity declared by their parameter list.
-Except for syntax defined as a special form, an unbracketed nested call is not
-permitted. `[function]` immediately invokes `function` with zero arguments.
+The argument expression is evaluated to one value. The callee then matches that
+value against its parameter pattern. A zero-value convention uses the empty
+list as both pattern and argument: `function run () body` is invoked with
+`[run ()]`.
 
 Parentheses construct lists; they do not group arithmetic expressions.
 Brackets immediately invoke a call expression. Braces create a block value and
@@ -297,8 +292,8 @@ The native predicate `is? value type-symbol` reports whether `type-symbol`
 occurs in the value's type list:
 
 ```pima
-[is? 42 :integer]   // true
-[is? 42 :string]    // false
+[is? (42 :integer)]   // true
+[is? (42 :string)]    // false
 ```
 
 The second operand to `is?` must be a symbol. Type lists contain symbols only,
@@ -325,7 +320,7 @@ val Square {
 
 val square [new Square]
 [types square]          // (:namespace :square :shape)
-[is? square :shape]     // true
+[is? (square :shape)]     // true
 ```
 
 For a namespace, the runtime prepends `:namespace` to the declared type list.
@@ -344,12 +339,12 @@ their name.
 A list evaluates its elements from left to right and produces a new immutable
 list.
 
-A bracket expression evaluates its callee and arguments from left to right,
+A bracket expression evaluates its callee and argument from left to right,
 immediately invokes the callee, and yields the result:
 
 ```pima
-[* 6 7]                 // 42
-[produce_value]         // zero-argument invocation
+[* (6 7)]               // 42
+[produce_value ()]      // empty-list argument
 ```
 
 A block literal evaluates to an inert code-block value. Creating or passing a
@@ -363,7 +358,7 @@ executes it:
 
 ```pima
 val report @(:name :score) {
-    Console.println name score
+    Console.println (name score)
 }
 ```
 
@@ -382,8 +377,8 @@ expression positions:
 true
 [foo bar]
 {
-    foo 2
-    bar 3 x
+    foo (2)
+    bar (3 x)
 }
 ```
 
@@ -393,7 +388,7 @@ environment. When such a form executes the block, the block's final statement
 is its resulting value. This lets a multi-statement block serve anywhere that
 form would otherwise accept a single result-producing expression.
 
-Calls evaluate the callee and ordinary arguments from left to right, then invoke
+Calls evaluate the callee and argument from left to right, then invoke
 the callee. The special forms `if`, `while`, `until`, `function`, `val`, `let`,
 `var`, `pub`, `import`, `new`, `do`, `attempt`, `return`, `break`,
 `continue`, and `throw` control evaluation of one or more operands.
@@ -402,7 +397,7 @@ Operations fail by throwing typed error values. Error conditions include:
 
 - resolving an unbound identifier;
 - calling a value that is not callable;
-- supplying the wrong number of arguments;
+- supplying a value that does not match a function's parameter pattern;
 - applying an operation to unsupported value types;
 - applying `head` or `rest` to an empty list; and
 - importing a source file that cannot be found or parsed.
@@ -424,8 +419,8 @@ throw [new InvalidOrder]
 Consequently, all errors satisfy both:
 
 ```pima
-[is? error :namespace]
-[is? error :error]
+[is? (error :namespace)]
+[is? (error :error)]
 ```
 
 An error namespace must expose an immutable public `message` string. It may
@@ -474,7 +469,7 @@ val result [attempt {
     read_file path
 }]
 
-if [is? result :error] {
+if [is? (result :error)] {
     println result.message
 } {
     process result
@@ -608,11 +603,11 @@ val internal_limit 10
 pub val PI 3.141592653589793
 
 function helper (:x) {
-    * x 2
+    * (x 2)
 }
 
 pub function calculate (:x) {
-    helper x
+    helper (x)
 }
 ```
 
@@ -632,54 +627,62 @@ APIs should generally prefer private state exposed through public functions.
 
 ## 7. Functions, closures, and partial application
 
-A function declaration has a name, an ordered list of parameter symbols, and a
-body:
+A function declaration has a name, one parameter pattern, and one body
+expression:
 
 ```pima
 function add (:x :y) {
-    + x y
+    + (x y)
 }
 ```
 
-Each parameter symbol is an unbound name descriptor. Declaring the function
-does not resolve it as an identifier. Calling a function creates a child lexical
-environment, binds the name represented by each symbol to its corresponding
-argument, and executes the body. The final expression is the return value;
-explicit `return` is optional.
+Calling a function evaluates one argument value, matches the parameter pattern
+against it, creates immutable bindings for its captures, and evaluates the body
+expression in a child lexical environment. A block is an expression and may be
+used as a multi-statement body. Its final expression is the return value;
+explicit `return` remains optional.
 
-Parameter symbols must have distinct names. A reserved word cannot be used as a
-parameter name. Violating either rule is a declaration error.
+Bare and symbolic captures have the same binding meaning. Capture names within
+the pattern must be distinct.
+
+```pima
+function identity :value value
+function unwrap (:value) value
+```
+
+`identity` captures its complete argument. `unwrap` requires a one-element list
+and captures that element.
 
 A nested function captures bindings from its defining lexical environment:
 
 ```pima
 function add_to (:x) {
     function inner (:y) {
-        + x y
+        + (x y)
     }
 }
 ```
 
-The placeholder `_` may replace one or more call arguments. Such a call does
+The placeholder `_` may replace one or more elements in a call's argument list. Such a call does
 not invoke the function; it returns a partially applied function whose
 parameters correspond, from left to right, to the placeholders:
 
 ```pima
-val add_five [add 5 _]
-add_five 3
+val add_five [add (5 _)]
+add_five (3)
 ```
 
 Functions are ordinary values and may be stored, passed, and returned.
 
 A function name used without invocation evaluates to the function value.
-Brackets perform immediate invocation, including zero-argument invocation:
+Brackets perform immediate invocation:
 
 ```pima
 val operation calculate
-[operation]
+[operation ()]
 
 val area_function square.area
-[square.area]
+[square.area ()]
 ```
 
 ## 8. Control flow
@@ -703,7 +706,7 @@ alternative was provided.
 The two-part form is useful for conditional effects and control transfer:
 
 ```pima
-if [< balance 0] {
+if [< (balance 0)] {
     return :invalid
 }
 ```
@@ -712,9 +715,9 @@ Consequently, a single expression and a block containing that expression are
 equivalent branch forms:
 
 ```pima
-if [< x 2] [return "this"] alternative
+if [< (x 2)] [return ("this")] alternative
 
-if [< x 2] {
+if [< (x 2)] {
     return "this"
 } alternative
 ```
@@ -931,7 +934,7 @@ unchanged:
 
 ```pima
 val original (1 2)
-val extended [push original 0]
+val extended [push (original 0)]
 
 // original is still (1 2)
 // extended is (0 1 2)
@@ -939,9 +942,9 @@ val extended [push original 0]
 
 The list operations have these exact contracts:
 
-- `push list value` returns a new list beginning with `value`, followed by every
+- `push (list value)` returns a new list beginning with `value`, followed by every
   element of `list`.
-- `append list value` returns a new list containing every element of `list`,
+- `append (list value)` returns a new list containing every element of `list`,
   followed by `value`.
 - `head list` returns the first element. It is an error when `list` is empty.
 - `rest list` returns a new list containing every element except the first. It
@@ -984,7 +987,7 @@ val Counter {
     var value 0
 
     function increment () {
-        let value [+ value 1]
+        let value [+ (value 1)]
     }
 }
 
@@ -1006,7 +1009,7 @@ val InvalidBalance {
 }
 
 function create_account (:opening_balance) {
-    if [< opening_balance 0] {
+    if [< (opening_balance 0)] {
         throw [new InvalidBalance]
     } {
         new {
@@ -1019,7 +1022,7 @@ function create_account (:opening_balance) {
             }
 
             pub function deposit (:amount) {
-                let balance [+ balance amount]
+                let balance [+ (balance amount)]
                 balance
             }
         }
@@ -1109,7 +1112,7 @@ A namespace's public members may be imported into the current module:
 import "/pima/library/standard"
 import Math.*
 
-[pow 2 8]
+[pow (2 8)]
 ```
 
 One public member may be selected, optionally under a different local name:
@@ -1119,7 +1122,7 @@ import Logic.not
 import Math.pow as exponentiate
 
 [not false]
-[exponentiate 2 8]
+[exponentiate (2 8)]
 ```
 
 Namespace paths may be nested:
@@ -1280,11 +1283,11 @@ The `/pima/tcp` module exposes synchronous TCP primitives:
 ```pima
 import "/pima/tcp" as tcp
 
-val listener [tcp.listen "127.0.0.1" 8080]
+val listener [tcp.listen ("127.0.0.1" 8080)]
 val connection [tcp.accept listener]
 tcp.set_timeout connection 5000
-val request [tcp.read connection 1024]
-tcp.write connection "response"
+val request [tcp.read (connection 1024)]
+tcp.write (connection "response")
 tcp.close connection
 tcp.close listener
 ```

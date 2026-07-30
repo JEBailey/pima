@@ -14,5 +14,5 @@ pub mod source;
 pub mod syntax;
 
 pub use diagnostic::Diagnostic;
-pub use engine::{Config, Interpreter, RunOutcome};
+pub use engine::{Config, Interpreter, PreparedProgram, RunOutcome};
 pub use runtime::Value;

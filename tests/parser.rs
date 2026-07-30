@@ -65,7 +65,7 @@ fn parse_source(source: &str) -> pima::syntax::ast::Module {
 fn parses_symbol_parameters_and_function_body() {
     let module = parse_source(
         r#"function add (:x :y) {
-    + x y
+    + (x y)
 }"#,
     );
 
@@ -73,7 +73,7 @@ fn parses_symbol_parameters_and_function_body() {
     let NodeKind::Function {
         visibility,
         name,
-        parameters,
+        parameter,
         body,
     } = &module.node(module.statements[0]).kind
     else {
@@ -82,15 +82,27 @@ fn parses_symbol_parameters_and_function_body() {
 
     assert_eq!(*visibility, Visibility::Private);
     assert_eq!(name.as_ref(), "add");
+    let pima::syntax::ast::Pattern::List(elements) = parameter else {
+        panic!("expected list parameter pattern");
+    };
     assert_eq!(
-        parameters.iter().map(AsRef::as_ref).collect::<Vec<&str>>(),
+        elements
+            .iter()
+            .map(|pattern| match pattern {
+                Pattern::Capture(name) => name.as_ref(),
+                _ => panic!("expected capture"),
+            })
+            .collect::<Vec<&str>>(),
         vec!["x", "y"]
     );
 
-    let body = module.block(*body);
+    let NodeKind::Block(body) = module.node(*body).kind else {
+        panic!("expected block body");
+    };
+    let body = module.block(body);
     assert_eq!(body.statements.len(), 1);
     let NodeKind::Call {
-        arguments,
+        argument,
         immediate,
         ..
     } = &module.node(body.statements[0]).kind
@@ -98,15 +110,15 @@ fn parses_symbol_parameters_and_function_body() {
         panic!("expected body call");
     };
     assert!(!immediate);
-    assert_eq!(arguments.len(), 2);
+    assert!(matches!(module.node(*argument).kind, NodeKind::List(_)));
 }
 
 #[test]
-fn parses_immediate_zero_argument_member_call() {
-    let module = parse_source("[square.area]\n");
+fn parses_immediate_empty_list_argument_member_call() {
+    let module = parse_source("[square.area ()]\n");
     let NodeKind::Call {
         callee,
-        arguments,
+        argument,
         immediate,
     } = &module.node(module.statements[0]).kind
     else {
@@ -114,16 +126,33 @@ fn parses_immediate_zero_argument_member_call() {
     };
 
     assert!(*immediate);
-    assert!(arguments.is_empty());
+    assert!(
+        matches!(&module.node(*argument).kind, NodeKind::List(elements) if elements.is_empty())
+    );
     assert!(matches!(module.node(*callee).kind, NodeKind::Member { .. }));
+}
+
+#[test]
+fn rejects_calls_without_exactly_one_argument_expression() {
+    for source in ["[add]\n", "[add 1 2]\n", "add 1 2\n"] {
+        let mut sources = SourceMap::default();
+        let source_id = sources.add("<test>", source);
+        let tokens = lex(source_id, source).expect("source should lex");
+        let diagnostics = parse(&tokens).expect_err("source should not parse");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("exactly one argument"))
+        );
+    }
 }
 
 #[test]
 fn eol_terminates_calls_but_blocks_hold_multiple_statements() {
     let module = parse_source(
-        r#"while [< x 2] {
+        r#"while [< (x 2)] {
     println x
-    let x [+ x 1]
+    let x [+ (x 1)]
 }
 println "done"
 "#,
@@ -257,17 +286,11 @@ fn rejects_alias_on_wildcard_namespace_import() {
 }
 
 #[test]
-fn rejects_bare_function_parameters() {
+fn accepts_bare_function_parameters() {
     let mut sources = SourceMap::default();
     let source_id = sources.add("<test>", "function add (x y) {}\n");
     let tokens = lex(source_id, "function add (x y) {}\n").expect("source should lex");
-    let diagnostics = parse(&tokens).expect_err("source should not parse");
-
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("must be symbols"))
-    );
+    parse(&tokens).expect("bare names are valid function parameter captures");
 }
 
 #[test]
@@ -280,7 +303,7 @@ fn rejects_duplicate_function_parameters() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.message.contains("duplicate parameter"))
+            .any(|diagnostic| diagnostic.message.contains("duplicate function parameter"))
     );
 }
 
@@ -310,7 +333,7 @@ do code
 fn parses_annotated_block_context_requirements() {
     let module = parse_source(
         "val report @(:name :score) {\n\
-             Console.println name score\n\
+             Console.println (name score)\n\
          }\n",
     );
     let NodeKind::Binding { value, .. } = module.node(module.statements[0]).kind else {
@@ -331,11 +354,11 @@ fn parses_annotated_block_context_requirements() {
 
 #[test]
 fn preserves_editor_spans_for_declared_names() {
-    let source = "function add (:left :right) {\n    val total [+ left right]\n    total\n}\n";
+    let source = "function add (:left :right) {\n    val total [+ (left right)]\n    total\n}\n";
     let module = parse_source(source);
     let NodeKind::Function {
         name,
-        parameters,
+        parameter,
         body,
         ..
     } = &module.node(module.statements[0]).kind
@@ -344,15 +367,24 @@ fn preserves_editor_spans_for_declared_names() {
     };
 
     assert_eq!(&source[name.span.start..name.span.end], "add");
+    let pima::syntax::ast::Pattern::List(elements) = parameter else {
+        panic!("expected list parameter pattern");
+    };
     assert_eq!(
-        parameters
+        elements
             .iter()
-            .map(|parameter| &source[parameter.span.start..parameter.span.end])
+            .map(|parameter| match parameter {
+                Pattern::Capture(name) => &source[name.span.start..name.span.end],
+                _ => panic!("expected capture"),
+            })
             .collect::<Vec<_>>(),
         [":left", ":right"]
     );
 
-    let NodeKind::Binding { pattern, .. } = &module.node(module.block(*body).statements[0]).kind
+    let NodeKind::Block(body) = module.node(*body).kind else {
+        panic!("expected block body");
+    };
+    let NodeKind::Binding { pattern, .. } = &module.node(module.block(body).statements[0]).kind
     else {
         panic!("expected binding");
     };

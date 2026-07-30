@@ -4,22 +4,22 @@ import "/pima/library/standard"
 // Following examples indicate different ways of writing the fib sequence
 
 function fibonacci (:x) {
-    if [Math.less_or_equal x 2] 1 [+ [fibonacci [- x 1]] [fibonacci [- x 2]]]
+    if [Math.less_or_equal (x 2)] 1 [+ ([fibonacci ([- (x 1)])] [fibonacci ([- (x 2)])])]
 }
 
 function fibonacci2 (:x) {
-    if [> x 2] [+ [fibonacci2 [- x 1]] [fibonacci2 [- x 2]]] {
+    if [> (x 2)] [+ ([fibonacci2 ([- (x 1)])] [fibonacci2 ([- (x 2)])])] {
         1
     }
 }
 
 function fibonacci3 (:x) {
-    if [> x 2] {
-        + [fibonacci3 [- x 1]] [fibonacci3 [- x 2]]
+    if [> (x 2)] {
+        + ([fibonacci3 ([- (x 1)])] [fibonacci3 ([- (x 2)])])
     } {
         1
     }
 }
 
-Console.println "** FIBONACCI EXAMPLE**"
-Console.println "The fibonacci answer to 12 is(144) " [fibonacci 12]
+Console.println ("** FIBONACCI EXAMPLE**")
+Console.println ("The fibonacci answer to 12 is(144) " [fibonacci (12)])

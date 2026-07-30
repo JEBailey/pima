@@ -7,7 +7,7 @@ val Square {
 	var total_area 15
 	
 	pub function area () {
-		let total_area [* length width]
+		let total_area [* (length width)]
 	}
 	
 	pub function set_width (:w) {
@@ -18,10 +18,10 @@ val Square {
 val square1 [new Square]
 val square2 [new Square]
 
-Console.println "\n** CREATE NAMESPACE(OBJECT)**"
-Console.println "square1 area :  " [square1.area]
-Console.println "square2 area :  " [square2.area]
-Console.println "changing square1 width to 40"
-square1.set_width 40
-Console.println "area of square1 is now : " [square1.area]
-Console.println "area of square2 is still : " [square2.area]
+Console.println ("\n** CREATE NAMESPACE(OBJECT)**")
+Console.println ("square1 area :  " [square1.area ()])
+Console.println ("square2 area :  " [square2.area ()])
+Console.println ("changing square1 width to 40")
+square1.set_width (40)
+Console.println ("area of square1 is now : " [square1.area ()])
+Console.println ("area of square2 is still : " [square2.area ()])

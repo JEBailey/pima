@@ -4,30 +4,30 @@ import "/pima/library/standard"
 
 function sqrt (:number) {
 	function abs (:n) {
-  		if [< n 0] {
-  	        * -1 n
-  	    } {
-  	        n
-  	    }
+		if [< (n 0)] {
+			* (-1 n)
+		} {
+			n
+		}
 	}
 
 	function avg (:a :b) {
-  		/ [+ a b] 2
+		/ ([+ (a b)] 2)
 	}
 
 	function good_enough (:number :guess) {
-  		< [abs [- [* guess guess] number]] 0.001
+		< ([abs ([- ([* (guess guess)] number)])] 0.001)
 	}
 	
 	function findsqr (:number :guess) {
-	    if [good_enough number guess] {
+	    if [good_enough (number guess)] {
 		    guess
 	    } {
-		    findsqr number [avg guess [/ number guess]]
+		    findsqr (number [avg (guess [/ (number guess)])])
 	    }
 	}
 	
-	findsqr number 1
+	findsqr (number 1)
 }
 
-Math.int [sqrt 16]
+Math.int ([sqrt (16)])

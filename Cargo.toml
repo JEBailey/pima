@@ -15,5 +15,10 @@ indexmap = "2.14"
 logos = "0.16"
 
 [dev-dependencies]
+criterion = "0.8.2"
 insta = "1.47"
 proptest = "1.11"
+
+[[bench]]
+name = "language"
+harness = false

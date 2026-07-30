@@ -174,7 +174,7 @@ fn index_document(text: &str) -> Option<IndexedDocument> {
             NodeKind::Function {
                 visibility: Visibility::Public,
                 name,
-                parameters,
+                parameter,
                 ..
             } => {
                 exports.insert(
@@ -183,7 +183,7 @@ fn index_document(text: &str) -> Option<IndexedDocument> {
                         name: name.text.to_string(),
                         span: name.span,
                         kind: SymbolKind::FUNCTION,
-                        detail: Some(parameter_list(parameters)),
+                        detail: Some(parameter_list(parameter)),
                         members: HashMap::new(),
                     },
                 );
@@ -235,7 +235,7 @@ fn public_members(module: &Module, statements: &[NodeId]) -> HashMap<String, Ind
             NodeKind::Function {
                 visibility: Visibility::Public,
                 name,
-                parameters,
+                parameter,
                 ..
             } => {
                 members.insert(
@@ -244,7 +244,7 @@ fn public_members(module: &Module, statements: &[NodeId]) -> HashMap<String, Ind
                         name: name.text.to_string(),
                         span: name.span,
                         kind: SymbolKind::METHOD,
-                        detail: Some(parameter_list(parameters)),
+                        detail: Some(parameter_list(parameter)),
                         members: HashMap::new(),
                     },
                 );

@@ -864,17 +864,22 @@ fn symbols_for_node(text: &str, module: &Module, id: NodeId) -> Vec<DocumentSymb
     match &node.kind {
         NodeKind::Function {
             name,
-            parameters,
+            parameter,
             body,
             ..
         } => vec![make_document_symbol(
             text,
             name.text.to_string(),
-            Some(parameter_list(parameters)),
+            Some(parameter_list(parameter)),
             SymbolKind::FUNCTION,
             node.span,
             name.span,
-            symbols_for_statements(text, module, &module.block(*body).statements),
+            match module.node(*body).kind {
+                NodeKind::Block(block) => {
+                    symbols_for_statements(text, module, &module.block(block).statements)
+                }
+                _ => Vec::new(),
+            },
         )],
         NodeKind::Binding { pattern, value, .. } => {
             let namespace = namespace_block(module, *value);
@@ -1302,7 +1307,7 @@ fn inlay_hints(
     let mut hints = Vec::new();
     for node in &module.nodes {
         let NodeKind::Call {
-            callee, arguments, ..
+            callee, argument, ..
         } = &node.kind
         else {
             continue;
@@ -1311,6 +1316,10 @@ fn inlay_hints(
             continue;
         }
         let parameters = call_parameters(module, *callee, semantic);
+        let arguments = match &module.node(*argument).kind {
+            NodeKind::List(elements) => elements.as_slice(),
+            _ => std::slice::from_ref(argument),
+        };
         for (argument, parameter) in arguments.iter().zip(parameters) {
             let argument = module.node(*argument);
             if matches!(&argument.kind, NodeKind::Identifier(name) if name.as_ref() == parameter) {
@@ -1505,7 +1514,7 @@ mod tests {
 
     #[test]
     fn user_function_signature_help_uses_declared_parameters() {
-        let text = "function add (:left :right) {\n    + left right\n}\n[add 1 ";
+        let text = "function add (:left :right) {\n    + (left right)\n}\n[add (1 ";
         let analysis = analyze(text);
         let (label, parameters, active) =
             signature_at(text, &analysis, text.len()).expect("signature");
@@ -1564,7 +1573,7 @@ mod tests {
 
     #[test]
     fn inlay_hints_use_known_parameter_names() {
-        let text = "function add (:left :right) {\n    + left right\n}\n[add 1 2]\n";
+        let text = "function add (:left :right) {\n    + (left right)\n}\n[add (1 2)]\n";
         let analysis = analyze(text);
         let hints = inlay_hints(
             text,
@@ -1588,7 +1597,7 @@ mod tests {
         let mut text = String::new();
         for index in 0..1_500 {
             text.push_str(&format!(
-                "function function_{index} (:value) {{\n    + value {index}\n}}\n"
+                "function function_{index} (:value) {{\n    + (value {index})\n}}\n"
             ));
         }
         let started = std::time::Instant::now();

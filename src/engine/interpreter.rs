@@ -7,6 +7,8 @@ use crate::{
     syntax::{ast::Module, lexer::lex, parser::parse},
 };
 
+static NEXT_INTERPRETER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 #[derive(Clone, Debug, Default)]
 /// Host configuration used when creating an [`Interpreter`].
 pub struct Config {
@@ -25,6 +27,13 @@ pub struct RunOutcome {
     pub value: Option<Value>,
     /// Syntax or uncaught runtime errors produced by the run.
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// An immutable parsed Pima source unit owned by one [`Interpreter`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreparedProgram {
+    interpreter_id: u64,
+    module_index: usize,
 }
 
 impl RunOutcome {
@@ -51,6 +60,7 @@ unsafe impl<V: dumpster::Visitor> dumpster::TraceWith<V> for StoredBlock {
 
 #[derive(Debug)]
 pub struct Interpreter {
+    instance_id: u64,
     pub(crate) sources: SourceMap,
     pub(crate) symbols: SymbolInterner,
     pub(crate) prelude_environment: EnvironmentRef,
@@ -88,6 +98,7 @@ impl Interpreter {
         ));
 
         let mut interpreter = Self {
+            instance_id: NEXT_INTERPRETER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             sources: SourceMap::default(),
             symbols: SymbolInterner::default(),
             prelude_environment,
@@ -117,50 +128,68 @@ impl Interpreter {
     /// REPLs, but embedders that require isolation should create a separate
     /// interpreter per session.
     pub fn run_source(&mut self, name: &str, source: &str) -> RunOutcome {
-        let source_id = match self.add_source(name, source) {
-            Ok(id) => id,
-            Err(diagnostics) => {
-                return RunOutcome {
-                    value: None,
-                    diagnostics,
-                };
-            }
-        };
+        match self.prepare_source(name, source) {
+            Ok(program) => self.run_prepared(program),
+            Err(diagnostics) => RunOutcome {
+                value: None,
+                diagnostics,
+            },
+        }
+    }
 
-        let tokens = match lex(
+    /// Lexes and parses a source unit without evaluating it.
+    ///
+    /// The returned handle belongs to this interpreter and can be executed
+    /// repeatedly with [`Interpreter::run_prepared`].
+    pub fn prepare_source(
+        &mut self,
+        name: &str,
+        source: &str,
+    ) -> Result<PreparedProgram, Vec<Diagnostic>> {
+        let source_id = self.add_source(name, source)?;
+
+        let tokens = lex(
             source_id,
             self.sources.get(source_id).unwrap().text.as_ref(),
-        ) {
-            Ok(tokens) => tokens,
-            Err(diagnostics) => {
-                return RunOutcome {
-                    value: None,
-                    diagnostics,
-                };
-            }
-        };
+        )?;
 
-        let module = match parse(&tokens) {
-            Ok(module) => module,
-            Err(diagnostics) => {
-                return RunOutcome {
-                    value: None,
-                    diagnostics,
-                };
-            }
-        };
+        let module = parse(&tokens)?;
 
         let module_index = self.parsed_modules.len();
         self.parsed_modules.push(module);
+        Ok(PreparedProgram {
+            interpreter_id: self.instance_id,
+            module_index,
+        })
+    }
+
+    /// Evaluates a source unit previously returned by
+    /// [`Interpreter::prepare_source`].
+    pub fn run_prepared(&mut self, program: PreparedProgram) -> RunOutcome {
+        if program.interpreter_id != self.instance_id
+            || program.module_index >= self.parsed_modules.len()
+        {
+            return RunOutcome {
+                value: None,
+                diagnostics: vec![Diagnostic::error(
+                    "prepared program belongs to a different interpreter",
+                )],
+            };
+        }
+
+        let module_index = program.module_index;
         self.current_module = module_index;
 
-        // Evaluate the module
         let statements = self.parsed_modules[module_index].statements.clone();
         let result = {
             let context = &mut crate::engine::eval::CallContext::new(self);
             crate::engine::eval::evaluate_statement_list(context, &statements)
         };
 
+        self.outcome_from_result(result)
+    }
+
+    fn outcome_from_result(&mut self, result: Result<Value, Signal>) -> RunOutcome {
         match result {
             Ok(value) => RunOutcome {
                 value: Some(value),
@@ -392,7 +421,7 @@ function make_cycle () {
         let rooted = crate::runtime::live_environment_count();
 
         for _ in 0..1_000 {
-            let outcome = interpreter.run_source("<memory-call>", "[make_cycle]");
+            let outcome = interpreter.run_source("<memory-call>", "[make_cycle ()]");
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
         }
 
@@ -422,8 +451,8 @@ function make_closure () {
     read
 }
 
-val saved [make_closure]
-[saved]
+val saved [make_closure ()]
+[saved ()]
 "#,
         );
         assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -436,7 +465,7 @@ val saved [make_closure]
             "collection must preserve an environment reached by an escaped closure"
         );
 
-        let call = interpreter.run_source("<escaped-closure-call>", "[saved]");
+        let call = interpreter.run_source("<escaped-closure-call>", "[saved ()]");
         assert!(call.is_success(), "{:?}", call.diagnostics);
         assert_eq!(call.value, Some(Value::Integer(41)));
 

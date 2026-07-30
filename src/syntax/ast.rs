@@ -89,7 +89,7 @@ pub enum NodeKind {
     },
     Call {
         callee: NodeId,
-        arguments: Vec<NodeId>,
+        argument: NodeId,
         immediate: bool,
     },
     Binding {
@@ -105,8 +105,8 @@ pub enum NodeKind {
     Function {
         visibility: Visibility,
         name: Name,
-        parameters: Vec<Name>,
-        body: BlockId,
+        parameter: Pattern,
+        body: NodeId,
     },
     Conditional {
         condition: NodeId,

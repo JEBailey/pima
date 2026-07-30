@@ -19,13 +19,18 @@ pub fn namespace_block(module: &Module, value: NodeId) -> Option<BlockId> {
     }
 }
 
-pub fn parameter_list(parameters: &[Name]) -> String {
-    format!(
-        "({})",
-        parameters
-            .iter()
-            .map(|parameter| parameter.text.as_ref())
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
+pub fn parameter_list(parameter: &Pattern) -> String {
+    match parameter {
+        Pattern::Capture(name) => format!(":{}", name.text),
+        Pattern::Wildcard => "_".to_owned(),
+        Pattern::Literal(_) => "<literal>".to_owned(),
+        Pattern::List(elements) => format!(
+            "({})",
+            elements
+                .iter()
+                .map(parameter_list)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }

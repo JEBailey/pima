@@ -27,10 +27,10 @@ function response (:status :reason :headers :body) {{
 }}
 
 function handle (:request) {{
-    response 200 "OK" (("X-Pima-Method" request.method)) request.target
+    response (200 "OK" (("X-Pima-Method" request.method)) request.target)
 }}
 
-http.serve_once "127.0.0.1" {port} handle
+http.serve_once ("127.0.0.1" {port} handle)
 "#
     );
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");

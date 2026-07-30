@@ -1,4 +1,7 @@
-use crate::{source::Span, syntax::ast::BlockId as AstBlockId};
+use crate::{
+    source::Span,
+    syntax::ast::{NodeId, Pattern},
+};
 
 use dumpster::{TraceWith, Visitor, unsync::Gc};
 
@@ -9,8 +12,8 @@ pub type FunctionRef = Gc<UserFunction>;
 #[derive(Clone, Debug)]
 pub struct UserFunction {
     pub name: SymbolId,
-    pub parameters: Vec<SymbolId>,
-    pub body: AstBlockId,
+    pub parameter: Pattern,
+    pub body: NodeId,
     pub body_module: usize, // Index into parsed_modules
     pub environment: EnvironmentRef,
     pub declaration_span: Span,

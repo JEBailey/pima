@@ -1,34 +1,25 @@
 use crate::runtime::{Binding, BindingMutability, BindingVisibility, Environment, Value};
 
 use super::eval::{
-    CallContext, CallFrame, EvalResult, Signal, evaluate_block, evaluate_node, typed_err,
+    CallContext, CallFrame, EvalResult, Signal, evaluate_node, match_pattern, typed_err,
+    unique_captures,
 };
 
-/// Evaluates a call expression and dispatches it to a user or native function.
+/// Evaluates a call. Every Pima call supplies exactly one argument value.
 pub(super) fn evaluate(
     context: &mut CallContext,
     callee_id: crate::syntax::ast::NodeId,
-    arguments: &[crate::syntax::ast::NodeId],
+    argument_id: crate::syntax::ast::NodeId,
 ) -> EvalResult {
     let callee = evaluate_node(context, callee_id)?;
-    let module = &context.interpreter.parsed_modules[context.interpreter.current_module];
-    let has_placeholder = arguments.iter().any(|argument| {
-        matches!(
-            module.node(*argument).kind,
-            crate::syntax::ast::NodeKind::Placeholder
-        )
-    });
-    if has_placeholder {
-        return partial(context, callee, arguments);
+    if argument_has_placeholder(context, argument_id) {
+        return partial(context, callee, argument_id);
     }
 
-    let evaluated = arguments
-        .iter()
-        .map(|argument| evaluate_node(context, *argument))
-        .collect::<Result<Vec<_>, _>>()?;
+    let argument = evaluate_node(context, argument_id)?;
     match callee {
-        Value::Function(function) => call_user(context, function, &evaluated),
-        Value::NativeFunction(native) => call_native(context, native, &evaluated),
+        Value::Function(function) => call_user(context, function, &argument),
+        Value::NativeFunction(native) => call_native(context, native, &argument),
         other => Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
@@ -37,56 +28,84 @@ pub(super) fn evaluate(
     }
 }
 
+fn argument_has_placeholder(context: &CallContext, argument: crate::syntax::ast::NodeId) -> bool {
+    let module = &context.interpreter.parsed_modules[context.interpreter.current_module];
+    match &module.node(argument).kind {
+        crate::syntax::ast::NodeKind::Placeholder => true,
+        crate::syntax::ast::NodeKind::List(elements) => elements.iter().any(|element| {
+            matches!(
+                module.node(*element).kind,
+                crate::syntax::ast::NodeKind::Placeholder
+            )
+        }),
+        _ => false,
+    }
+}
+
 fn partial(
     context: &mut CallContext,
     callee: Value,
-    arguments: &[crate::syntax::ast::NodeId],
+    argument: crate::syntax::ast::NodeId,
 ) -> EvalResult {
     let Value::Function(function) = callee else {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
-            "partial application requires a function".to_owned(),
+            "partial application requires a user function".to_owned(),
         )));
     };
-    let source = (*function).clone();
-    if arguments.len() != source.parameters.len() {
+    let crate::syntax::ast::Pattern::List(parameter_elements) = &function.parameter else {
         return Err(Signal::Throw(typed_err(
             context,
-            &["error", "arity_error"],
-            format!(
-                "function expects {} arguments but got {}",
-                source.parameters.len(),
-                arguments.len()
-            ),
+            &["error", "type_error"],
+            "partial application requires a list parameter pattern".to_owned(),
+        )));
+    };
+    let module = &context.interpreter.parsed_modules[context.interpreter.current_module];
+    let crate::syntax::ast::NodeKind::List(argument_elements) = &module.node(argument).kind else {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "type_error"],
+            "partial application placeholders must appear in the call argument list".to_owned(),
+        )));
+    };
+    let argument_elements = argument_elements.clone();
+    if argument_elements.len() != parameter_elements.len() {
+        return Err(Signal::Throw(typed_err(
+            context,
+            &["error", "match_error"],
+            "partial argument list does not match the function parameter pattern".to_owned(),
         )));
     }
 
-    let module = &context.interpreter.parsed_modules[context.interpreter.current_module];
-    let placeholders = arguments
-        .iter()
-        .map(|argument| {
-            matches!(
-                module.node(*argument).kind,
-                crate::syntax::ast::NodeKind::Placeholder
-            )
-        })
-        .collect::<Vec<_>>();
     let mut remaining = Vec::new();
-    let mut bound = Vec::new();
-    for ((parameter, argument), placeholder) in
-        source.parameters.iter().zip(arguments).zip(placeholders)
-    {
-        if placeholder {
-            remaining.push(*parameter);
-        } else {
-            bound.push((*parameter, evaluate_node(context, *argument)?));
+    let mut captures = Vec::new();
+    for (pattern, argument) in parameter_elements.iter().zip(argument_elements) {
+        if matches!(
+            context.interpreter.parsed_modules[context.interpreter.current_module]
+                .node(argument)
+                .kind,
+            crate::syntax::ast::NodeKind::Placeholder
+        ) {
+            remaining.push(pattern.clone());
+            continue;
         }
+        let value = evaluate_node(context, argument)?;
+        let Some(matched) = match_pattern(context, pattern, &value)? else {
+            return Err(Signal::Throw(typed_err(
+                context,
+                &["error", "match_error"],
+                "partial argument does not match its parameter pattern".to_owned(),
+            )));
+        };
+        captures.extend(matched);
     }
+    let captures = unique_captures(context, captures)?;
 
-    let mut bindings = Environment::new(Some(source.environment));
-    for (symbol, value) in bound {
-        bindings.bindings.insert(
+    let mut environment = Environment::new(Some(function.environment.clone()));
+    for (name, value) in captures {
+        let symbol = context.interpreter.symbols.intern(&name);
+        environment.bindings.insert(
             symbol,
             Binding {
                 value,
@@ -95,48 +114,45 @@ fn partial(
             },
         );
     }
-    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(bindings));
 
-    let function = crate::runtime::UserFunction {
-        name: source.name,
-        parameters: remaining,
-        body: source.body,
-        body_module: source.body_module,
-        environment,
-        declaration_span: source.declaration_span,
-    };
-    Ok(Value::Function(dumpster::unsync::Gc::new(function)))
+    Ok(Value::Function(dumpster::unsync::Gc::new(
+        crate::runtime::UserFunction {
+            name: function.name,
+            parameter: crate::syntax::ast::Pattern::List(remaining),
+            body: function.body,
+            body_module: function.body_module,
+            environment: dumpster::unsync::Gc::new(std::cell::RefCell::new(environment)),
+            declaration_span: function.declaration_span,
+        },
+    )))
 }
 
 fn call_user(
     context: &mut CallContext,
     function: crate::runtime::FunctionRef,
-    arguments: &[Value],
+    argument: &Value,
 ) -> EvalResult {
-    if arguments.len() != function.parameters.len() {
+    let Some(captures) = match_pattern(context, &function.parameter, argument)? else {
         return Err(Signal::Throw(typed_err(
             context,
-            &["error", "arity_error"],
-            format!(
-                "function expects {} arguments but got {}",
-                function.parameters.len(),
-                arguments.len()
-            ),
+            &["error", "match_error"],
+            "function argument does not match its parameter pattern".to_owned(),
         )));
-    }
-
-    let mut bindings = Environment::new(Some(function.environment.clone()));
-    for (parameter, value) in function.parameters.iter().zip(arguments) {
-        bindings.bindings.insert(
-            *parameter,
+    };
+    let captures = unique_captures(context, captures)?;
+    let mut environment = Environment::new(Some(function.environment.clone()));
+    for (name, value) in captures {
+        let symbol = context.interpreter.symbols.intern(&name);
+        environment.bindings.insert(
+            symbol,
             Binding {
-                value: value.clone(),
+                value,
                 mutability: BindingMutability::Immutable,
                 visibility: BindingVisibility::Private,
             },
         );
     }
-    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(bindings));
+    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(environment));
 
     let name = context
         .interpreter
@@ -153,7 +169,13 @@ fn call_user(
     let previous_module = context.interpreter.current_module;
     context.interpreter.current_environment = environment;
     context.interpreter.current_module = function.body_module;
-    let result = evaluate_block(context, function.body);
+    let result = match context.interpreter.parsed_modules[function.body_module]
+        .node(function.body)
+        .kind
+    {
+        crate::syntax::ast::NodeKind::Block(block) => super::eval::evaluate_block(context, block),
+        _ => evaluate_node(context, function.body),
+    };
     context.interpreter.current_environment = previous_environment;
     context.interpreter.current_module = previous_module;
     context.interpreter.call_stack.pop();
@@ -177,8 +199,12 @@ fn call_user(
 fn call_native(
     context: &mut CallContext,
     native: crate::runtime::NativeFunctionId,
-    arguments: &[Value],
+    argument: &Value,
 ) -> EvalResult {
+    let arguments = match argument {
+        Value::List(arguments) => arguments.to_vec(),
+        other => vec![other.clone()],
+    };
     let definition = context
         .interpreter
         .natives
@@ -189,10 +215,10 @@ fn call_native(
             context,
             &["error", "arity_error"],
             format!(
-                "native function `{}` called with wrong number of arguments",
+                "native function `{}` argument list has the wrong length",
                 definition.name
             ),
         )));
     }
-    (definition.call)(context, arguments).map_err(Signal::Throw)
+    (definition.call)(context, &arguments).map_err(Signal::Throw)
 }

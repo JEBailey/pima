@@ -13,7 +13,7 @@ pub enum Signal {
 }
 
 pub type EvalResult = Result<Value, Signal>;
-type PatternCaptures = Vec<(std::sync::Arc<str>, Value)>;
+pub(super) type PatternCaptures = Vec<(std::sync::Arc<str>, Value)>;
 
 pub(super) fn typed_err(context: &mut CallContext, types: &[&str], message: String) -> Value {
     <CallContext as NativeContext>::typed_error(context, types, message)
@@ -60,9 +60,9 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         }
         NodeKind::Call {
             callee,
-            arguments,
+            argument,
             immediate: _,
-        } => super::call::evaluate(context, callee, &arguments),
+        } => super::call::evaluate(context, callee, argument),
         NodeKind::Binding {
             visibility,
             mutability,
@@ -73,9 +73,9 @@ pub fn evaluate_node(context: &mut CallContext, node_id: crate::syntax::ast::Nod
         NodeKind::Function {
             visibility,
             name,
-            parameters,
+            parameter,
             body,
-        } => evaluate_function(context, visibility, &name, &parameters, body),
+        } => evaluate_function(context, visibility, &name, &parameter, body),
         NodeKind::Conditional {
             condition,
             consequent,
@@ -340,7 +340,7 @@ fn evaluate_assignment(
 
 // ── Functions ──
 
-fn match_pattern(
+pub(super) fn match_pattern(
     context: &mut CallContext,
     pattern: &crate::syntax::ast::Pattern,
     value: &Value,
@@ -372,7 +372,7 @@ fn match_pattern(
     }
 }
 
-fn unique_captures(
+pub(super) fn unique_captures(
     context: &mut CallContext,
     captures: PatternCaptures,
 ) -> Result<PatternCaptures, Signal> {
@@ -431,8 +431,8 @@ fn evaluate_function(
     context: &mut CallContext,
     visibility: crate::syntax::ast::Visibility,
     name: &crate::syntax::ast::Name,
-    parameters: &[crate::syntax::ast::Name],
-    body: crate::syntax::ast::BlockId,
+    parameter: &crate::syntax::ast::Pattern,
+    body: crate::syntax::ast::NodeId,
 ) -> EvalResult {
     let name_symbol = context.interpreter.symbols.intern(&name.text);
 
@@ -454,10 +454,7 @@ fn evaluate_function(
     // The function captures the CURRENT environment (not a child)
     let func = crate::runtime::UserFunction {
         name: name_symbol,
-        parameters: parameters
-            .iter()
-            .map(|parameter| context.interpreter.symbols.intern(&parameter.text))
-            .collect(),
+        parameter: parameter.clone(),
         body,
         body_module: context.interpreter.current_module,
         environment: context.interpreter.current_environment.clone(),
