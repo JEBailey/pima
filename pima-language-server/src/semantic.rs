@@ -357,7 +357,7 @@ impl<'module> Builder<'module> {
                 condition, body, ..
             } => {
                 self.visit_node(*condition, scope);
-                self.visit_block(*body, scope);
+                self.visit_node(*body, scope);
             }
             NodeKind::Return(value) | NodeKind::Break(value) => {
                 if let Some(value) = value {
@@ -367,13 +367,13 @@ impl<'module> Builder<'module> {
             NodeKind::Throw(value) | NodeKind::New(value) | NodeKind::Do(value) => {
                 self.visit_node(*value, scope);
             }
-            NodeKind::Attempt(block) => self.visit_block(*block, scope),
+            NodeKind::Attempt(body) => self.visit_node(*body, scope),
             NodeKind::Match { value, arms } => {
                 self.visit_node(*value, scope);
                 for arm in arms {
-                    let arm_scope = self.child_scope(scope, self.module.block(arm.body).span);
+                    let arm_scope = self.child_scope(scope, self.module.node(arm.body).span);
                     self.define_pattern(arm_scope, &arm.pattern, SymbolKind::PatternCapture, false);
-                    self.visit_block(arm.body, arm_scope);
+                    self.visit_node(arm.body, arm_scope);
                 }
             }
             NodeKind::NamespaceImport {

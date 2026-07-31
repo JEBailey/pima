@@ -68,7 +68,7 @@ pub enum Pattern {
 #[derive(Clone, Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
-    pub body: BlockId,
+    pub body: NodeId,
 }
 
 #[derive(Clone, Debug)]
@@ -123,7 +123,7 @@ pub enum NodeKind {
     Loop {
         kind: LoopKind,
         condition: NodeId,
-        body: BlockId,
+        body: NodeId,
     },
     Return(Option<NodeId>),
     Break(Option<NodeId>),
@@ -140,7 +140,7 @@ pub enum NodeKind {
     },
     New(NodeId),
     Do(NodeId),
-    Attempt(BlockId),
+    Attempt(NodeId),
     Match {
         value: NodeId,
         arms: Vec<MatchArm>,

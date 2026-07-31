@@ -426,7 +426,7 @@ impl<'a> Compiler<'a> {
                 self.instructions.push(Instruction::Throw { source });
                 Some(source)
             }
-            NodeKind::Attempt(block) => Some(self.compile_attempt(*block)),
+            NodeKind::Attempt(body) => Some(self.compile_attempt(*body)),
             NodeKind::New(operand) => self.compile_new(*operand, node.span),
             NodeKind::Do(operand) => self.compile_do(*operand, node.span),
             NodeKind::Match { value, arms } => self.compile_match(*value, arms),
@@ -867,7 +867,7 @@ impl<'a> Compiler<'a> {
         Some(result)
     }
 
-    fn compile_attempt(&mut self, block: BlockId) -> Register {
+    fn compile_attempt(&mut self, body: NodeId) -> Register {
         let destination = self.allocate_register();
         let begin = self.instructions.len();
         self.instructions.push(Instruction::BeginAttempt {
@@ -875,7 +875,9 @@ impl<'a> Compiler<'a> {
             catch_target: usize::MAX,
         });
         self.attempt_depth += 1;
-        let result = self.compile_block(block);
+        let result = self
+            .compile_executable_node(body)
+            .unwrap_or_else(|| self.load_constant(Value::Unit));
         self.attempt_depth -= 1;
         self.instructions.push(Instruction::Move {
             destination,
@@ -904,7 +906,7 @@ impl<'a> Compiler<'a> {
         &mut self,
         kind: LoopKind,
         condition: NodeId,
-        body: BlockId,
+        body: NodeId,
     ) -> Option<Register> {
         let result = self.allocate_register();
         let unit = self.load_constant(Value::Unit);
@@ -933,7 +935,7 @@ impl<'a> Compiler<'a> {
             result,
             attempt_depth: self.attempt_depth,
         });
-        let body = self.compile_block(body);
+        let body = self.compile_executable_node(body)?;
         self.instructions.push(Instruction::Move {
             destination: result,
             source: body,
@@ -1165,9 +1167,8 @@ fn collect_node_context(
                 collect_node_context(module, *node, names, visited);
             }
         }
-        NodeKind::Block(block) | NodeKind::Attempt(block) => {
-            collect_block_context(module, *block, names, visited)
-        }
+        NodeKind::Block(block) => collect_block_context(module, *block, names, visited),
+        NodeKind::Attempt(body) => collect_node_context(module, *body, names, visited),
         NodeKind::Member { object, .. } | NodeKind::New(object) | NodeKind::Do(object) => {
             collect_node_context(module, *object, names, visited)
         }
@@ -1216,7 +1217,7 @@ fn collect_node_context(
             condition, body, ..
         } => {
             collect_node_context(module, *condition, names, visited);
-            collect_block_context(module, *body, names, visited);
+            collect_node_context(module, *body, names, visited);
         }
         NodeKind::Return(value) | NodeKind::Break(value) => {
             if let Some(value) = value {
@@ -1228,7 +1229,7 @@ fn collect_node_context(
             collect_node_context(module, *value, names, visited);
             for arm in arms {
                 collect_pattern_names(&arm.pattern, names);
-                collect_block_context(module, arm.body, names, visited);
+                collect_node_context(module, arm.body, names, visited);
             }
         }
         NodeKind::Unit

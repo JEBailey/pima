@@ -208,7 +208,7 @@ impl Compiler<'_> {
                     message: Arc::from(format!("pattern captures `{name}` more than once")),
                 });
             }
-            let arm_result = self.compile_block(arm.body);
+            let arm_result = self.compile_executable_node(arm.body)?;
             self.instructions.push(Instruction::Move {
                 destination: result,
                 source: arm_result,

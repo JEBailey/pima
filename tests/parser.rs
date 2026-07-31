@@ -240,7 +240,23 @@ println "done"
             ..
         }
     ));
-    assert_eq!(module.block(*body).statements.len(), 2);
+    let NodeKind::Block(body) = module.node(*body).kind else {
+        panic!("expected loop block expression");
+    };
+    assert_eq!(module.block(body).statements.len(), 2);
+}
+
+#[test]
+fn control_bodies_accept_non_block_expressions() {
+    parse_source(
+        r#"while false 1
+until true 2
+attempt 3
+match :ok (
+    :ok 4
+)
+"#,
+    );
 }
 
 #[test]
@@ -474,14 +490,12 @@ fn rejects_duplicate_annotated_block_requirements() {
 }
 
 #[test]
-fn parses_all_non_java_examples() {
+fn parses_all_examples() {
     let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
 
     for entry in std::fs::read_dir(examples).expect("examples directory should exist") {
         let path = entry.expect("example entry should be readable").path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("pima")
-            || path.file_name().and_then(std::ffi::OsStr::to_str) == Some("java_support.pima")
-        {
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("pima") {
             continue;
         }
 

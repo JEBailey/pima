@@ -203,8 +203,8 @@ Reserved forms currently consume operands using different parser rules:
 - `val`, `var`, and `let` consume a pattern and one expression;
 - `function` consumes a name, parameter pattern, and body expression;
 - `if` consumes two or three expressions;
-- `while` and `until` require a block body;
-- `attempt` requires a block;
+- `while` and `until` consume a condition and body expression;
+- `attempt` consumes one protected expression;
 - `match` and `branch` assign structural meaning to parentheses.
 
 Some variation is necessary because these are syntax forms. It should,
@@ -288,7 +288,8 @@ Braces consistently construct inert blocks:
 { ... }
 ```
 
-Block-aware forms may then execute those blocks in a supplied environment:
+Body positions accept any expression. When that expression is a block, the
+surrounding form executes its statements in the supplied environment:
 
 ```pima
 if condition { ... }
@@ -297,6 +298,10 @@ attempt { ... }
 new { ... }
 do block
 ```
+
+Blocks are therefore a convenience for multiple expressions, not a body
+requirement. A single expression may be used directly in functions,
+conditionals, loops, match arms, branches, and `attempt`.
 
 The documentation should preserve this distinction: braces do not execute
 their contents. The surrounding form executes the resulting block when its

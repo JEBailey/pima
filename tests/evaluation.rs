@@ -817,6 +817,24 @@ fn attempt_catches_error() {
     assert!(outcome.is_success());
 }
 
+#[test]
+fn attempt_accepts_a_non_block_expression() {
+    assert_eq!(run_ok("attempt 42"), pima::Value::Integer(42));
+}
+
+#[test]
+fn match_arms_accept_non_block_expressions() {
+    assert_eq!(run_ok("match :ok (:ok 42)"), pima::Value::Integer(42));
+}
+
+#[test]
+fn loops_accept_non_block_expressions() {
+    assert_eq!(
+        run_ok("var :running true\nwhile running [let :running false]"),
+        pima::Value::Boolean(false)
+    );
+}
+
 // ── Namespaces ──
 
 #[test]

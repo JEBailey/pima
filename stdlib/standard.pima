@@ -125,7 +125,7 @@ function :list_any (predicate list) {
 
 function :list_all (predicate list) {
     if [List.empty? (list)] true {
-        if [predicate ([List.head (list)])] [list_all (predicate [List.rest (list)])] false
+        if [predicate([List.head (list)])] [list_all (predicate [List.rest (list)])] false
     }
 }
 

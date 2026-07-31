@@ -516,7 +516,7 @@ impl Parser<'_> {
         while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
             let pattern = self.parse_pattern()?;
             self.skip_eols();
-            let (body, _) = self.parse_block()?;
+            let body = self.require_expression("expected match arm result expression")?;
             self.skip_eols();
             arms.push(MatchArm { pattern, body });
         }
@@ -625,7 +625,8 @@ impl Parser<'_> {
     fn parse_loop(&mut self, kind: LoopKind) -> ParseResult<NodeId> {
         let start = self.advance().span;
         let condition = self.require_expression("expected loop condition")?;
-        let (body, body_span) = self.parse_block()?;
+        let body = self.require_expression("expected loop body expression")?;
+        let body_span = self.node(body).span;
         Ok(self.alloc(
             self.join(start, body_span),
             NodeKind::Loop {
@@ -785,8 +786,11 @@ impl Parser<'_> {
 
     fn parse_attempt(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
-        let (block, block_span) = self.parse_block()?;
-        Ok(self.alloc(self.join(start, block_span), NodeKind::Attempt(block)))
+        let body = self.require_expression("expected expression after `attempt`")?;
+        Ok(self.alloc(
+            self.join(start, self.node(body).span),
+            NodeKind::Attempt(body),
+        ))
     }
 
     fn parse_remaining_line_expression(&mut self) -> ParseResult<NodeId> {

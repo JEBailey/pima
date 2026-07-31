@@ -172,18 +172,14 @@ impl ScopeWalker<'_> {
                 condition, body, ..
             } => {
                 self.visit_node(condition);
-                self.visited_blocks.insert(body);
-                self.visit_block(body);
+                self.visit_executable(body);
             }
             NodeKind::Return(value) | NodeKind::Break(value) => {
                 if let Some(value) = value {
                     self.visit_node(value);
                 }
             }
-            NodeKind::Attempt(block) => {
-                self.visited_blocks.insert(block);
-                self.visit_block(block);
-            }
+            NodeKind::Attempt(body) => self.visit_executable(body),
             NodeKind::Do(operand) => match self.module.node(operand).kind.clone() {
                 NodeKind::Block(block) => {
                     if self.visited_blocks.insert(block) {

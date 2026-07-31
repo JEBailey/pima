@@ -2,10 +2,6 @@
 
 Status: draft normative specification, derived from the programs in `examples/`.
 
-This document defines the Pima implementation target. Java interoperability is
-not part of the language. In particular, `examples/java_support.pima` is excluded
-from conformance.
-
 ## 1. Language model
 
 Pima is a dynamically typed, expression-oriented language. Calls use prefix
@@ -13,8 +9,8 @@ notation, functions are first-class values, and code blocks are first-class,
 uninstantiated chunks of code that may be stored and passed around.
 
 An implementation conforms to this specification when it can parse and execute
-all example programs other than `java_support.pima`, subject to the standard
-library requirements in section 10.
+all example programs, subject to the standard library requirements in section
+10.
 
 ## 2. Source text
 
@@ -177,8 +173,7 @@ visibility       = "pub" ;
 binding          = ( "val" | "var" ), separator+,
                    binding-pattern, separator+, expression ;
 assignment       = "let", separator+, binding-pattern, separator+, expression ;
-binding-pattern  = binding-name | "_" | binding-list-pattern ;
-binding-name     = identifier | symbol ;
+binding-pattern  = symbol | "_" | binding-list-pattern ;
 binding-list-pattern
                  = "(", separator*, [ binding-pattern,
                    { separator+, binding-pattern } ], separator*, ")" ;
@@ -187,14 +182,14 @@ match-list-pattern
                  = "(", separator*, [ match-pattern,
                    { separator+, match-pattern } ], separator*, ")" ;
 function-declaration
-                 = "function", separator+, identifier, separator*,
-                   binding-pattern, separator+, expression ;
+                 = "function", separator+, symbol, separator*,
+                   match-pattern, separator+, expression ;
 member-access    = identifier, ".", identifier, { ".", identifier } ;
 
 conditional      = "if", separator+, expression, separator+,
                    expression, [ separator+, expression ] ;
 loop             = ( "while" | "until" ), separator+,
-                   expression, separator+, block ;
+                   expression, separator+, expression ;
 control-transfer = return-expression
                  | break-expression
                  | "continue"
@@ -204,11 +199,11 @@ return-expression
 break-expression = "break", [ separator+, expression ] ;
 throw-expression = "throw", separator+, expression ;
 attempt-expression
-                 = "attempt", separator+, block ;
+                 = "attempt", separator+, expression ;
 match-expression = "match", separator+, expression, separator*,
                    "(", separator*, match-arm,
                    { separator*, match-arm }, separator*, ")" ;
-match-arm        = match-pattern, separator*, block ;
+match-arm        = match-pattern, separator+, expression ;
 import-expression
                  = "import", separator+, ( string | import-path ),
                    [ separator+, "as", separator+, identifier ] ;
@@ -478,8 +473,9 @@ When an error is thrown, the runtime attaches its source file, line, column, and
 Pima call stack for diagnostic reporting. This metadata does not alter the
 error's declared type list.
 
-`attempt block` instantiates the block in the caller's current environment and
-executes it:
+`attempt expression` evaluates the expression in the caller's current
+environment and returns a thrown error as a value. A block is useful when the
+protected operation requires multiple expressions:
 
 ```pima
 val :result [attempt {
@@ -493,7 +489,7 @@ if [is? (result :error)] {
 }
 ```
 
-- If the block completes normally, `attempt` returns its result.
+- If the expression completes normally, `attempt` returns its result.
 - If evaluation throws an error, `attempt` stops unwinding and returns that
   error namespace as an ordinary value.
 - If the block returns an error normally, `attempt` returns that same value;
@@ -880,7 +876,7 @@ namespaces:
 | `String.code_point`, `String.from_code_point` | Convert between one-scalar strings and integer code points |
 | `Console.println` | Print all operands followed by a line ending |
 | `do` | Execute a block in the current environment |
-| `attempt` | Execute a block and return any thrown error as a value |
+| `attempt` | Evaluate an expression and return any thrown error as a value |
 | `append` | Return a new list with a value appended |
 | `push` | Return a new list with a value prepended |
 | `head` | Return the first list element |
@@ -1351,8 +1347,6 @@ example.
 
 The following are not required:
 
-- Java classes, reflection, or the `java` form;
-- a JVM runtime;
 - static typing;
 - classes or inheritance beyond namespace templates; and
 - concurrency or asynchronous evaluation.
@@ -1378,5 +1372,3 @@ test.pima
 timing.pima
 while.pima
 ```
-
-`java_support.pima` is intentionally excluded.

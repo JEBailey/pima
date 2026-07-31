@@ -17,10 +17,6 @@ fn every_supported_example_executes_successfully() {
             path.extension()
                 .is_some_and(|extension| extension == "pima")
         })
-        .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name != "java_support.pima")
-        })
         .collect::<Vec<_>>();
     paths.sort();
 
