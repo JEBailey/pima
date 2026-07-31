@@ -23,7 +23,9 @@ reliable in that case.
 - signature help and active-parameter tracking;
 - document symbols, definitions, references, and rename;
 - semantic tokens, folding ranges, selection ranges, and inlay hints;
-- workspace indexing and cross-file definition lookup;
+- workspace indexing, cross-file definitions, references, and rename;
+- workspace file watching and diagnostics for unopened project files;
+- conservative inferred value kinds in hover and completion details;
 - document formatting; and
 - naming quick fixes.
 
@@ -47,9 +49,13 @@ assignment to a resolved immutable binding or excess arguments to a known user
 function. It does not report every unresolved identifier, because the name may
 come from a module import, a namespace import, or a caller-environment block.
 
-Cross-file references and cross-file rename are not yet provided. Definition
-lookup and completion follow imports, while references and rename remain
-scope-aware within the current document.
+Cross-file references and rename follow statically resolved file imports,
+including aliased member access. Dynamic namespace selection and bindings
+introduced by `do` remain intentionally outside project-wide refactoring.
+
+Inference reports only values established directly from syntax (literals,
+lists, blocks, functions, namespaces, and compatible conditional results). It
+does not guess call results or treat runtime namespace types as static types.
 
 ## VS Code
 

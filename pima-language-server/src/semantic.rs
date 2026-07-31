@@ -36,6 +36,7 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub parameters: Vec<String>,
     pub mutable: bool,
+    pub inferred_type: Option<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -238,6 +239,7 @@ impl<'module> Builder<'module> {
             kind,
             parameters: Vec::new(),
             mutable,
+            inferred_type: (kind == SymbolKind::Function).then_some("function"),
         });
         self.scopes[scope]
             .definitions
@@ -304,6 +306,13 @@ impl<'module> Builder<'module> {
                     SymbolKind::Binding,
                     *mutability == BindingKind::Mutable,
                 );
+                if let Some(inferred) = infer_node_type(self.module, *value) {
+                    for name in pattern_captures(pattern) {
+                        if let Some(symbol) = self.model.symbol_at(name.span.start) {
+                            self.model.symbols[symbol].inferred_type = Some(inferred);
+                        }
+                    }
+                }
             }
             NodeKind::Assignment { pattern, value } => {
                 self.visit_node(*value, scope);
@@ -440,6 +449,36 @@ impl<'module> Builder<'module> {
             }
             Pattern::Wildcard | Pattern::Literal(_) => {}
         }
+    }
+}
+
+fn infer_node_type(module: &Module, node: NodeId) -> Option<&'static str> {
+    match &module.node(node).kind {
+        NodeKind::Unit => Some("unit"),
+        NodeKind::Boolean(_) => Some("boolean"),
+        NodeKind::Integer(_) => Some("integer"),
+        NodeKind::Float(_) => Some("float"),
+        NodeKind::String(_) => Some("string"),
+        NodeKind::Symbol(_) => Some("symbol"),
+        NodeKind::List(_) => Some("list"),
+        NodeKind::Block(_) => Some("block"),
+        NodeKind::Function { .. } => Some("function"),
+        NodeKind::New(_) => Some("namespace"),
+        NodeKind::Conditional {
+            consequent,
+            alternative: Some(alternative),
+            ..
+        } => {
+            let left = infer_node_type(module, *consequent)?;
+            (Some(left) == infer_node_type(module, *alternative)).then_some(left)
+        }
+        NodeKind::Branch(arms) if !arms.is_empty() => {
+            let first = infer_node_type(module, arms[0].result)?;
+            arms.iter()
+                .all(|arm| infer_node_type(module, arm.result) == Some(first))
+                .then_some(first)
+        }
+        _ => None,
     }
 }
 
@@ -608,5 +647,24 @@ mod tests {
         assert!(visible.contains(&"negate"));
         let symbol = model.symbol_at(offset).expect("reference should resolve");
         assert_eq!(model.symbols[symbol].name, "negate");
+    }
+
+    #[test]
+    fn branch_arms_resolve_in_the_surrounding_scope_and_infer_results() {
+        let source =
+            "val score 75\nval response branch ([< (score 60)] \"fail\" true \"pass\")\nresponse\n";
+        let model = model(source);
+        let response = model
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "response")
+            .expect("response");
+        assert_eq!(response.inferred_type, Some("string"));
+        assert!(
+            model
+                .references
+                .iter()
+                .any(|reference| { model.symbols[reference.symbol].name == "score" })
+        );
     }
 }

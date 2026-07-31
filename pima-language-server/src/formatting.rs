@@ -100,4 +100,13 @@ mod tests {
     fn declines_to_format_invalid_lexical_input() {
         assert!(format("\"unterminated", 4).is_none());
     }
+
+    #[test]
+    fn formats_branch_pairs() {
+        let source = "val result branch (\ntrue {\n1\n}\nfalse 2\n)\n";
+        assert_eq!(
+            format(source, 4).expect("format"),
+            "val result branch (\n    true {\n        1\n    }\n    false 2\n)\n"
+        );
+    }
 }

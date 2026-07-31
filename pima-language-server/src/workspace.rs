@@ -9,11 +9,13 @@ use pima::{
         ast::{Module, NodeId, NodeKind, Visibility},
         lexer::lex,
         parser::parse_recovering,
+        token::TokenKind,
     },
 };
 use tower_lsp::lsp_types::{SymbolKind, Url};
 
 use crate::ast_utils::{namespace_block, parameter_list, pattern_captures};
+use crate::semantic::SemanticModel;
 
 #[derive(Clone, Debug)]
 pub struct IndexedSymbol {
@@ -31,10 +33,25 @@ struct Import {
 }
 
 #[derive(Clone, Debug)]
+struct IndexedReference {
+    name: String,
+    receiver: Option<String>,
+    span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceOccurrence {
+    pub uri: Url,
+    pub text: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
 pub struct IndexedDocument {
     pub text: String,
     exports: HashMap<String, IndexedSymbol>,
     imports: Vec<Import>,
+    references: Vec<IndexedReference>,
 }
 
 #[derive(Default)]
@@ -59,13 +76,24 @@ impl WorkspaceIndex {
     }
 
     pub fn upsert(&mut self, uri: Url, text: String) {
-        if let Some(document) = index_document(&text) {
-            self.documents.insert(uri, document);
-        }
+        let document = index_document(&text).unwrap_or_else(|| IndexedDocument {
+            text,
+            exports: HashMap::new(),
+            imports: Vec::new(),
+            references: Vec::new(),
+        });
+        self.documents.insert(uri, document);
     }
 
     pub fn remove(&mut self, uri: &Url) {
         self.documents.remove(uri);
+    }
+
+    pub fn snapshots(&self) -> Vec<(Url, String)> {
+        self.documents
+            .iter()
+            .map(|(uri, document)| (uri.clone(), document.text.clone()))
+            .collect()
     }
 
     pub fn imported_completions(&self, uri: &Url) -> Vec<&IndexedSymbol> {
@@ -150,6 +178,53 @@ impl WorkspaceIndex {
         None
     }
 
+    pub fn target_at(&self, uri: &Url, offset: usize) -> Option<(&Url, &IndexedSymbol)> {
+        let (document_uri, document) = self.documents.get_key_value(uri)?;
+        if let Some(symbol) = find_export_at(&document.exports, offset) {
+            return Some((document_uri, symbol));
+        }
+        let reference = document
+            .references
+            .iter()
+            .find(|reference| reference.span.start <= offset && offset < reference.span.end)?;
+        let (target_uri, _, symbol) =
+            self.definition(uri, &reference.name, reference.receiver.as_deref())?;
+        Some((target_uri, symbol))
+    }
+
+    pub fn occurrences(
+        &self,
+        target_uri: &Url,
+        target_span: Span,
+        include_declaration: bool,
+    ) -> Vec<WorkspaceOccurrence> {
+        let mut occurrences = Vec::new();
+        if include_declaration && let Some(document) = self.documents.get(target_uri) {
+            occurrences.push(WorkspaceOccurrence {
+                uri: target_uri.clone(),
+                text: document.text.clone(),
+                span: target_span,
+            });
+        }
+        for (uri, document) in &self.documents {
+            for reference in &document.references {
+                let Some((resolved_uri, _, symbol)) =
+                    self.definition(uri, &reference.name, reference.receiver.as_deref())
+                else {
+                    continue;
+                };
+                if resolved_uri == target_uri && symbol.span == target_span {
+                    occurrences.push(WorkspaceOccurrence {
+                        uri: uri.clone(),
+                        text: document.text.clone(),
+                        span: reference.span,
+                    });
+                }
+            }
+        }
+        occurrences
+    }
+
     fn resolve_import(&self, source: &Url, import: &str) -> Option<Url> {
         if import.starts_with('/') {
             return None;
@@ -167,6 +242,7 @@ fn index_document(text: &str) -> Option<IndexedDocument> {
     let tokens = lex(source, text).ok()?;
     let output = parse_recovering(&tokens);
     let module = output.module;
+    let semantic = SemanticModel::build(&module);
     let mut exports = HashMap::new();
     let mut imports = Vec::new();
     for statement in &module.statements {
@@ -221,11 +297,53 @@ fn index_document(text: &str) -> Option<IndexedDocument> {
             _ => {}
         }
     }
+    let references = tokens
+        .iter()
+        .filter_map(|token| {
+            let TokenKind::Identifier(name) = &token.kind else {
+                return None;
+            };
+            if semantic.symbol_at(token.span.start).is_some() {
+                return None;
+            }
+            Some(IndexedReference {
+                name: name.to_string(),
+                receiver: member_receiver(text, token.span.start).map(ToOwned::to_owned),
+                span: token.span,
+            })
+        })
+        .collect();
     Some(IndexedDocument {
         text: text.to_owned(),
         exports,
         imports,
+        references,
     })
+}
+
+fn find_export_at(
+    exports: &HashMap<String, IndexedSymbol>,
+    offset: usize,
+) -> Option<&IndexedSymbol> {
+    for symbol in exports.values() {
+        if symbol.span.start <= offset && offset < symbol.span.end {
+            return Some(symbol);
+        }
+        if let Some(member) = find_export_at(&symbol.members, offset) {
+            return Some(member);
+        }
+    }
+    None
+}
+
+fn member_receiver(text: &str, offset: usize) -> Option<&str> {
+    let prefix = text.get(..offset)?.trim_end();
+    let without_dot = prefix.strip_suffix('.')?;
+    let start = without_dot
+        .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .map_or(0, |index| index + 1);
+    let receiver = &without_dot[start..];
+    (!receiver.is_empty()).then_some(receiver)
 }
 
 fn public_members(module: &Module, statements: &[NodeId]) -> HashMap<String, IndexedSymbol> {
@@ -375,10 +493,19 @@ mod tests {
             .definition(&main_uri, "double", Some("Library"))
             .expect("cross-file definition");
         assert_eq!(symbol.name, "double");
+        let double_span = symbol.span;
+        let library_uri =
+            Url::from_file_path(std::fs::canonicalize(&library).expect("library path"))
+                .expect("library uri");
+        assert_eq!(uri, &library_uri);
+        let occurrences = index.occurrences(&library_uri, double_span, true);
+        assert_eq!(occurrences.len(), 3);
         assert_eq!(
-            uri,
-            &Url::from_file_path(std::fs::canonicalize(&library).expect("library path"))
-                .expect("library uri")
+            occurrences
+                .iter()
+                .filter(|occurrence| occurrence.uri == main_uri)
+                .count(),
+            2
         );
 
         std::fs::remove_dir_all(&root).expect("remove temporary workspace");

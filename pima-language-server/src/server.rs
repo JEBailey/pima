@@ -20,14 +20,16 @@ use tower_lsp::{
         CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
         CodeActionProviderCapability, CompletionItem, CompletionItemKind, CompletionOptions,
         CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
-        DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-        DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-        FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
+        DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+        DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
+        DidOpenTextDocumentParams, DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams,
+        DocumentSymbolResponse, FileChangeType, FileSystemWatcher, FoldingRange,
+        FoldingRangeParams, FoldingRangeProviderCapability, GlobPattern, GotoDefinitionParams,
         GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams,
         InitializeResult, InitializedParams, InlayHint, InlayHintKind, InlayHintLabel,
         InlayHintParams, Location, MarkedString, MessageType, OneOf, Position,
-        PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, SelectionRange,
-        SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
+        PrepareRenameResponse, Range, ReferenceParams, Registration, RenameOptions, RenameParams,
+        SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
         SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
         SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
         SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelp, SignatureHelpOptions,
@@ -236,6 +238,35 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        let options = DidChangeWatchedFilesRegistrationOptions {
+            watchers: vec![FileSystemWatcher {
+                glob_pattern: GlobPattern::String("**/*.pima".into()),
+                kind: None,
+            }],
+        };
+        if let Ok(register_options) = serde_json::to_value(options) {
+            let client = self.client.clone();
+            tokio::spawn(async move {
+                let _ = client
+                    .register_capability(vec![Registration {
+                        id: "pima-workspace-files".into(),
+                        method: "workspace/didChangeWatchedFiles".into(),
+                        register_options: Some(register_options),
+                    }])
+                    .await;
+            });
+        }
+        let snapshots = self
+            .workspace
+            .read()
+            .expect("workspace lock poisoned")
+            .snapshots();
+        for (uri, text) in snapshots {
+            let diagnostics = analyze(&text).diagnostics;
+            self.client
+                .publish_diagnostics(uri, diagnostics, None)
+                .await;
+        }
         self.client
             .log_message(MessageType::INFO, "Pima language server initialized")
             .await;
@@ -261,6 +292,43 @@ impl LanguageServer for Backend {
                 change.text,
                 params.text_document.version,
             );
+        }
+    }
+
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        for change in params.changes {
+            if self
+                .documents
+                .read()
+                .expect("document lock poisoned")
+                .contains_key(&change.uri)
+            {
+                continue;
+            }
+            if change.typ == FileChangeType::DELETED {
+                self.workspace
+                    .write()
+                    .expect("workspace lock poisoned")
+                    .remove(&change.uri);
+                self.client
+                    .publish_diagnostics(change.uri, Vec::new(), None)
+                    .await;
+                continue;
+            }
+            let Ok(path) = change.uri.to_file_path() else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            self.workspace
+                .write()
+                .expect("workspace lock poisoned")
+                .upsert(change.uri.clone(), text.clone());
+            let diagnostics = analyze(&text).diagnostics;
+            self.client
+                .publish_diagnostics(change.uri, diagnostics, None)
+                .await;
         }
     }
 
@@ -320,9 +388,13 @@ impl LanguageServer for Backend {
                 .unwrap_or(symbol.declaration);
             return Ok(Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(format!(
-                    "{} `{}`",
+                    "{} `{}`{}",
                     symbol.kind.description(),
-                    symbol.name
+                    symbol.name,
+                    symbol
+                        .inferred_type
+                        .map(|kind| format!(" : {kind}"))
+                        .unwrap_or_default()
                 ))),
                 range: Some(span_to_range(&text, range)),
             }));
@@ -489,14 +561,40 @@ impl LanguageServer for Backend {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let position = params.text_document_position.position;
         let uri = params.text_document_position.text_document.uri;
-        let Some((text, model, symbol)) = self.symbol_at(&uri, position) else {
+        let Some(text) = self.text(&uri) else {
             return Ok(None);
         };
-        Ok(Some(
-            model
+        let Some(offset) = position_to_offset(&text, position) else {
+            return Ok(None);
+        };
+        if let Some((_, model, symbol)) = self.symbol_at(&uri, position) {
+            let mut locations = model
                 .reference_spans(symbol, params.context.include_declaration)
                 .into_iter()
                 .map(|span| Location::new(uri.clone(), span_to_range(&text, span)))
+                .collect::<Vec<_>>();
+            let workspace = self.workspace.read().expect("workspace lock poisoned");
+            if let Some((target_uri, target)) =
+                workspace.target_at(&uri, model.symbols[symbol].declaration.start)
+            {
+                locations.extend(
+                    workspace
+                        .occurrences(target_uri, target.span, false)
+                        .into_iter()
+                        .map(|item| Location::new(item.uri, span_to_range(&item.text, item.span))),
+                );
+            }
+            return Ok(Some(locations));
+        }
+        let workspace = self.workspace.read().expect("workspace lock poisoned");
+        let Some((target_uri, target)) = workspace.target_at(&uri, offset) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            workspace
+                .occurrences(target_uri, target.span, params.context.include_declaration)
+                .into_iter()
+                .map(|item| Location::new(item.uri, span_to_range(&item.text, item.span)))
                 .collect(),
         ))
     }
@@ -506,12 +604,33 @@ impl LanguageServer for Backend {
         params: tower_lsp::lsp_types::TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
         let uri = params.text_document.uri;
-        let Some((text, model, symbol)) = self.symbol_at(&uri, params.position) else {
+        let Some(text) = self.text(&uri) else {
             return Ok(None);
         };
-        let symbol = &model.symbols[symbol];
+        let Some(offset) = position_to_offset(&text, params.position) else {
+            return Ok(None);
+        };
+        if let Some((_, model, symbol)) = self.symbol_at(&uri, params.position) {
+            let symbol = &model.symbols[symbol];
+            return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(&text, symbol.declaration),
+                placeholder: symbol.name.clone(),
+            }));
+        }
+        let workspace = self.workspace.read().expect("workspace lock poisoned");
+        let Some((_, symbol)) = workspace.target_at(&uri, offset) else {
+            return Ok(None);
+        };
+        let analysis = self.analysis(&uri, &text);
+        let Some(token) = analysis
+            .tokens
+            .iter()
+            .find(|token| token.span.start <= offset && offset < token.span.end)
+        else {
+            return Ok(None);
+        };
         Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
-            range: span_to_range(&text, symbol.declaration),
+            range: span_to_range(&text, token.span),
             placeholder: symbol.name.clone(),
         }))
     }
@@ -523,28 +642,47 @@ impl LanguageServer for Backend {
             ));
         }
         let uri = params.text_document_position.text_document.uri;
-        let Some((text, model, symbol)) =
-            self.symbol_at(&uri, params.text_document_position.position)
-        else {
+        let Some(text) = self.text(&uri) else {
             return Ok(None);
         };
-        let edits = model
-            .reference_spans(symbol, true)
-            .into_iter()
-            .map(|span| {
-                let replacement = if text
-                    .get(span.start..span.end)
-                    .is_some_and(|source| source.starts_with(':'))
-                {
-                    format!(":{}", params.new_name)
-                } else {
-                    params.new_name.clone()
-                };
-                TextEdit::new(span_to_range(&text, span), replacement)
-            })
-            .collect();
+        let Some(offset) = position_to_offset(&text, params.text_document_position.position) else {
+            return Ok(None);
+        };
+        let local = self.symbol_at(&uri, params.text_document_position.position);
+        let workspace = self.workspace.read().expect("workspace lock poisoned");
+        if let Some((_, model, symbol)) = &local
+            && workspace
+                .target_at(&uri, model.symbols[*symbol].declaration.start)
+                .is_none()
+        {
+            let edits = model
+                .reference_spans(*symbol, true)
+                .into_iter()
+                .map(|span| rename_edit(&text, span, &params.new_name))
+                .collect();
+            return Ok(Some(WorkspaceEdit {
+                changes: Some(HashMap::from([(uri, edits)])),
+                ..WorkspaceEdit::default()
+            }));
+        }
+        let target = if let Some((_, model, symbol)) = &local {
+            workspace.target_at(&uri, model.symbols[*symbol].declaration.start)
+        } else {
+            workspace.target_at(&uri, offset)
+        };
+        let Some((target_uri, target)) = target else {
+            return Ok(None);
+        };
+        let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
+        for item in workspace.occurrences(target_uri, target.span, true) {
+            changes.entry(item.uri).or_default().push(rename_edit(
+                &item.text,
+                item.span,
+                &params.new_name,
+            ));
+        }
         Ok(Some(WorkspaceEdit {
-            changes: Some(HashMap::from([(uri, edits)])),
+            changes: Some(changes),
             ..WorkspaceEdit::default()
         }))
     }
@@ -800,6 +938,18 @@ fn valid_identifier(name: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
+fn rename_edit(text: &str, span: Span, new_name: &str) -> TextEdit {
+    let replacement = if text
+        .get(span.start..span.end)
+        .is_some_and(|source| source.starts_with(':'))
+    {
+        format!(":{new_name}")
+    } else {
+        new_name.to_owned()
+    };
+    TextEdit::new(span_to_range(text, span), replacement)
+}
+
 fn to_snake_case(name: &str) -> String {
     let characters = name.chars().collect::<Vec<_>>();
     let mut result = String::new();
@@ -949,8 +1099,8 @@ fn describe_token(kind: &TokenKind) -> Option<String> {
 
 fn keyword_completions() -> Vec<CompletionItem> {
     const KEYWORDS: &[&str] = &[
-        "attempt", "break", "continue", "do", "function", "if", "import", "let", "match", "new",
-        "pub", "return", "val", "throw", "until", "var", "while",
+        "attempt", "branch", "break", "continue", "do", "function", "if", "import", "let", "match",
+        "new", "pub", "return", "val", "throw", "until", "var", "while",
     ];
     KEYWORDS
         .iter()
@@ -971,7 +1121,10 @@ fn symbol_completion(symbol: &Symbol) -> CompletionItem {
             | SemanticSymbolKind::Parameter
             | SemanticSymbolKind::PatternCapture => CompletionItemKind::VARIABLE,
         }),
-        detail: Some(symbol.kind.description().into()),
+        detail: Some(match symbol.inferred_type {
+            Some(inferred) => format!("{} : {inferred}", symbol.kind.description()),
+            None => symbol.kind.description().into(),
+        }),
         ..CompletionItem::default()
     }
 }
@@ -1240,7 +1393,7 @@ fn folding_ranges(text: &str, module: &Module) -> Vec<FoldingRange> {
         .map(|block| block.span)
         .collect::<Vec<_>>();
     spans.extend(module.nodes.iter().filter_map(|node| match node.kind {
-        NodeKind::List(_) | NodeKind::Match { .. } => Some(node.span),
+        NodeKind::List(_) | NodeKind::Match { .. } | NodeKind::Branch(_) => Some(node.span),
         _ => None,
     }));
     spans.sort_by_key(|span| (span.start, span.end));
@@ -1539,10 +1692,10 @@ mod tests {
 
     #[test]
     fn folding_ranges_include_multiline_blocks_and_lists() {
-        let text = "val values (\n    1\n    2\n)\nfunction read () {\n    values\n}\n";
+        let text = "val values (\n    1\n    2\n)\nval selected branch (\n    true {\n        values\n    }\n)\nfunction read () {\n    values\n}\n";
         let analysis = analyze(text);
         let ranges = folding_ranges(text, analysis.module.as_ref().expect("module"));
-        assert!(ranges.len() >= 2);
+        assert!(ranges.len() >= 4);
         assert!(ranges.iter().all(|range| range.start_line < range.end_line));
     }
 

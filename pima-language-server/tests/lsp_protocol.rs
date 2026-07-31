@@ -147,6 +147,50 @@ fn serves_editor_features_over_json_rpc() {
         &mut stdin,
         json!({
             "jsonrpc": "2.0",
+            "id": 7,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": {"uri": main_uri},
+                "position": {"line": 2, "character": 10},
+                "context": {"includeDeclaration": true}
+            }
+        }),
+    );
+    let references = response(&mut stdout, 7);
+    let references = references["result"].as_array().expect("references array");
+    assert_eq!(references.len(), 2);
+    assert!(references.iter().any(|location| {
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("library.pima"))
+    }));
+
+    send(
+        &mut stdin,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "textDocument/rename",
+            "params": {
+                "textDocument": {"uri": main_uri},
+                "position": {"line": 2, "character": 10},
+                "newName": "welcome"
+            }
+        }),
+    );
+    let rename = response(&mut stdout, 8);
+    assert_eq!(
+        rename["result"]["changes"]
+            .as_object()
+            .expect("workspace changes")
+            .len(),
+        2
+    );
+
+    send(
+        &mut stdin,
+        json!({
+            "jsonrpc": "2.0",
             "id": 5,
             "method": "textDocument/semanticTokens/full",
             "params": {"textDocument": {"uri": main_uri}}
