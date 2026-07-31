@@ -171,6 +171,7 @@ fn word_kind(word: &str) -> TokenKind {
     let keyword = match word {
         "as" => Keyword::As,
         "attempt" => Keyword::Attempt,
+        "branch" => Keyword::Branch,
         "break" => Keyword::Break,
         "continue" => Keyword::Continue,
         "do" => Keyword::Do,

@@ -162,6 +162,12 @@ impl ScopeWalker<'_> {
                     self.visit_executable(alternative);
                 }
             }
+            NodeKind::Branch(arms) => {
+                for arm in arms {
+                    self.visit_node(arm.condition);
+                    self.visit_executable(arm.result);
+                }
+            }
             NodeKind::Loop {
                 condition, body, ..
             } => {

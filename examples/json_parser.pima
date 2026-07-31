@@ -132,9 +132,11 @@ function escaped_character (:character) {
 
 function hex_value (:character) {
     val code [String.code_point ([String.lower (character)])]
-    if [between (code 48 57)] [- (code 48)] {
-        if [between (code 97 102)] [+ (10 [- (code 97)])] -1
-    }
+    branch (
+        [between (code 48 57)] [- (code 48)]
+        [between (code 97 102)] [+ (10 [- (code 97)])]
+        true -1
+    )
 }
 
 // Consumes an exact number of hexadecimal digits and returns (value rest).
@@ -200,10 +202,9 @@ function parse_string_characters (:characters :result) {
 
     val character [List.head (characters)]
     val rest [List.rest (characters)]
-    if [= (character "\"")] {
-        (result rest)
-    } {
-        if [= (character "\\")] {
+    branch (
+        [= (character "\"")] (result rest)
+        [= (character "\\")] {
             if [List.empty? (rest)] {
                 json_fail ("unterminated JSON string escape")
             }
@@ -211,13 +212,14 @@ function parse_string_characters (:characters :result) {
             [parse_string_characters
                 (after_escape
                 [String.concat (result escaped)])]
-        } {
-            if [< ([String.code_point (character)] 32)] {
-                json_fail ("unescaped control character in JSON string")
-            }
+        }
+        [< ([String.code_point (character)] 32)] {
+            json_fail ("unescaped control character in JSON string")
+        }
+        true {
             parse_string_characters (rest [String.concat (result character)])
         }
-    }
+    )
 }
 
 function parse_string (:characters) {
@@ -249,15 +251,17 @@ function parse_array_items (:characters :items) {
 
     val (value after_value) [parse_value (rest)]
     let rest [skip_whitespace (after_value)]
-    if [= ([first (rest)] ",")] {
-        parse_array_items ([List.rest (rest)] [List.push (items value)])
-    } {
-        if [= ([first (rest)] "]")] {
+    branch (
+        [= ([first (rest)] ",")] {
+            parse_array_items ([List.rest (rest)] [List.push (items value)])
+        }
+        [= ([first (rest)] "]")] {
             ((:array [List.reverse ([List.push (items value)])]) [List.rest (rest)])
-        } {
+        }
+        true {
             json_fail ("expected `,` or `]` in JSON array")
         }
-    }
+    )
 }
 
 function parse_array (:characters) {
@@ -282,15 +286,17 @@ function parse_object_members (:characters :members) {
     val (value after_value) [parse_value ([List.rest (rest)])]
     let rest [skip_whitespace (after_value)]
     val updated [List.push (members (key value))]
-    if [= ([first (rest)] ",")] {
-        parse_object_members ([List.rest (rest)] updated)
-    } {
-        if [= ([first (rest)] "}")] {
+    branch (
+        [= ([first (rest)] ",")] {
+            parse_object_members ([List.rest (rest)] updated)
+        }
+        [= ([first (rest)] "}")] {
             ((:object [List.reverse (updated)]) [List.rest (rest)])
-        } {
+        }
+        true {
             json_fail ("expected `,` or `}` in JSON object")
         }
-    }
+    )
 }
 
 function parse_object (:characters) {

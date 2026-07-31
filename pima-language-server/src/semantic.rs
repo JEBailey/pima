@@ -338,6 +338,12 @@ impl<'module> Builder<'module> {
                     self.visit_node(*alternative, scope);
                 }
             }
+            NodeKind::Branch(arms) => {
+                for arm in arms {
+                    self.visit_node(arm.condition, scope);
+                    self.visit_node(arm.result, scope);
+                }
+            }
             NodeKind::Loop {
                 condition, body, ..
             } => {

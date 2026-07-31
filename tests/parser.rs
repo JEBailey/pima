@@ -35,6 +35,27 @@ fn parses_destructuring_binding_and_match_patterns() {
 }
 
 #[test]
+fn parses_ordered_branch_pairs() {
+    let module = parse_source("branch (false 1 [< (x 2)] { x })\n");
+    let NodeKind::Branch(arms) = &module.node(module.statements[0]).kind else {
+        panic!("expected branch");
+    };
+    assert_eq!(arms.len(), 2);
+    assert!(matches!(
+        module.node(arms[0].condition).kind,
+        NodeKind::Boolean(false)
+    ));
+    assert!(matches!(
+        module.node(arms[0].result).kind,
+        NodeKind::Integer(1)
+    ));
+    assert!(matches!(
+        module.node(arms[1].result).kind,
+        NodeKind::Block(_)
+    ));
+}
+
+#[test]
 fn binding_patterns_treat_bare_and_symbol_names_as_captures() {
     let module = parse_source(
         "val (left :right) (1 2)\n\

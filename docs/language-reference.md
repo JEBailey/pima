@@ -112,7 +112,7 @@ and `<=` retain their symbolic spellings.
 The reserved words are:
 
 ```text
-as  attempt  break  continue  do  function  if  import  let  match  new  pub
+as  attempt  branch  break  continue  do  function  if  import  let  match  new  pub
 return  val  throw  until  var  while
 ```
 
@@ -726,7 +726,27 @@ Both selected branches produce the same `return` transfer. Blocks extend an
 expression position to multiple statements without changing the surrounding
 control form's result semantics.
 
-### 8.2 Loops
+### 8.2 Branch
+
+`branch` expresses an ordered series of condition/result pairs without nested
+`if` expressions:
+
+```pima
+branch (
+    [< (score 60)] { "fail" }
+    [< (score 90)] { "pass" }
+    true           { "excellent" }
+)
+```
+
+Conditions are evaluated from top to bottom in the current scope. The result
+paired with the first true condition is evaluated and becomes the value of the
+`branch`; later conditions and all unselected results are not evaluated. Each
+result may be a single expression or a block. Every evaluated condition must be
+a Boolean. If no condition is true, or the pair list is empty, `branch` returns
+unit. A final `true` condition is therefore the explicit default form.
+
+### 8.3 Loops
 
 `while predicate body` repeatedly evaluates the predicate and executes `body`
 while the predicate is true.
@@ -737,7 +757,7 @@ while the predicate is false.
 The predicate is re-evaluated before every iteration. A loop evaluates to the
 value of its last iteration, or unit if no iteration occurs.
 
-### 8.3 Function and loop transfer
+### 8.4 Function and loop transfer
 
 `return`, `break`, and `continue` perform explicit control transfer:
 

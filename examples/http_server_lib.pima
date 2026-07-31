@@ -27,16 +27,19 @@ function error_response (:status :reason :message) {
 }
 
 function read_headers (:connection :received) {
-    if [String.contains? (received "\r\n\r\n")] received {
-        if [> ([String.byte_length (received)] maximum_header_bytes)] {
+    branch (
+        [String.contains? (received "\r\n\r\n")] received
+        [> ([String.byte_length (received)] maximum_header_bytes)] {
             http_error ("request headers are too large")
         }
-        val chunk [tcp.read (connection 1024)]
-        if [= (chunk "")] {
-            http_error ("connection closed before request headers completed")
+        true {
+            val chunk [tcp.read (connection 1024)]
+            if [= (chunk "")] {
+                http_error ("connection closed before request headers completed")
+            }
+            read_headers (connection [String.concat (received chunk)])
         }
-        read_headers (connection [String.concat (received chunk)])
-    }
+    )
 }
 
 function parse_header (:line) {
@@ -85,23 +88,23 @@ function parse_request (:source) {
 }
 
 function valid_header? (:header) {
-    if [not ([= ([List.length (header)] 2)])] false {
-        val name [List.head (header)]
-        val value [List.head ([List.rest (header)])]
-        if [not ([Types.is? (name :string)])] false {
-            if [not ([Types.is? (value :string)])] false {
-                if [= (name "")] false {
-                    if [String.contains? (name "\r")] false {
-                        if [String.contains? (name "\n")] false {
-                            if [String.contains? (value "\r")] false {
-                                not ([String.contains? (value "\n")])
-                            }
-                        }
-                    }
-                }
-            }
+    branch (
+        [not ([= ([List.length (header)] 2)])] false
+        true {
+            val name [List.head (header)]
+            val value [List.head ([List.rest (header)])]
+            branch (
+                [not ([Types.is? (name :string)])] false
+                [not ([Types.is? (value :string)])] false
+                [= (name "")] false
+                [String.contains? (name "\r")] false
+                [String.contains? (name "\n")] false
+                [String.contains? (value "\r")] false
+                [String.contains? (value "\n")] false
+                true true
+            )
         }
-    }
+    )
 }
 
 function serialize_headers (:headers) {
@@ -147,16 +150,20 @@ function serialize_response (:result) {
 
 function dispatch (:handler :source) {
     val request [attempt { parse_request (source) }]
-    if [Types.is? (request :error)] {
-        error_response (400 "Bad Request" request.message)
-    } {
-        val result [attempt { handler (request) }]
-        if [Types.is? (result :error)] {
-            error_response (500 "Internal Server Error" "request handler failed")
-        } {
-            result
+    branch (
+        [Types.is? (request :error)] {
+            error_response (400 "Bad Request" request.message)
         }
-    }
+        true {
+            val result [attempt { handler (request) }]
+            branch (
+                [Types.is? (result :error)] {
+                    error_response (500 "Internal Server Error" "request handler failed")
+                }
+                true result
+            )
+        }
+    )
 }
 
 function handle_connection (:connection :handler) {

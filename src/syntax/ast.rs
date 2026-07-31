@@ -72,6 +72,12 @@ pub struct MatchArm {
 }
 
 #[derive(Clone, Debug)]
+pub struct BranchArm {
+    pub condition: NodeId,
+    pub result: NodeId,
+}
+
+#[derive(Clone, Debug)]
 pub enum NodeKind {
     Unit,
     Boolean(bool),
@@ -113,6 +119,7 @@ pub enum NodeKind {
         consequent: NodeId,
         alternative: Option<NodeId>,
     },
+    Branch(Vec<BranchArm>),
     Loop {
         kind: LoopKind,
         condition: NodeId,

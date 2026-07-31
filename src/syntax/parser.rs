@@ -7,8 +7,8 @@ use crate::{
 
 use super::{
     ast::{
-        BindingKind, Block, BlockId, LoopKind, MatchArm, Module, Name, NamespaceImportSelection,
-        Node, NodeId, NodeKind, Pattern, Visibility,
+        BindingKind, Block, BlockId, BranchArm, LoopKind, MatchArm, Module, Name,
+        NamespaceImportSelection, Node, NodeId, NodeKind, Pattern, Visibility,
     },
     token::{Keyword, Token, TokenKind},
 };
@@ -118,6 +118,7 @@ impl Parser<'_> {
             }
             Some(TokenKind::Keyword(Keyword::Let)) => self.parse_assignment(),
             Some(TokenKind::Keyword(Keyword::Match)) => self.parse_match(),
+            Some(TokenKind::Keyword(Keyword::Branch)) => self.parse_branch(),
             Some(TokenKind::Keyword(Keyword::Function)) => self.parse_function(Visibility::Private),
             Some(TokenKind::Keyword(Keyword::If)) => self.parse_conditional(),
             Some(TokenKind::Keyword(Keyword::While)) => self.parse_loop(LoopKind::While),
@@ -540,6 +541,34 @@ impl Parser<'_> {
         Ok(self.alloc(self.join(start, end), NodeKind::Match { value, arms }))
     }
 
+    fn parse_branch(&mut self) -> ParseResult<NodeId> {
+        let start = self.advance().span;
+        self.expect_simple(
+            |kind| matches!(kind, TokenKind::LeftParen),
+            "expected `(` before branch arms",
+        )?;
+        self.skip_eols();
+
+        let mut arms = Vec::new();
+        while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
+            if self.at_eof() {
+                self.report_eof("unterminated branch; expected `)`");
+                return Err(());
+            }
+            let condition = self.parse_expression()?;
+            self.skip_eols();
+            if self.at(|kind| matches!(kind, TokenKind::RightParen)) {
+                self.report_here("expected result expression after branch condition");
+                return Err(());
+            }
+            let result = self.parse_expression()?;
+            self.skip_eols();
+            arms.push(BranchArm { condition, result });
+        }
+        let end = self.advance().span;
+        Ok(self.alloc(self.join(start, end), NodeKind::Branch(arms)))
+    }
+
     fn parse_function(&mut self, visibility: Visibility) -> ParseResult<NodeId> {
         let start = self.peek().expect("function token exists").span;
         self.parse_function_from(start, visibility)
@@ -814,6 +843,7 @@ impl Parser<'_> {
                 | NodeKind::Assignment { .. }
                 | NodeKind::Function { .. }
                 | NodeKind::Conditional { .. }
+                | NodeKind::Branch(_)
                 | NodeKind::Loop { .. }
                 | NodeKind::Return(_)
                 | NodeKind::Break(_)

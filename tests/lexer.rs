@@ -128,6 +128,21 @@ fn recognizes_do_as_a_keyword() {
 }
 
 #[test]
+fn recognizes_branch_as_a_keyword() {
+    let kinds = lex_kinds("branch ()\n");
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::Keyword(Keyword::Branch),
+            TokenKind::LeftParen,
+            TokenKind::RightParen,
+            TokenKind::Eol,
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
 fn recognizes_context_annotation_punctuation() {
     let kinds = lex_kinds("@(:name) {}\n");
     assert_eq!(

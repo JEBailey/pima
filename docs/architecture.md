@@ -26,7 +26,7 @@ and removing no-op moves and jumps while preserving source-span alignment.
 
 The IR supports constants, moves, immutable lists, direct primitive calls,
 private immutable and mutable bindings, conditional and unconditional jumps,
-`if`, `while`, `until`, `break`, `continue`, first-class functions, recursive
+`if`, ordered `branch`, `while`, `until`, `break`, `continue`, first-class functions, recursive
 calls, compiled capture/list patterns, and function return.
 It also supports `throw` and `attempt` through explicit handler records that
 unwind VM call frames without using Rust stack unwinding.

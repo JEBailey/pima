@@ -413,6 +413,7 @@ impl<'a> Compiler<'a> {
                 consequent,
                 alternative,
             } => self.compile_conditional(*condition, *consequent, *alternative),
+            NodeKind::Branch(arms) => self.compile_branch(arms),
             NodeKind::Loop {
                 kind,
                 condition,
@@ -830,6 +831,43 @@ impl<'a> Compiler<'a> {
         Some(result)
     }
 
+    fn compile_branch(&mut self, arms: &[crate::syntax::ast::BranchArm]) -> Option<Register> {
+        let result = self.allocate_register();
+        let unit = self.load_constant(Value::Unit);
+        self.instructions.push(Instruction::Move {
+            destination: result,
+            source: unit,
+        });
+        let mut end_jumps = Vec::with_capacity(arms.len());
+
+        for arm in arms {
+            let condition = self.compile_node(arm.condition)?;
+            let next_arm = self.instructions.len();
+            self.instructions.push(Instruction::JumpIfFalse {
+                condition,
+                target: usize::MAX,
+                message: Arc::from("branch condition must be a boolean"),
+            });
+            let value = self.compile_executable_node(arm.result)?;
+            self.instructions.push(Instruction::Move {
+                destination: result,
+                source: value,
+            });
+            let end_jump = self.instructions.len();
+            self.instructions
+                .push(Instruction::Jump { target: usize::MAX });
+            end_jumps.push(end_jump);
+            let next = self.instructions.len();
+            self.patch_jump(next_arm, next);
+        }
+
+        let end = self.instructions.len();
+        for jump in end_jumps {
+            self.patch_jump(jump, end);
+        }
+        Some(result)
+    }
+
     fn compile_attempt(&mut self, block: BlockId) -> Register {
         let destination = self.allocate_register();
         let begin = self.instructions.len();
@@ -1167,6 +1205,12 @@ fn collect_node_context(
             collect_node_context(module, *consequent, names, visited);
             if let Some(alternative) = alternative {
                 collect_node_context(module, *alternative, names, visited);
+            }
+        }
+        NodeKind::Branch(arms) => {
+            for arm in arms {
+                collect_node_context(module, arm.condition, names, visited);
+                collect_node_context(module, arm.result, names, visited);
             }
         }
         NodeKind::Loop {

@@ -34,6 +34,7 @@ pub enum TokenKind {
 pub enum Keyword {
     As,
     Attempt,
+    Branch,
     Break,
     Continue,
     Do,

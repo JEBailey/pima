@@ -461,6 +461,57 @@ fn is_predicate() {
 // ── Conditionals ──
 
 #[test]
+fn branch_selects_the_first_true_arm() {
+    assert_eq!(
+        run_ok(
+            "var visited 0\nbranch (\n false { let visited 1 }\n true { let visited 2\n 20 }\n true { let visited 3\n 30 }\n)\n+ (visited 22)"
+        ),
+        pima::Value::Integer(24),
+    );
+}
+
+#[test]
+fn branch_returns_unit_when_no_condition_matches() {
+    assert_eq!(run_ok("branch (false 1 false 2)"), pima::Value::Unit);
+    assert_eq!(run_ok("branch ()"), pima::Value::Unit);
+}
+
+#[test]
+fn branch_conditions_share_the_current_scope() {
+    assert_eq!(
+        run_ok("val threshold 10\nval value 12\nbranch ([> (value threshold)] value true 0)"),
+        pima::Value::Integer(12),
+    );
+}
+
+#[test]
+fn branch_results_can_be_unwrapped_expressions() {
+    assert_eq!(
+        run_ok(
+            "val score 75\n\
+             val response branch (\n\
+                 [< (score 60)] \"fail\"\n\
+                 [< (score 90)] \"pass\"\n\
+                 true \"excellent\"\n\
+             )\n\
+             response",
+        ),
+        pima::Value::String("pass".into()),
+    );
+}
+
+#[test]
+fn branch_rejects_non_boolean_conditions() {
+    let outcome = run("branch (1 2)");
+    assert!(!outcome.is_success());
+    assert!(
+        outcome.diagnostics[0]
+            .message
+            .contains("branch condition must be a boolean")
+    );
+}
+
+#[test]
 fn if_true_branch() {
     assert_eq!(run_ok("if true 1 2"), pima::Value::Integer(1));
 }

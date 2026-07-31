@@ -80,46 +80,52 @@ pub function create_file_server (:directory) {
         pub val document_root root
 
         pub function handle (:method :target) {
-            if [Logic.not ([List.contains? (("GET" "HEAD") method)])] {
-                response (405 "Method Not Allowed" (
-                    ("Allow" "GET, HEAD")
-                    ("Content-Type" "text/plain; charset=utf-8")
-                ) [String.chars ("method not allowed")])
-            } {
-                val relative [relative_target (target)]
-                val requested [io.join (root relative)]
-                val canonical [attempt { io.canonicalize (requested) }]
+            branch (
+                [Logic.not ([List.contains? (("GET" "HEAD") method)])] {
+                    response (405 "Method Not Allowed" (
+                        ("Allow" "GET, HEAD")
+                        ("Content-Type" "text/plain; charset=utf-8")
+                    ) [String.chars ("method not allowed")])
+                }
+                true {
+                    val relative [relative_target (target)]
+                    val requested [io.join (root relative)]
+                    val canonical [attempt { io.canonicalize (requested) }]
 
-                if [Types.is? (canonical :error)] {
-                    text_response (404 "Not Found" "file not found")
-                } {
-                    if [Logic.not ([within_root? (root canonical)])] {
-                        text_response (403 "Forbidden" "path escapes the document root")
-                    } {
-                        if [Logic.not ([io.file? (canonical)])] {
+                    branch (
+                        [Types.is? (canonical :error)] {
                             text_response (404 "Not Found" "file not found")
-                        } {
+                        }
+                        [Logic.not ([within_root? (root canonical)])] {
+                            text_response (403 "Forbidden" "path escapes the document root")
+                        }
+                        [Logic.not ([io.file? (canonical)])] {
+                            text_response (404 "Not Found" "file not found")
+                        }
+                        true {
                             val body [attempt { io.read_text (canonical) }]
-                            if [Types.is? (body :error)] {
-                                if [Types.is? (body :invalid_encoding)] {
+                            branch (
+                                [Types.is? (body :invalid_encoding)] {
                                     text_response (415 "Unsupported Media Type" "file is not UTF-8 text")
-                                } {
+                                }
+                                [Types.is? (body :error)] {
                                     text_response (500 "Internal Server Error" "file could not be read")
                                 }
-                            } {
-                                val headers (
-                                    ("Content-Type" [content_type (canonical)])
-                                )
-                                if [= (method "HEAD")] {
-                                    response (200 "OK" headers "")
-                                } {
-                                    response (200 "OK" headers body)
+                                [= (method "HEAD")] {
+                                    response (200 "OK" (
+                                        ("Content-Type" [content_type (canonical)])
+                                    ) "")
                                 }
-                            }
+                                true {
+                                    response (200 "OK" (
+                                        ("Content-Type" [content_type (canonical)])
+                                    ) body)
+                                }
+                            )
                         }
-                    }
+                    )
                 }
-            }
+            )
         }
     }
 }
