@@ -251,6 +251,29 @@ fn memory_benchmarks(c: &mut Criterion) {
             BatchSize::SmallInput,
         );
     });
+
+    let vm_cycle_program = compile_vm_source(
+        "function build_cycle () {\n\
+             var captured ()\n\
+             function cycle () { captured }\n\
+             let captured cycle\n\
+             42\n\
+         }\n\
+         [build_cycle ()]",
+    );
+    let mut machine = Machine::default();
+    group.bench_function("vm_create_100_closure_cell_cycles_and_collect", |b| {
+        b.iter(|| {
+            for _ in 0..100 {
+                black_box(
+                    machine
+                        .execute(&vm_cycle_program)
+                        .expect("benchmark program should execute"),
+                );
+            }
+            dumpster::unsync::collect();
+        });
+    });
     group.finish();
 }
 
@@ -275,7 +298,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     let tokens = lex(source_id, source).expect("benchmark source should lex");
     let module = parse(&tokens).expect("benchmark source should parse");
     let program = compile(&module).expect("benchmark source should compile");
-    let mut machine = Machine;
+    let mut machine = Machine::default();
     group.bench_function("register_vm/primitive_add", |b| {
         b.iter(|| {
             black_box(
@@ -498,6 +521,99 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
                 machine
                     .execute(&loop_program)
                     .expect("benchmark program should execute"),
+            );
+        });
+    });
+
+    let attempt_source = "attempt { / (1 0) }";
+    group.throughput(Throughput::Elements(1));
+    let mut tree_attempt = Interpreter::default();
+    let tree_attempt_program = tree_attempt
+        .prepare_source("<benchmark>", attempt_source)
+        .expect("benchmark source should prepare");
+    group.bench_function("tree_walk/attempt_caught_error", |b| {
+        b.iter(|| {
+            let outcome = tree_attempt.run_prepared(tree_attempt_program);
+            assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+            black_box(outcome.value);
+        });
+    });
+    let attempt_program = compile_vm_source(attempt_source);
+    group.bench_function("register_vm/attempt_caught_error", |b| {
+        b.iter(|| {
+            black_box(
+                machine
+                    .execute(&attempt_program)
+                    .expect("attempt should catch the benchmark error"),
+            );
+        });
+    });
+
+    let namespace_source = "new { pub val answer 42 }";
+    let mut tree_namespace = Interpreter::default();
+    let tree_namespace_program = tree_namespace
+        .prepare_source("<benchmark>", namespace_source)
+        .expect("benchmark source should prepare");
+    group.bench_function("tree_walk/namespace_construct", |b| {
+        b.iter(|| {
+            let outcome = tree_namespace.run_prepared(tree_namespace_program);
+            assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+            black_box(outcome.value);
+        });
+    });
+    let namespace_program = compile_vm_source(namespace_source);
+    group.bench_function("register_vm/namespace_construct", |b| {
+        b.iter(|| {
+            black_box(
+                machine
+                    .execute(&namespace_program)
+                    .expect("namespace benchmark should execute"),
+            );
+        });
+    });
+
+    let do_source = "do { + (20 22) }";
+    let mut tree_do = Interpreter::default();
+    let tree_do_program = tree_do
+        .prepare_source("<benchmark>", do_source)
+        .expect("benchmark source should prepare");
+    group.bench_function("tree_walk/do_block", |b| {
+        b.iter(|| {
+            let outcome = tree_do.run_prepared(tree_do_program);
+            assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+            black_box(outcome.value);
+        });
+    });
+    let do_program = compile_vm_source(do_source);
+    group.bench_function("register_vm/do_block", |b| {
+        b.iter(|| {
+            black_box(
+                machine
+                    .execute(&do_program)
+                    .expect("do benchmark should execute"),
+            );
+        });
+    });
+
+    let match_source = "match (:ok 42) ( (ok :value) { + (value 1) } _ { 0 } )";
+    let mut tree_match = Interpreter::default();
+    let tree_match_program = tree_match
+        .prepare_source("<benchmark>", match_source)
+        .expect("benchmark source should prepare");
+    group.bench_function("tree_walk/match_nested", |b| {
+        b.iter(|| {
+            let outcome = tree_match.run_prepared(tree_match_program);
+            assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+            black_box(outcome.value);
+        });
+    });
+    let match_program = compile_vm_source(match_source);
+    group.bench_function("register_vm/match_nested", |b| {
+        b.iter(|| {
+            black_box(
+                machine
+                    .execute(&match_program)
+                    .expect("match benchmark should execute"),
             );
         });
     });

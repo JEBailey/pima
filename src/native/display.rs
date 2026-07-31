@@ -24,7 +24,7 @@ pub(crate) fn value(input: &Value, context: &mut dyn NativeContext) -> String {
                 .collect::<Vec<_>>();
             format!("({})", elements.join(" "))
         }
-        Value::Function(_) => "#<function>".to_owned(),
+        Value::Function(_) | Value::VmClosure(_) => "#<function>".to_owned(),
         Value::NativeFunction(_) => "#<native>".to_owned(),
         Value::Block(_) => "#<block>".to_owned(),
         Value::Namespace(_) => "#<namespace>".to_owned(),

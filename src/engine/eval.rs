@@ -636,43 +636,12 @@ fn evaluate_continue(context: &mut CallContext) -> EvalResult {
 
 fn evaluate_throw(context: &mut CallContext, value_id: crate::syntax::ast::NodeId) -> EvalResult {
     let value = evaluate_node(context, value_id)?;
-
-    let error_symbol = context.interpreter.symbols.intern("error");
-    let message_symbol = context.interpreter.symbols.intern("message");
-    let (is_error, has_valid_message) = match &value {
-        Value::Namespace(namespace) => {
-            let environment = namespace.environment.borrow();
-            let valid_message = environment
-                .bindings
-                .get(&message_symbol)
-                .is_some_and(|binding| {
-                    binding.visibility == crate::runtime::BindingVisibility::Public
-                        && matches!(
-                            binding.mutability,
-                            crate::runtime::BindingMutability::Immutable
-                        )
-                        && matches!(binding.value, Value::String(_))
-                });
-            (namespace.types.contains(&error_symbol), valid_message)
-        }
-        _ => (false, false),
-    };
-
-    if !is_error {
+    if let Err(message) = crate::runtime::throwable_error(&mut context.interpreter.symbols, &value)
+    {
         return Err(Signal::Throw(typed_err(
             context,
             &["error", "type_error"],
-            format!(
-                "throw requires an error value (type :error), got {}",
-                value.type_symbol()
-            ),
-        )));
-    }
-    if !has_valid_message {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "type_error"],
-            "an error namespace must expose `message` as a public immutable string".to_owned(),
+            message,
         )));
     }
 
@@ -1433,46 +1402,12 @@ impl crate::native::NativeContext for CallContext<'_> {
 }
 
 fn create_error_value(interpreter: &mut Interpreter, types: &[&str], message: String) -> Value {
-    // Create a minimal error namespace
-    let mut ns_env = crate::runtime::Environment::new(None);
-
-    // types list
-    let type_symbols: Vec<crate::runtime::SymbolId> = types
-        .iter()
-        .map(|t| interpreter.symbols.intern(t))
-        .collect();
-    let types_list: crate::runtime::PersistentList =
-        type_symbols.iter().map(|s| Value::Symbol(*s)).collect();
-
-    ns_env.bindings.insert(
-        interpreter.symbols.intern("types"),
-        crate::runtime::Binding {
-            value: Value::List(types_list),
-            mutability: crate::runtime::BindingMutability::Immutable,
-            visibility: crate::runtime::BindingVisibility::Public,
-        },
-    );
-
-    // message
-    ns_env.bindings.insert(
-        interpreter.symbols.intern("message"),
-        crate::runtime::Binding {
-            value: Value::String(std::sync::Arc::from(message)),
-            mutability: crate::runtime::BindingMutability::Immutable,
-            visibility: crate::runtime::BindingVisibility::Public,
-        },
-    );
-
-    let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(ns_env));
-
-    let namespace = dumpster::unsync::Gc::new(crate::runtime::Namespace {
-        environment,
-        types: type_symbols,
-        error_metadata: std::cell::RefCell::new(None),
-    });
-    attach_error_metadata(interpreter, &namespace);
-
-    Value::Namespace(namespace)
+    let value = crate::runtime::create_typed_error(&mut interpreter.symbols, types, message);
+    let Value::Namespace(namespace) = &value else {
+        unreachable!("typed errors are namespaces");
+    };
+    attach_error_metadata(interpreter, namespace);
+    value
 }
 
 fn attach_error_metadata(interpreter: &mut Interpreter, namespace: &crate::runtime::NamespaceRef) {

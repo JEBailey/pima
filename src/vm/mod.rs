@@ -1,7 +1,9 @@
 mod compiler;
 mod ir;
 mod machine;
+mod native_context;
 
-pub use compiler::compile;
+pub use crate::runtime::live_vm_cell_count as live_cell_count;
+pub use compiler::{compile, compile_module};
 pub use ir::{Instruction, Primitive, Program, Register};
-pub use machine::Machine;
+pub use machine::{Machine, VmError};

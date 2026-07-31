@@ -1,6 +1,4 @@
-use std::collections::HashSet;
-
-use crate::runtime::{BindingMutability, BindingVisibility, Environment, Namespace, Value};
+use crate::runtime::{BindingVisibility, Environment, Namespace, Value};
 
 use super::eval::{CallContext, EvalResult, Signal, evaluate_block, evaluate_node, typed_err};
 
@@ -71,81 +69,12 @@ pub(super) fn evaluate(
     context.interpreter.current_module = previous_module;
     result?;
 
-    let types = validate_types(context, environment.clone())?;
+    let types = crate::runtime::namespace_types(&mut context.interpreter.symbols, &environment)
+        .map_err(|message| Signal::Throw(typed_err(context, &["error", "type_error"], message)))?;
     let namespace = dumpster::unsync::Gc::new(Namespace {
         environment,
         types,
         error_metadata: std::cell::RefCell::new(None),
     });
     Ok(Value::Namespace(namespace))
-}
-
-fn validate_types(
-    context: &mut CallContext,
-    environment: crate::runtime::EnvironmentRef,
-) -> Result<Vec<crate::runtime::SymbolId>, Signal> {
-    let types_symbol = context.interpreter.symbols.intern("types");
-    let fundamental = [
-        "unit",
-        "boolean",
-        "integer",
-        "float",
-        "string",
-        "symbol",
-        "list",
-        "function",
-        "block",
-        "namespace",
-    ]
-    .into_iter()
-    .map(|name| context.interpreter.symbols.intern(name))
-    .collect::<HashSet<_>>();
-    let binding = environment.borrow().bindings.get(&types_symbol).cloned();
-    let Some(binding) = binding else {
-        return Ok(Vec::new());
-    };
-    if binding.visibility != BindingVisibility::Public
-        || !matches!(binding.mutability, BindingMutability::Immutable)
-    {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "type_error"],
-            "namespace `types` must be declared with `pub val`".to_owned(),
-        )));
-    }
-    let Value::List(list) = binding.value else {
-        return Err(Signal::Throw(typed_err(
-            context,
-            &["error", "type_error"],
-            "namespace `types` must be a list".to_owned(),
-        )));
-    };
-
-    let mut result = Vec::new();
-    let mut seen = HashSet::new();
-    for value in list.iter() {
-        let Value::Symbol(symbol) = value else {
-            return Err(Signal::Throw(typed_err(
-                context,
-                &["error", "type_error"],
-                "namespace `types` must contain only symbols".to_owned(),
-            )));
-        };
-        if fundamental.contains(symbol) {
-            return Err(Signal::Throw(typed_err(
-                context,
-                &["error", "type_error"],
-                "namespace `types` cannot contain a fundamental runtime type".to_owned(),
-            )));
-        }
-        if !seen.insert(*symbol) {
-            return Err(Signal::Throw(typed_err(
-                context,
-                &["error", "type_error"],
-                "namespace `types` cannot contain duplicates".to_owned(),
-            )));
-        }
-        result.push(*symbol);
-    }
-    Ok(result)
 }

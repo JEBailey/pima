@@ -19,6 +19,7 @@ pub enum Value {
     List(PersistentList),
     Function(FunctionRef),
     NativeFunction(NativeFunctionId),
+    VmClosure(super::VmClosureRef),
     Block(BlockRef),
     Namespace(NamespaceRef),
     TcpListener(TcpListenerId),
@@ -41,7 +42,7 @@ impl Value {
             Self::String(_) => "string",
             Self::Symbol(_) => "symbol",
             Self::List(_) => "list",
-            Self::Function(_) | Self::NativeFunction(_) => "function",
+            Self::Function(_) | Self::NativeFunction(_) | Self::VmClosure(_) => "function",
             Self::Block(_) => "block",
             Self::Namespace(_) => "namespace",
             Self::TcpListener(_) => "tcp_listener",
@@ -76,6 +77,7 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
         }
         (Value::Function(a), Value::Function(b)) => Gc::ptr_eq(a, b),
         (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
+        (Value::VmClosure(a), Value::VmClosure(b)) => Gc::ptr_eq(a, b),
         (Value::Block(a), Value::Block(b)) => Gc::ptr_eq(a, b),
         (Value::Namespace(a), Value::Namespace(b)) => Gc::ptr_eq(a, b),
         (Value::TcpListener(a), Value::TcpListener(b)) => a == b,
@@ -93,6 +95,7 @@ unsafe impl<V: Visitor> TraceWith<V> for Value {
                 }
             }
             Self::Function(function) => function.accept(visitor)?,
+            Self::VmClosure(function) => function.accept(visitor)?,
             Self::Block(block) => block.accept(visitor)?,
             Self::Namespace(namespace) => namespace.accept(visitor)?,
             _ => {}

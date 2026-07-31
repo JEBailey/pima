@@ -35,6 +35,7 @@ The suite separates several costs:
 | `evaluation/prepared_captured_closure_call` | Closure invocation and captured-environment lookup |
 | `evaluation/prepared_sum_1000_integers` | List evaluation, allocation, and native dispatch |
 | `memory/create_100_recursive_closures_and_collect` | Cyclic environment allocation and explicit garbage collection |
+| `memory/vm_create_100_closure_cell_cycles_and_collect` | VM closure/cell cycle allocation and tracing collection |
 | `engine_comparison/tree_walk/primitive_add` | Prepared tree-walk primitive evaluation |
 | `engine_comparison/register_vm/primitive_add` | Compiled register-VM execution of the same expression |
 | `engine_comparison/tree_walk/branch` | Prepared tree-walk condition and branch |
@@ -46,6 +47,10 @@ The suite separates several costs:
 | `engine_comparison/*/mutable_closure_roundtrip` | Create a counter closure and mutate its captured cell twice |
 | `engine_comparison/tree_walk/sum_loop_1000` | Tree-walk mutation and 1,000 loop iterations |
 | `engine_comparison/register_vm/sum_loop_1000` | Register-VM execution of the same loop |
+| `engine_comparison/*/attempt_caught_error` | Construct, throw, unwind, and catch a numeric error |
+| `engine_comparison/*/namespace_construct` | Construct a namespace with one public immutable member |
+| `engine_comparison/*/do_block` | Instantiate and execute a block in the current environment |
+| `engine_comparison/*/match_nested` | Match a tagged list, bind its payload, and execute the selected arm |
 
 The prepared workloads use `Interpreter::prepare_source` once and then measure
 only `Interpreter::run_prepared`. This keeps lexer and parser costs out of

@@ -15,22 +15,65 @@ The VM pipeline is:
 AST -> register compiler -> register IR -> VM
 ```
 
-The initial IR supports constants, moves, immutable lists, direct primitive
-calls, private immutable and mutable locals, conditional and unconditional
-jumps, `if`, `while`, `until`, `break`, `continue`, direct top-level functions,
-recursive calls, compiled capture/list patterns, and function return.
+The IR supports constants, moves, immutable lists, direct primitive calls,
+private immutable and mutable bindings, conditional and unconditional jumps,
+`if`, `while`, `until`, `break`, `continue`, first-class functions, recursive
+calls, compiled capture/list patterns, and function return.
+It also supports `throw` and `attempt` through explicit handler records that
+unwind VM call frames without using Rust stack unwinding.
+Direct `new { ... }` expressions support immutable namespace bindings, lexical
+initializer reads, validated custom type lists, and visibility-checked member
+access. Block literals now produce inert VM block values, and immutable block
+bindings retain enough static identity for `do` and named `new` templates to
+instantiate their bodies in the current environment without capturing their
+declaration environment. Indirect block dispatch through arbitrary function
+parameters, namespace methods, and mutable namespace bindings remain outside
+this slice.
+
+Annotated block requirements are checked when the block is instantiated.
+Missing bindings execute a typed-error instruction and therefore remain
+catchable by `attempt` as `(:error :name_error :missing_context)` rather than
+being reported as VM compiler failures.
 Unsupported AST constructs produce compiler diagnostics rather than falling
 back silently to the tree walker.
 
-Nested functions compile to VM closure values containing a function id and
-captured register slots. Dynamic calls restore those captures into the callee
-frame. Mutable locals use shared cells, so closures capture the cell reference
-and observe later `let` updates instead of receiving a copied snapshot.
+Functions compile to ordinary runtime closure values containing a function id
+and captured slots. Their declarations bind shared, initially uninitialized
+cells at the point where the declaration executes. This preserves declaration
+timing while allowing recursion and references to bindings initialized later.
+Dynamic calls restore captures into the callee frame. Mutable bindings use the
+same cells, so closures observe later `let` updates instead of copied snapshots.
 
-The initial cells use reference counting. Storing closures or other cells into
-cells is rejected because it could create a reference cycle. Cyclic VM closure
-graphs must be integrated with Pima's tracing collector before the VM replaces
-the tree walker.
+Destructuring first validates and extracts the complete pattern, then commits
+its bindings or assignments. A failed nested pattern therefore cannot leave a
+partial mutation behind. Shape failures and invalid runtime binding operations
+become typed Pima errors and can be caught by `attempt`.
+
+VM cells participate in the same tracing collector as tree-walk environments.
+Slots trace language values, closure capture arrays, and nested cells. Closure
+and cell values may therefore be stored in captured cells without leaking
+unreachable cycles.
+
+The traceable VM representation lives in `runtime::vm_value`, separate from the
+instruction dispatcher. Closures are also ordinary `Value` variants, so they
+can cross lists, namespace members, results, registers, and captures without
+construct-specific conversion code. VM binding cells remain an internal slot
+detail and participate in the same tracing collector.
+
+Primitive VM instructions resolve through the shared native registry and invoke
+the same native function pointers as the tree walker. Native failures remain
+typed Pima namespace values in `VmError::Typed`; internal bytecode faults remain
+separate host diagnostics. The VM native context currently supports numeric
+primitives and symbol/error services. Filesystem and TCP context operations are
+deferred until module and host-resource integration.
+
+`attempt` records its frame depth, catch instruction, and destination register.
+A typed native failure or explicit `throw` unwinds to the nearest record and
+places the error in that register. Normal completion removes the record, while
+`return`, `break`, and `continue` emit cleanup for any handlers they cross.
+Thrown values and namespace type lists use shared runtime validation in both
+engines. Source and call-stack metadata remain deferred
+until VM instructions carry source spans.
 
 Registers are numbered function-local value slots. The initial IR is kept
 readable and structurally explicit; compact byte encoding is deferred until the
@@ -42,8 +85,16 @@ The migration sequence is:
 2. branches, mutation, loops, `break`, and `continue` (implemented);
 3. direct user functions and compiled parameter patterns (implemented);
 4. immutable closures and mutable captured cells (implemented);
-5. namespaces, modules, blocks, `do`, errors, and native integration;
-6. optimized call conventions and compact bytecode.
+5. shared numeric native dispatch and typed native errors (implemented);
+6. `throw`, `attempt`, and frame-aware typed-error unwinding (implemented);
+7. direct namespace construction, custom types, and member reads (implemented);
+8. inert blocks, statically known named templates, and `do` (implemented);
+9. recursive declaration and assignment destructuring (implemented);
+10. `match` expressions, scoped captures, literals, and fallthrough (implemented);
+11. indirect block dispatch and mutable namespace bindings;
+12. modules and remaining native integration;
+13. source-aware bytecode diagnostics and VM call stacks;
+14. optimized call conventions and compact bytecode.
 
 The tree walker remains the semantic oracle during this work. Every VM feature
 must have differential tests that execute the same Pima source through both
