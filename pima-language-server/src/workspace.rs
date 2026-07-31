@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn indexes_only_public_top_level_declarations() {
         let document = index_document(
-            "pub val answer 42\nval private 0\npub function read (:value) { value }\n",
+            "pub val :answer 42\nval :private 0\npub function :read (value) { value }\n",
         )
         .expect("document");
         assert!(document.exports.contains_key("answer"));
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn indexes_public_namespace_members() {
         let document = index_document(
-            "pub val Point {\n    pub val x 0\n    val hidden 1\n    pub function move (:amount) { amount }\n}\n",
+            "pub val :Point {\n    pub val :x 0\n    val :hidden 1\n    pub function :move (amount) { amount }\n}\n",
         )
         .expect("document");
         let point = &document.exports["Point"];
@@ -462,7 +462,7 @@ mod tests {
         let main = root.join("main.pima");
         std::fs::write(
             &library,
-            "pub val answer 42\npub function double (:value) { * value 2 }\n",
+            "pub val :answer 42\npub function :double (value) { * value 2 }\n",
         )
         .expect("library");
         std::fs::write(

@@ -21,16 +21,16 @@ fn lex_kinds(source: &str) -> Vec<TokenKind> {
 
 #[test]
 fn lexes_function_symbols_calls_and_eols() {
-    let kinds = lex_kinds("function add (:x :y) {\r\n+ x y\n}\n");
+    let kinds = lex_kinds("function :add (x y) {\r\n+ x y\n}\n");
 
     assert_eq!(
         kinds,
         vec![
             TokenKind::Keyword(Keyword::Function),
-            TokenKind::Identifier(Arc::from("add")),
+            TokenKind::Symbol(Arc::from("add")),
             TokenKind::LeftParen,
-            TokenKind::Symbol(Arc::from("x")),
-            TokenKind::Symbol(Arc::from("y")),
+            TokenKind::Identifier(Arc::from("x")),
+            TokenKind::Identifier(Arc::from("y")),
             TokenKind::RightParen,
             TokenKind::LeftBrace,
             TokenKind::Eol,
@@ -71,7 +71,7 @@ fn distinguishes_member_dot_range_and_numbers() {
 
 #[test]
 fn preserves_line_endings_inside_block_comments() {
-    let kinds = lex_kinds("val x 1 /* first\nsecond */\nval y 2");
+    let kinds = lex_kinds("val :x 1 /* first\nsecond */\nval y 2");
     let eol_count = kinds
         .iter()
         .filter(|kind| matches!(kind, TokenKind::Eol))
@@ -157,6 +157,16 @@ fn recognizes_context_annotation_punctuation() {
             TokenKind::Eol,
             TokenKind::Eof,
         ]
+    );
+}
+
+#[test]
+fn lexes_operator_symbols_for_explicit_function_names() {
+    let tokens = lex_kinds("function :^ (left right) {}");
+    assert!(
+        tokens
+            .iter()
+            .any(|token| matches!(token, TokenKind::Symbol(name) if name.as_ref() == "^"))
     );
 }
 

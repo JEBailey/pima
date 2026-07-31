@@ -1322,6 +1322,16 @@ fn semantic_tokens(text: &str, analysis: &Analysis) -> Vec<SemanticToken> {
             TokenKind::Keyword(_) => Some(5),
             TokenKind::String(_) => Some(6),
             TokenKind::Integer(_) | TokenKind::Float(_) => Some(7),
+            TokenKind::Symbol(_)
+                if analysis.semantic.as_ref().is_some_and(|model| {
+                    model
+                        .symbols
+                        .iter()
+                        .any(|symbol| symbol.declaration == token.span)
+                }) =>
+            {
+                None
+            }
             TokenKind::Symbol(_) => Some(8),
             TokenKind::Boolean(_) => Some(10),
             _ => None,
@@ -1575,7 +1585,7 @@ mod tests {
 
     #[test]
     fn reports_parser_diagnostics() {
-        let result = analyze("val value\n");
+        let result = analyze("val :value\n");
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].source.as_deref(), Some("pima"));
         assert!(result.module.is_some());
@@ -1583,7 +1593,7 @@ mod tests {
 
     #[test]
     fn retains_symbols_around_an_incomplete_statement() {
-        let text = "val before 1\nval incomplete\nval after 2\n";
+        let text = "val :before 1\nval :incomplete\nval :after 2\n";
         let result = analyze(text);
         let module = result.module.expect("recoverable module");
         let symbols = document_symbols(text, &module);
@@ -1598,10 +1608,10 @@ mod tests {
 
     #[test]
     fn extracts_top_level_symbols() {
-        let result = analyze("val answer 42\nfunction double (:x) {\n  * x 2\n}\n");
+        let result = analyze("val :answer 42\nfunction :double (x) {\n  * x 2\n}\n");
         let module = result.module.expect("valid module");
         let symbols = document_symbols(
-            "val answer 42\nfunction double (:x) {\n  * x 2\n}\n",
+            "val :answer 42\nfunction :double (x) {\n  * x 2\n}\n",
             &module,
         );
         assert_eq!(symbols.len(), 2);
@@ -1611,7 +1621,7 @@ mod tests {
 
     #[test]
     fn positions_use_utf16_code_units() {
-        let text = "\"😀\" value";
+        let text = "\"\u{1F600}\" value";
         assert_eq!(offset_to_position(text, 6), Position::new(0, 4));
         assert_eq!(position_to_offset(text, Position::new(0, 4)), Some(6));
     }
@@ -1631,13 +1641,14 @@ mod tests {
     #[test]
     fn recognizes_standard_namespace_member_completion_context() {
         assert_eq!(member_receiver("Math.", 5), Some("Math"));
-        assert_eq!(member_receiver("val result String.", 18), Some("String"));
+        let text = "val :result String.";
+        assert_eq!(member_receiver(text, text.len()), Some("String"));
         assert_eq!(member_receiver("value", 5), None);
     }
 
     #[test]
     fn document_symbols_include_namespace_members() {
-        let text = "val Point {\n    pub val x 0\n    pub function move (:amount) {\n        x\n    }\n}\n";
+        let text = "val :Point {\n    pub val :x 0\n    pub function :move (amount) {\n        x\n    }\n}\n";
         let result = analyze(text);
         let symbols = document_symbols(text, &result.module.expect("module"));
         assert_eq!(symbols.len(), 1);
@@ -1667,7 +1678,7 @@ mod tests {
 
     #[test]
     fn user_function_signature_help_uses_declared_parameters() {
-        let text = "function add (:left :right) {\n    + (left right)\n}\n[add (1 ";
+        let text = "function :add (left right) {\n    + (left right)\n}\n[add (1 ";
         let analysis = analyze(text);
         let (label, parameters, active) =
             signature_at(text, &analysis, text.len()).expect("signature");
@@ -1678,7 +1689,7 @@ mod tests {
 
     #[test]
     fn semantic_tokens_classify_functions_parameters_and_references() {
-        let text = "function identity (:value) {\n    value\n}\n";
+        let text = "function :identity (value) {\n    value\n}\n";
         let analysis = analyze(text);
         let tokens = semantic_tokens(text, &analysis);
         assert!(tokens.iter().any(|token| token.token_type == 1));
@@ -1692,7 +1703,7 @@ mod tests {
 
     #[test]
     fn folding_ranges_include_multiline_blocks_and_lists() {
-        let text = "val values (\n    1\n    2\n)\nval selected branch (\n    true {\n        values\n    }\n)\nfunction read () {\n    values\n}\n";
+        let text = "val :values (\n    1\n    2\n)\nval :selected branch (\n    true {\n        values\n    }\n)\nfunction :read () {\n    values\n}\n";
         let analysis = analyze(text);
         let ranges = folding_ranges(text, analysis.module.as_ref().expect("module"));
         assert!(ranges.len() >= 4);
@@ -1701,7 +1712,7 @@ mod tests {
 
     #[test]
     fn selection_ranges_expand_from_token_to_document() {
-        let text = "function read (:value) {\n    value\n}\n";
+        let text = "function :read (value) {\n    value\n}\n";
         let analysis = analyze(text);
         let offset = text.rfind("value").expect("reference");
         let selection = selection_at(
@@ -1726,7 +1737,7 @@ mod tests {
 
     #[test]
     fn inlay_hints_use_known_parameter_names() {
-        let text = "function add (:left :right) {\n    + (left right)\n}\n[add (1 2)]\n";
+        let text = "function :add (left right) {\n    + (left right)\n}\n[add (1 2)]\n";
         let analysis = analyze(text);
         let hints = inlay_hints(
             text,
@@ -1750,7 +1761,7 @@ mod tests {
         let mut text = String::new();
         for index in 0..1_500 {
             text.push_str(&format!(
-                "function function_{index} (:value) {{\n    + (value {index})\n}}\n"
+                "function :function_{index} (value) {{\n    + (value {index})\n}}\n"
             ));
         }
         let started = std::time::Instant::now();

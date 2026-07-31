@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn syntax_diagnostic_snapshot() {
         let mut sources = SourceMap::default();
-        let source = sources.add("example.pima", "val answer [missing]\n");
+        let source = sources.add("example.pima", "val :answer [missing]\n");
         let diagnostic =
             Diagnostic::at_error("unbound identifier `missing`", Span::new(source, 12, 19));
 
@@ -72,7 +72,7 @@ mod tests {
         Error: unbound identifier `missing`
            ╭─[ example.pima:1:13 ]
            │
-         1 │ val answer [missing]
+         1 │ val :answer [missing]
            │             ───┬───  
            │                ╰───── unbound identifier `missing`
         ───╯

@@ -686,11 +686,10 @@ impl<'a> Compiler<'a> {
             function,
             captures: captures.iter().map(|(_, local)| local.register).collect(),
         });
-        let binding = self
-            .locals
-            .get(&name.text)
-            .copied()
-            .expect("nested function binding must be allocated before statements are compiled");
+        let binding =
+            self.locals.get(&name.text).copied().expect(
+                "nested function :binding must be allocated before statements are compiled",
+            );
         self.instructions.push(Instruction::Bind {
             binding: binding.register,
             source: destination,
@@ -735,7 +734,7 @@ impl<'a> Compiler<'a> {
         });
         let binding =
             self.locals.get(&name.text).copied().expect(
-                "top-level function binding must be allocated before statements are compiled",
+                "top-level function :binding must be allocated before statements are compiled",
             );
         self.instructions.push(Instruction::Bind {
             binding: binding.register,

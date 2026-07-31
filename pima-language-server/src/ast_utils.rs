@@ -21,7 +21,7 @@ pub fn namespace_block(module: &Module, value: NodeId) -> Option<BlockId> {
 
 pub fn parameter_list(parameter: &Pattern) -> String {
     match parameter {
-        Pattern::Capture(name) => format!(":{}", name.text),
+        Pattern::Capture(name) => name.text.to_string(),
         Pattern::Wildcard => "_".to_owned(),
         Pattern::Literal(_) => "<literal>".to_owned(),
         Pattern::List(elements) => format!(

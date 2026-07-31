@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn custom_pipeline_visits_module_and_function_bodies() {
         let mut sources = SourceMap::default();
-        let source = "function identity :value { value }\n[identity 42]";
+        let source = "function :identity :value { value }\n[identity 42]";
         let source_id = sources.add("<pass-test>", source);
         let tokens = lex(source_id, source).unwrap();
         let module = parse(&tokens).unwrap();

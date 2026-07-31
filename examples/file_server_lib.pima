@@ -4,23 +4,23 @@ import "/pima/io" as io
 // Transport-independent static file handling. The `/pima/http` module can pass
 // its request values to server.handle and encode the returned response.
 
-function response (:status :reason :headers :body) {
+function :response (status reason headers body) {
     new {
-        pub val status status
-        pub val reason reason
-        pub val headers headers
-        pub val body body
+        pub val :status status
+        pub val :reason reason
+        pub val :headers headers
+        pub val :body body
     }
 }
 
-function text_response (:status :reason :message) {
+function :text_response (status reason message) {
     response (status reason (
         ("Content-Type" "text/plain; charset=utf-8")
     ) message)
 }
 
-function content_type (:path) {
-    val extension [io.extension (path)]
+function :content_type (path) {
+    val :extension [io.extension (path)]
     if [Types.is? (extension :unit)] "application/octet-stream" {
         match [String.lower (extension)] (
             "css" { "text/css; charset=utf-8" }
@@ -44,26 +44,26 @@ function content_type (:path) {
 // links. The separator-terminated prefix avoids treating `/srv/site-backup` as
 // though it were inside `/srv/site`. Deriving it with io.join keeps this
 // portable across Unix and Windows.
-function root_prefix (:root) {
-    val marker "__pima_document_root_boundary__"
-    val joined [io.join (root marker)]
+function :root_prefix (root) {
+    val :marker "__pima_document_root_boundary__"
+    val :joined [io.join (root marker)]
     String.slice (joined 0 [- ([String.length (joined)] [String.length (marker)])])
 }
 
-function within_root? (:root :candidate) {
+function :within_root? (root candidate) {
     if [= (candidate root)] true [String.starts_with? (candidate [root_prefix (root)])]
 }
 
-function strip_query (:target) {
+function :strip_query (target) {
     List.head ([String.split (target "?")])
 }
 
-function relative_target (:target) {
-    val path [strip_query (target)]
+function :relative_target (target) {
+    val :path [strip_query (target)]
     if [= (path "/")] "index.html" {
-        var relative path
+        var :relative path
         if [String.starts_with? (relative "/")] {
-            let relative [String.slice (relative 1 [String.length (relative)])]
+            let :relative [String.slice (relative 1 [String.length (relative)])]
         }
         if [String.ends_with? (relative "/")] {
             String.concat (relative "index.html")
@@ -73,13 +73,13 @@ function relative_target (:target) {
     }
 }
 
-pub function create_file_server (:directory) {
-    val root [io.canonicalize (directory)]
+pub function :create_file_server (directory) {
+    val :root [io.canonicalize (directory)]
 
     new {
-        pub val document_root root
+        pub val :document_root root
 
-        pub function handle (:method :target) {
+        pub function :handle (method target) {
             branch (
                 [Logic.not ([List.contains? (("GET" "HEAD") method)])] {
                     response (405 "Method Not Allowed" (
@@ -88,9 +88,9 @@ pub function create_file_server (:directory) {
                     ) [String.chars ("method not allowed")])
                 }
                 true {
-                    val relative [relative_target (target)]
-                    val requested [io.join (root relative)]
-                    val canonical [attempt { io.canonicalize (requested) }]
+                    val :relative [relative_target (target)]
+                    val :requested [io.join (root relative)]
+                    val :canonical [attempt { io.canonicalize (requested) }]
 
                     branch (
                         [Types.is? (canonical :error)] {
@@ -103,7 +103,7 @@ pub function create_file_server (:directory) {
                             text_response (404 "Not Found" "file not found")
                         }
                         true {
-                            val body [attempt { io.read_text (canonical) }]
+                            val :body [attempt { io.read_text (canonical) }]
                             branch (
                                 [Types.is? (body :invalid_encoding)] {
                                     text_response (415 "Unsupported Media Type" "file is not UTF-8 text")
@@ -130,10 +130,10 @@ pub function create_file_server (:directory) {
     }
 }
 
-pub function header (:response :name) {
-    function find (:headers) {
+pub function :header (response name) {
+    function :find (headers) {
         if [List.empty? (headers)] :missing {
-            val entry [List.head (headers)]
+            val :entry [List.head (headers)]
             if [= ([List.head (entry)] name)] {
                 List.head ([List.rest (entry)])
             } {

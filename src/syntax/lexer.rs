@@ -53,7 +53,7 @@ enum RawToken {
     #[regex(r"-?[0-9]+", priority = 2)]
     Integer,
 
-    #[regex(r":[A-Za-z_][A-Za-z0-9_?]*")]
+    #[regex(r":[A-Za-z_][A-Za-z0-9_?]*|:[+\-<>=!?^%*/]+", priority = 5)]
     Symbol,
 
     #[regex(r"(/[A-Za-z0-9_.-]+)+", priority = 4)]

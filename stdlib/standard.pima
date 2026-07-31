@@ -1,6 +1,6 @@
 // Pima standard library
 
-function math_pow (:base :exponent) {
+function :math_pow (base exponent) {
     if [< (exponent 0)] {
         / (1 [math_pow (base [- (0 exponent)])])
     } {
@@ -8,24 +8,24 @@ function math_pow (:base :exponent) {
     }
 }
 
-function math_lte (:left :right) {
+function :math_lte (left right) {
     if [< (left right)] true [= (left right)]
 }
 
-function math_gte (:left :right) {
+function :math_gte (left right) {
     if [> (left right)] true [= (left right)]
 }
 
-function math_increment (:value) {
+function :math_increment (value) {
     + (value 1)
 }
 
-function math_decrement (:value) {
+function :math_decrement (value) {
     - (value 1)
 }
 
-function math_range (:begin :end) {
-    val step [logic_select ([math_lte (begin end)] math_increment math_decrement)]
+function :math_range (begin end) {
+    val :step [logic_select ([math_lte (begin end)] math_increment math_decrement)]
     if [= (begin end)] {
         List.append (() begin)
     } {
@@ -33,54 +33,54 @@ function math_range (:begin :end) {
     }
 }
 
-function math_absolute (:value) {
+function :math_absolute (value) {
     if [< (value 0)] [- (0 value)] value
 }
 
-function math_minimum (:left :right) {
+function :math_minimum (left right) {
     if [< (left right)] left right
 }
 
-function math_maximum (:left :right) {
+function :math_maximum (left right) {
     if [> (left right)] left right
 }
 
-function math_clamp (:value :minimum :maximum) {
+function :math_clamp (value minimum maximum) {
     math_minimum ([math_maximum (value minimum)] maximum)
 }
 
-function math_sum (:list) {
+function :math_sum (list) {
     if [List.empty? (list)] 0 {
         + ([List.head (list)] [math_sum ([List.rest (list)])])
     }
 }
 
-function math_product (:list) {
+function :math_product (list) {
     if [List.empty? (list)] 1 {
         * ([List.head (list)] [math_product ([List.rest (list)])])
     }
 }
 
-function math_average (:list) {
+function :math_average (list) {
     / ([math_sum (list)] [list_length (list)])
 }
 
-function list_reverse (:list) {
+function :list_reverse (list) {
     if [List.empty? (list)] () {
         List.append ([list_reverse ([List.rest (list)])] [List.head (list)])
     }
 }
 
-function list_foreach (:list :block) {
+function :list_foreach (list block) {
     if [Logic.not ([List.empty? (list)])] {
-        val item [List.head (list)]
+        val :item [List.head (list)]
         do block
         list_foreach ([List.rest (list)] block)
     } {
     }
 }
 
-function list_map (:callable :list) {
+function :list_map (callable list) {
     if [List.empty? (list)] {
         ()
     } {
@@ -88,27 +88,27 @@ function list_map (:callable :list) {
     }
 }
 
-function list_length (:list) {
+function :list_length (list) {
     if [List.empty? (list)] 0 [+ (1 [list_length ([List.rest (list)])])]
 }
 
-function list_contains (:list :value) {
+function :list_contains (list value) {
     if [List.empty? (list)] false {
         if [= ([List.head (list)] value)] true [list_contains ([List.rest (list)] value)]
     }
 }
 
-function list_fold (:callable :initial :list) {
+function :list_fold (callable initial list) {
     if [List.empty? (list)] initial {
         list_fold (callable [callable (initial [List.head (list)])] [List.rest (list)])
     }
 }
 
-function list_filter (:predicate :list) {
+function :list_filter (predicate list) {
     if [List.empty? (list)] {
         ()
     } {
-        val tail [list_filter (predicate [List.rest (list)])]
+        val :tail [list_filter (predicate [List.rest (list)])]
         if [predicate ([List.head (list)])] {
             List.push (tail [List.head (list)])
         } {
@@ -117,91 +117,91 @@ function list_filter (:predicate :list) {
     }
 }
 
-function list_any (:predicate :list) {
+function :list_any (predicate list) {
     if [List.empty? (list)] false {
         if [predicate ([List.head (list)])] true [list_any (predicate [List.rest (list)])]
     }
 }
 
-function list_all (:predicate :list) {
+function :list_all (predicate list) {
     if [List.empty? (list)] true {
         if [predicate ([List.head (list)])] [list_all (predicate [List.rest (list)])] false
     }
 }
 
-function logic_select (:predicate :when_true :when_false) {
+function :logic_select (predicate when_true when_false) {
     if predicate when_true when_false
 }
 
-pub val Math [new {
-    pub val E 2.718281828459045
-    pub val PI 3.141592653589793
-    pub val pow math_pow
-    pub val less_or_equal math_lte
-    pub val greater_or_equal math_gte
-    pub val increment math_increment
-    pub val decrement math_decrement
-    pub val range math_range
-    pub val absolute math_absolute
-    pub val minimum math_minimum
-    pub val maximum math_maximum
-    pub val clamp math_clamp
-    pub val sum math_sum
-    pub val product math_product
-    pub val average math_average
-    pub val div Math.div
-    pub val mod Math.mod
-    pub val int Math.int
+pub val :Math [new {
+    pub val :E 2.718281828459045
+    pub val :PI 3.141592653589793
+    pub val :pow math_pow
+    pub val :less_or_equal math_lte
+    pub val :greater_or_equal math_gte
+    pub val :increment math_increment
+    pub val :decrement math_decrement
+    pub val :range math_range
+    pub val :absolute math_absolute
+    pub val :minimum math_minimum
+    pub val :maximum math_maximum
+    pub val :clamp math_clamp
+    pub val :sum math_sum
+    pub val :product math_product
+    pub val :average math_average
+    pub val :div Math.div
+    pub val :mod Math.mod
+    pub val :int Math.int
 }]
 
-pub val String [new {
-    pub val concat String.concat
-    pub val length String.length
-    pub val byte_length String.byte_length
-    pub val slice String.slice
-    pub val chars String.chars
-    pub val code_point String.code_point
-    pub val from_code_point String.from_code_point
-    pub val from String.string
-    pub val string String.string
-    pub val lower String.lower
-    pub val upper String.upper
-    pub val trim String.trim
-    pub val contains? String.contains?
-    pub val starts_with? String.starts_with?
-    pub val ends_with? String.ends_with?
-    pub val replace String.replace
-    pub val split String.split
-    pub val join String.join
+pub val :String [new {
+    pub val :concat String.concat
+    pub val :length String.length
+    pub val :byte_length String.byte_length
+    pub val :slice String.slice
+    pub val :chars String.chars
+    pub val :code_point String.code_point
+    pub val :from_code_point String.from_code_point
+    pub val :from String.string
+    pub val :string String.string
+    pub val :lower String.lower
+    pub val :upper String.upper
+    pub val :trim String.trim
+    pub val :contains? String.contains?
+    pub val :starts_with? String.starts_with?
+    pub val :ends_with? String.ends_with?
+    pub val :replace String.replace
+    pub val :split String.split
+    pub val :join String.join
 }]
 
-pub val List [new {
-    pub val push List.push
-    pub val append List.append
-    pub val head List.head
-    pub val rest List.rest
-    pub val empty? List.empty?
-    pub val reverse list_reverse
-    pub val foreach list_foreach
-    pub val map list_map
-    pub val length list_length
-    pub val contains? list_contains
-    pub val fold list_fold
-    pub val filter list_filter
-    pub val any? list_any
-    pub val all? list_all
+pub val :List [new {
+    pub val :push List.push
+    pub val :append List.append
+    pub val :head List.head
+    pub val :rest List.rest
+    pub val :empty? List.empty?
+    pub val :reverse list_reverse
+    pub val :foreach list_foreach
+    pub val :map list_map
+    pub val :length list_length
+    pub val :contains? list_contains
+    pub val :fold list_fold
+    pub val :filter list_filter
+    pub val :any? list_any
+    pub val :all? list_all
 }]
 
-pub val Types [new {
-    pub val of Types.types
-    pub val is? Types.is?
+pub val :Types [new {
+    pub val :of Types.types
+    pub val :is? Types.is?
 }]
 
-pub val Console [new {
-    pub val println Console.println
+pub val :Console [new {
+    pub val :println Console.println
 }]
 
-pub val Logic [new {
-    pub val not Logic.not
-    pub val select logic_select
+pub val :Logic [new {
+    pub val :not Logic.not
+    pub val :select logic_select
 }]

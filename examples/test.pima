@@ -1,12 +1,12 @@
 import "/pima/library/standard"
 
-function <= (:value1 :value2) {
+function :<= (value1 value2) {
 	if [< (value1 value2)] { true } {
 		= (value1 value2)
 	}
 }
 
-function fibonacci(:x) {
+function :fibonacci(x) {
 	if [<= (x 2)] {
 		1
 	 } {

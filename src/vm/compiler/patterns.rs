@@ -35,7 +35,28 @@ impl Compiler<'_> {
                     self.compile_parameter_pattern(pattern, element);
                 }
             }
-            Pattern::Literal(_) => unreachable!("function parameters use binding patterns"),
+            Pattern::Literal(literal) => {
+                let Some(expected) = self.compile_node(*literal) else {
+                    return;
+                };
+                let mismatch = self.instructions.len();
+                self.instructions.push(Instruction::JumpIfNotEqual {
+                    left: source,
+                    right: expected,
+                    target: usize::MAX,
+                });
+                let matched = self.instructions.len();
+                self.instructions
+                    .push(Instruction::Jump { target: usize::MAX });
+                let failure = self.instructions.len();
+                self.instructions.push(Instruction::RaiseTyped {
+                    types: vec![Arc::from("error"), Arc::from("match_error")],
+                    message: Arc::from("function argument does not match its parameter pattern"),
+                });
+                let end = self.instructions.len();
+                self.patch_jump(mismatch, failure);
+                self.patch_jump(matched, end);
+            }
         }
     }
 

@@ -13,8 +13,8 @@ Pima has a **structural type tag system**, not a type system in the traditional 
 1. **Every value has a type list** — a non-empty list of symbols. The first symbol is the fundamental runtime type (`:integer`, `:string`, `:namespace`, etc.).
 2. **Type tags are declared by namespaces** via a `pub val types` member:
    ```pima
-   val Square {
-       pub val types (:square :shape)
+   val :Square {
+       pub val :types (:square :shape)
    }
    ```
    The runtime prepends `:namespace` automatically, so `Square` instances have type list `(:namespace :square :shape)`.
@@ -81,22 +81,22 @@ type Counter {
 }
 
 // Define an implementation
-val MyCounter {
-    pub val types (:counter)
+val :MyCounter {
+    pub val :types (:counter)
 
-    var count 0
+    var :count 0
 
-    pub function increment () {
-        let count [+ (count 1)]
+    pub function :increment () {
+        let :count [+ (count 1)]
     }
 
-    pub function get () {
+    pub function :get () {
         count
     }
 }
 
 // This succeeds — MyCounter satisfies Counter
-val c [new MyCounter as Counter]
+val :c [new MyCounter as Counter]
 ```
 
 ### Implementation Shape
@@ -177,15 +177,15 @@ It adds enforceable structure to namespaces without changing Pima's dynamic natu
 import "/pima/typecheck" as typecheck
 
 // Define a type descriptor (a list of requirements)
-val counter_schema (
+val :counter_schema (
     (:field "count" :integer :immutable :private)
     (:method "increment" :function :public)
     (:method "get" :function :public)
 )
 
 // Validate at runtime
-val c [new MyCounter]
-val valid [typecheck.matches? (c counter_schema)]
+val :c [new MyCounter]
+val :valid [typecheck.matches? (c counter_schema)]
 
 // Or throw on mismatch
 typecheck.assert (c counter_schema)
@@ -240,15 +240,15 @@ type Result {
 }
 
 // Construct variants
-val success [Result.ok 42]
-val failure [Result.error "something went wrong"]
+val :success [Result.ok 42]
+val :failure [Result.error "something went wrong"]
 
 // Match with exhaustiveness checking
 match success (
-    (ok :value) {
+    (:ok value) {
         Console.println ("got:" value)
     }
-    (error :message) {
+    (:error message) {
         Console.println ("err:" message)
     }
 )
@@ -349,9 +349,9 @@ type HttpResponse {
     server_error (:status :message)
 }
 
-function handle_request (:req) -> HttpResponse {
+function :handle_request (req) -> HttpResponse {
     match req (
-        (request :method :path :headers :body) {
+        (:request method path headers body) {
             if [= (method "GET")] {
                 HttpResponse.ok (200 "OK" () "content")
             } {

@@ -416,7 +416,7 @@ impl Parser<'_> {
             self.report_eof("expected binding target");
         })?;
         match token.kind {
-            TokenKind::Identifier(name) | TokenKind::Symbol(name) => {
+            TokenKind::Symbol(name) => {
                 self.advance();
                 Ok(Pattern::Capture(Name {
                     text: name,
@@ -443,9 +443,7 @@ impl Parser<'_> {
                 Ok(Pattern::List(elements))
             }
             _ => {
-                self.report_here(
-                    "expected a binding name, `:name`, `_`, or nested binding pattern",
-                );
+                self.report_here("expected `:name`, `_`, or nested binding pattern");
                 Err(())
             }
         }
@@ -456,14 +454,14 @@ impl Parser<'_> {
             self.report_eof("expected pattern");
         })?;
         match token.kind {
-            TokenKind::Symbol(name) => {
+            TokenKind::Identifier(name) => {
                 self.advance();
                 Ok(Pattern::Capture(Name {
                     text: name,
                     span: token.span,
                 }))
             }
-            TokenKind::Identifier(name) => {
+            TokenKind::Symbol(name) => {
                 self.advance();
                 let literal = self.alloc(token.span, NodeKind::Symbol(name));
                 Ok(Pattern::Literal(literal))
@@ -495,7 +493,7 @@ impl Parser<'_> {
                 Ok(Pattern::List(elements))
             }
             _ => {
-                self.report_here("expected symbol name, literal, `:capture`, `_`, or list pattern");
+                self.report_here("expected capture name, literal, `_`, or list pattern");
                 Err(())
             }
         }
@@ -562,7 +560,7 @@ impl Parser<'_> {
     }
 
     fn parse_function(&mut self, visibility: Visibility) -> ParseResult<NodeId> {
-        let start = self.peek().expect("function token exists").span;
+        let start = self.peek().expect("function :token exists").span;
         self.parse_function_from(start, visibility)
     }
 
@@ -571,8 +569,9 @@ impl Parser<'_> {
             |kind| matches!(kind, TokenKind::Keyword(Keyword::Function)),
             "expected `function`",
         )?;
-        let (name, name_span) = self.expect_identifier("expected function name")?;
-        let parameter = self.parse_binding_pattern()?;
+        let (name, name_span) =
+            self.expect_symbol("expected literal function name such as `:add`")?;
+        let parameter = self.parse_pattern()?;
         let mut captures = HashSet::new();
         if let Some(duplicate) = duplicate_capture(&parameter, &mut captures) {
             self.diagnostics.push(Diagnostic::at_error(
@@ -776,7 +775,7 @@ impl Parser<'_> {
         let end = self
             .node(*operands.last().expect("an operand was parsed"))
             .span;
-        let operand = self.pack_explicit_arguments(operands, self.join(start, end));
+        let operand = self.pack_special_operands(operands, self.join(start, end));
         let kind = match form {
             UnaryForm::New => NodeKind::New(operand),
             UnaryForm::Do => NodeKind::Do(operand),
@@ -820,7 +819,7 @@ impl Parser<'_> {
             .copied()
             .expect("a statement call has at least one argument");
         let span = self.join(self.node(callee).span, self.node(last).span);
-        let argument = self.pack_explicit_arguments(expressions, span);
+        let argument = self.pack_call_arguments(expressions, span);
         let end = self.node(argument).span;
         Ok(self.alloc(
             self.join(self.node(callee).span, end),
@@ -832,10 +831,9 @@ impl Parser<'_> {
         ))
     }
 
-    /// Packs the expressions following a callee into Pima's single argument.
-    /// One explicit expression is passed through unchanged; multiple expressions
-    /// form an implicit list.
-    fn pack_explicit_arguments(&mut self, expressions: Vec<NodeId>, span: Span) -> NodeId {
+    /// Packs operands for syntax forms which still distinguish one operand from
+    /// an explicit list of operands.
+    fn pack_special_operands(&mut self, expressions: Vec<NodeId>, span: Span) -> NodeId {
         if expressions.len() == 1 {
             expressions[0]
         } else {
@@ -843,13 +841,14 @@ impl Parser<'_> {
         }
     }
 
-    /// Brackets explicitly request invocation, so a callee with no following
-    /// expressions receives the conventional empty-list argument.
+    /// Every runtime call receives one list argument. Parentheses around the
+    /// complete outer argument list are optional, so one explicit list is used
+    /// directly; otherwise the trailing expressions are packed into a list.
     fn pack_call_arguments(&mut self, expressions: Vec<NodeId>, span: Span) -> NodeId {
-        if expressions.is_empty() {
-            self.alloc(span, NodeKind::List(Vec::new()))
+        if expressions.len() == 1 && matches!(self.node(expressions[0]).kind, NodeKind::List(_)) {
+            expressions[0]
         } else {
-            self.pack_explicit_arguments(expressions, span)
+            self.alloc(span, NodeKind::List(expressions))
         }
     }
 
@@ -882,6 +881,19 @@ impl Parser<'_> {
         if let TokenKind::Identifier(name) = token.kind {
             self.advance();
             Ok((name, token.span))
+        } else {
+            self.report_here(message);
+            Err(())
+        }
+    }
+
+    fn expect_symbol(&mut self, message: &str) -> ParseResult<(Arc<str>, Span)> {
+        let token = self.peek().cloned().ok_or_else(|| {
+            self.report_eof(message);
+        })?;
+        if let TokenKind::Symbol(symbol) = token.kind {
+            self.advance();
+            Ok((symbol, token.span))
         } else {
             self.report_here(message);
             Err(())

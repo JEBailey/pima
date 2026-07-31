@@ -693,7 +693,7 @@ impl Machine {
                         let definition = self
                             .natives
                             .get(native)
-                            .ok_or_else(|| VmError::internal("invalid native function id"))?;
+                            .ok_or_else(|| VmError::internal("invalid native function :id"))?;
                         if !definition.arity.check(arguments.len()) {
                             let error = self.context.typed_error(
                                 &["error", "arity_error"],
@@ -870,7 +870,8 @@ impl Machine {
                         return Ok(language_value(&value)?);
                     };
                     caller.registers
-                        [destination.expect("function frame has a destination").0 as usize] = value;
+                        [destination.expect("function :frame has a destination").0 as usize] =
+                        value;
                 }
             }
         }

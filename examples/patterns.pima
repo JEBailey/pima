@@ -1,18 +1,18 @@
 import "/pima/library/standard"
 
-function describe (:result) {
+function :describe (result) {
     match result (
-        (ok (:name :score)) {
+        (:ok (name score)) {
             Console.println name "scored" score
             score
         }
 
-        (error :message) {
+        (:error message) {
             Console.println "Error:" message
             0
         }
     )
 }
 
-val (name score) ("Ada" 42)
+val (:name :score) ("Ada" 42)
 describe ((:ok (name score)))

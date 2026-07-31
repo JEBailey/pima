@@ -222,7 +222,7 @@ fn serves_editor_features_over_json_rpc() {
             "method": "textDocument/didChange",
             "params": {
                 "textDocument": {"uri": main_uri, "version": 3},
-                "contentChanges": [{"text": "val newest 1\nnewest\n"}]
+                "contentChanges": [{"text": "val :newest 1\nnewest\n"}]
             }
         }),
     );
@@ -233,7 +233,7 @@ fn serves_editor_features_over_json_rpc() {
             "method": "textDocument/didChange",
             "params": {
                 "textDocument": {"uri": main_uri, "version": 2},
-                "contentChanges": [{"text": "val stale 1\nstale\n"}]
+                "contentChanges": [{"text": "val :stale 1\nstale\n"}]
             }
         }),
     );

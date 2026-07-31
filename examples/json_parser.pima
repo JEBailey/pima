@@ -12,20 +12,20 @@ import "/pima/library/standard"
 // Objects use ordered key/value pairs because Pima intentionally has no
 // built-in mutable dictionary type.
 
-function json_fail (:message) {
+function :json_fail (message) {
     throw [new {
-        pub val types (:error :json_error)
-        pub val message message
+        pub val :types (:error :json_error)
+        pub val :message message
     }]
 }
 
-function first (:characters) {
+function :first (characters) {
     if [List.empty? (characters)] "" [List.head (characters)]
 }
 
-function skip_whitespace (:characters) {
+function :skip_whitespace (characters) {
     if [List.empty? (characters)] characters {
-        val character [List.head (characters)]
+        val :character [List.head (characters)]
         if [List.contains? ((" " "\n" "\r" "\t") character)] {
             skip_whitespace ([List.rest (characters)])
         } {
@@ -34,42 +34,42 @@ function skip_whitespace (:characters) {
     }
 }
 
-function between (:value :minimum :maximum) {
+function :between (value minimum maximum) {
     if [Math.less_or_equal (minimum value)] {
         Math.less_or_equal (value maximum)
     } false
 }
 
-function digit_value (:character) {
-    val code [String.code_point (character)]
+function :digit_value (character) {
+    val :code [String.code_point (character)]
     if [between (code 48 57)] [- (code 48)] -1
 }
 
 // Returns (numeric-value remaining-characters digit-count).
-function consume_digits (:characters :value :count) {
+function :consume_digits (characters value count) {
     if [List.empty? (characters)] (value characters count) {
-        val digit [digit_value ([List.head (characters)])]
+        val :digit [digit_value ([List.head (characters)])]
         if [< (digit 0)] (value characters count) {
             consume_digits ([List.rest (characters)] [+ ([* (value 10)] digit)] [+ (count 1)])
         }
     }
 }
 
-function parse_exponent (:characters :number) {
+function :parse_exponent (characters number) {
     if [List.empty? (characters)] (number characters) {
-        val marker [List.head (characters)]
+        val :marker [List.head (characters)]
         if [List.contains? (("e" "E") marker)] {
-            var rest [List.rest (characters)]
-            var sign 1
+            var :rest [List.rest (characters)]
+            var :sign 1
             if [= ([first (rest)] "-")] {
-                let sign -1
-                let rest [List.rest (rest)]
+                let :sign -1
+                let :rest [List.rest (rest)]
             }
             if [= ([first (rest)] "+")] {
-                let rest [List.rest (rest)]
+                let :rest [List.rest (rest)]
             }
 
-            val (exponent exponent_rest count) [consume_digits (rest 0 0)]
+            val (:exponent :exponent_rest :count) [consume_digits (rest 0 0)]
             if [= (count 0)] {
                 json_fail ("expected exponent digits")
             }
@@ -80,15 +80,15 @@ function parse_exponent (:characters :number) {
     }
 }
 
-function parse_number (:characters) {
-    var rest characters
-    var sign 1
+function :parse_number (characters) {
+    var :rest characters
+    var :sign 1
     if [= ([first (rest)] "-")] {
-        let sign -1
-        let rest [List.rest (rest)]
+        let :sign -1
+        let :rest [List.rest (rest)]
     }
 
-    val (whole after_whole whole_count) [consume_digits (rest 0 0)]
+    val (:whole :after_whole :whole_count) [consume_digits (rest 0 0)]
     if [= (whole_count 0)] {
         json_fail ("expected a JSON number")
     }
@@ -101,22 +101,22 @@ function parse_number (:characters) {
         }
     }
 
-    var number whole
-    let rest after_whole
+    var :number whole
+    let :rest after_whole
     if [= ([first (rest)] ".")] {
-        val (fraction after_fraction fraction_count) [consume_digits ([List.rest (rest)] 0 0)]
+        val (:fraction :after_fraction :fraction_count) [consume_digits ([List.rest (rest)] 0 0)]
         if [= (fraction_count 0)] {
             json_fail ("expected digits after decimal point")
         }
-        let number [+ (whole [/ (fraction [Math.pow (10 fraction_count)])])]
-        let rest after_fraction
+        let :number [+ (whole [/ (fraction [Math.pow (10 fraction_count)])])]
+        let :rest after_fraction
     }
 
-    val (with_exponent after_exponent) [parse_exponent (rest number)]
+    val (:with_exponent :after_exponent) [parse_exponent (rest number)]
     ([* (sign with_exponent)] after_exponent)
 }
 
-function escaped_character (:character) {
+function :escaped_character (character) {
     match character (
         "\"" { "\"" }
         "\\" { "\\" }
@@ -130,8 +130,8 @@ function escaped_character (:character) {
     )
 }
 
-function hex_value (:character) {
-    val code [String.code_point ([String.lower (character)])]
+function :hex_value (character) {
+    val :code [String.code_point ([String.lower (character)])]
     branch (
         [between (code 48 57)] [- (code 48)]
         [between (code 97 102)] [+ (10 [- (code 97)])]
@@ -140,12 +140,12 @@ function hex_value (:character) {
 }
 
 // Consumes an exact number of hexadecimal digits and returns (value rest).
-function consume_hex_digits (:characters :value :remaining) {
+function :consume_hex_digits (characters value remaining) {
     if [= (remaining 0)] (value characters) {
         if [List.empty? (characters)] {
             json_fail ("incomplete Unicode escape")
         }
-        val digit [hex_value ([List.head (characters)])]
+        val :digit [hex_value ([List.head (characters)])]
         if [< (digit 0)] {
             json_fail ("invalid hexadecimal digit in Unicode escape")
         }
@@ -158,21 +158,21 @@ function consume_hex_digits (:characters :value :remaining) {
 
 // JSON uses UTF-16 code units in \u escapes, so supplementary characters
 // require combining a high and low surrogate before constructing a scalar.
-function parse_unicode_escape (:characters) {
-    var (first_unit rest) [consume_hex_digits (characters 0 4)]
+function :parse_unicode_escape (characters) {
+    var (:first_unit :rest) [consume_hex_digits (characters 0 4)]
     if [between (first_unit 55296 56319)] {
         if [Logic.not ([= ([first (rest)] "\\")])] {
             json_fail ("high surrogate must be followed by a low surrogate")
         }
-        let rest [List.rest (rest)]
+        let :rest [List.rest (rest)]
         if [Logic.not ([= ([first (rest)] "u")])] {
             json_fail ("high surrogate must be followed by a Unicode escape")
         }
-        val (low_unit after_low) [consume_hex_digits ([List.rest (rest)] 0 4)]
+        val (:low_unit :after_low) [consume_hex_digits ([List.rest (rest)] 0 4)]
         if [Logic.not ([between (low_unit 56320 57343)])] {
             json_fail ("invalid low surrogate")
         }
-        val scalar [+ (65536 [+ ([* ([- (first_unit 55296)] 1024)] [- (low_unit 56320)])])]
+        val :scalar [+ (65536 [+ ([* ([- (first_unit 55296)] 1024)] [- (low_unit 56320)])])]
         ([String.from_code_point (scalar)] after_low)
     } {
         if [between (first_unit 56320 57343)] {
@@ -182,12 +182,12 @@ function parse_unicode_escape (:characters) {
     }
 }
 
-function parse_escape (:characters) {
+function :parse_escape (characters) {
     if [List.empty? (characters)] {
         json_fail ("unterminated JSON string escape")
     }
-    val character [List.head (characters)]
-    val rest [List.rest (characters)]
+    val :character [List.head (characters)]
+    val :rest [List.rest (characters)]
     match character (
         "u" { parse_unicode_escape (rest) }
         _ { ([escaped_character (character)] rest) }
@@ -195,20 +195,20 @@ function parse_escape (:characters) {
 }
 
 // The opening quote has already been consumed.
-function parse_string_characters (:characters :result) {
+function :parse_string_characters (characters result) {
     if [List.empty? (characters)] {
         json_fail ("unterminated JSON string")
     }
 
-    val character [List.head (characters)]
-    val rest [List.rest (characters)]
+    val :character [List.head (characters)]
+    val :rest [List.rest (characters)]
     branch (
         [= (character "\"")] (result rest)
         [= (character "\\")] {
             if [List.empty? (rest)] {
                 json_fail ("unterminated JSON string escape")
             }
-            val (escaped after_escape) [parse_escape (rest)]
+            val (:escaped :after_escape) [parse_escape (rest)]
             [parse_string_characters
                 (after_escape
                 [String.concat (result escaped)])]
@@ -222,7 +222,7 @@ function parse_string_characters (:characters :result) {
     )
 }
 
-function parse_string (:characters) {
+function :parse_string (characters) {
     if [= ([first (characters)] "\"")] {
         parse_string_characters ([List.rest (characters)] "")
     } {
@@ -230,7 +230,7 @@ function parse_string (:characters) {
     }
 }
 
-function consume_literal (:characters :expected) {
+function :consume_literal (characters expected) {
     if [List.empty? (expected)] characters {
         if [List.empty? (characters)] {
             json_fail ("incomplete JSON literal")
@@ -243,14 +243,14 @@ function consume_literal (:characters :expected) {
     }
 }
 
-function parse_array_items (:characters :items) {
-    var rest [skip_whitespace (characters)]
+function :parse_array_items (characters items) {
+    var :rest [skip_whitespace (characters)]
     if [= ([first (rest)] "]")] {
         ((:array [List.reverse (items)]) [List.rest (rest)])
     }
 
-    val (value after_value) [parse_value (rest)]
-    let rest [skip_whitespace (after_value)]
+    val (:value :after_value) [parse_value (rest)]
+    let :rest [skip_whitespace (after_value)]
     branch (
         [= ([first (rest)] ",")] {
             parse_array_items ([List.rest (rest)] [List.push (items value)])
@@ -264,12 +264,12 @@ function parse_array_items (:characters :items) {
     )
 }
 
-function parse_array (:characters) {
+function :parse_array (characters) {
     parse_array_items ([List.rest (characters)] ())
 }
 
-function parse_object_members (:characters :members) {
-    var rest [skip_whitespace (characters)]
+function :parse_object_members (characters members) {
+    var :rest [skip_whitespace (characters)]
     if [= ([first (rest)] "}")] {
         ((:object [List.reverse (members)]) [List.rest (rest)])
     }
@@ -277,15 +277,15 @@ function parse_object_members (:characters :members) {
     if [Logic.not ([= ([first (rest)] "\"")])] {
         json_fail ("expected a string key in JSON object")
     }
-    val (key after_key) [parse_string (rest)]
-    let rest [skip_whitespace (after_key)]
+    val (:key :after_key) [parse_string (rest)]
+    let :rest [skip_whitespace (after_key)]
     if [Logic.not ([= ([first (rest)] ":")])] {
         json_fail ("expected `:` after JSON object key")
     }
 
-    val (value after_value) [parse_value ([List.rest (rest)])]
-    let rest [skip_whitespace (after_value)]
-    val updated [List.push (members (key value))]
+    val (:value :after_value) [parse_value ([List.rest (rest)])]
+    let :rest [skip_whitespace (after_value)]
+    val :updated [List.push (members (key value))]
     branch (
         [= ([first (rest)] ",")] {
             parse_object_members ([List.rest (rest)] updated)
@@ -299,12 +299,12 @@ function parse_object_members (:characters :members) {
     )
 }
 
-function parse_object (:characters) {
+function :parse_object (characters) {
     parse_object_members ([List.rest (characters)] ())
 }
 
-function parse_value (:characters) {
-    val rest [skip_whitespace (characters)]
+function :parse_value (characters) {
+    val :rest [skip_whitespace (characters)]
     if [List.empty? (rest)] {
         json_fail ("expected a JSON value")
     }
@@ -320,10 +320,10 @@ function parse_value (:characters) {
     )
 }
 
-function parse_json (:source) {
+function :parse_json (source) {
     attempt {
-        var (value remaining) [parse_value ([String.chars (source)])]
-        let remaining [skip_whitespace (remaining)]
+        var (:value :remaining) [parse_value ([String.chars (source)])]
+        let :remaining [skip_whitespace (remaining)]
         if [Logic.not ([List.empty? (remaining)])] {
             json_fail ("unexpected content after JSON value")
         }
@@ -331,9 +331,9 @@ function parse_json (:source) {
     }
 }
 
-val document "{\"project\":\"Pima\",\"stable\":false,\"versions\":[0,1,2.5e1],\"metadata\":{\"owner\":null,\"escaped\":\"line\\nfeed\",\"unicode\":\"\\u0041 \\uD83D\\uDE00\"}}"
+val :document "{\"project\":\"Pima\",\"stable\":false,\"versions\":[0,1,2.5e1],\"metadata\":{\"owner\":null,\"escaped\":\"line\\nfeed\",\"unicode\":\"\\u0041 \\uD83D\\uDE00\"}}"
 
-val parsed [parse_json (document)]
+val :parsed [parse_json (document)]
 if [Types.is? (parsed :error)] {
     Console.println ("JSON error:" parsed.message)
     throw parsed
@@ -342,7 +342,7 @@ if [Types.is? (parsed :error)] {
 Console.println ("Parsed JSON:" [String.from (parsed)])
 
 // Malformed input returns a typed error value rather than terminating the host.
-val malformed [parse_json ("{\"items\":[1,2,]}")]
+val :malformed [parse_json ("{\"items\":[1,2,]}")]
 if [Types.is? (malformed :json_error)] {
     Console.println ("Rejected malformed JSON:" malformed.message)
 }

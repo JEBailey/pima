@@ -80,19 +80,19 @@ mod tests {
 
     #[test]
     fn formats_nested_blocks_and_preserves_comments() {
-        let source = "function read (:value) {\n// comment\nif true {\nvalue   \n} {\n0\n}\n}\n";
+        let source = "function :read (value) {\n// comment\nif true {\nvalue   \n} {\n0\n}\n}\n";
         assert_eq!(
             format(source, 4).expect("format"),
-            "function read (:value) {\n    // comment\n    if true {\n        value\n    } {\n        0\n    }\n}\n"
+            "function :read (value) {\n    // comment\n    if true {\n        value\n    } {\n        0\n    }\n}\n"
         );
     }
 
     #[test]
     fn formats_multiline_lists_and_calls() {
-        let source = "val values (\n1\n[+ 2\n3]\n)\n";
+        let source = "val :values (\n1\n[+ 2\n3]\n)\n";
         assert_eq!(
             format(source, 2).expect("format"),
-            "val values (\n  1\n  [+ 2\n    3]\n)\n"
+            "val :values (\n  1\n  [+ 2\n    3]\n)\n"
         );
     }
 
@@ -103,10 +103,10 @@ mod tests {
 
     #[test]
     fn formats_branch_pairs() {
-        let source = "val result branch (\ntrue {\n1\n}\nfalse 2\n)\n";
+        let source = "val :result branch (\ntrue {\n1\n}\nfalse 2\n)\n";
         assert_eq!(
             format(source, 4).expect("format"),
-            "val result branch (\n    true {\n        1\n    }\n    false 2\n)\n"
+            "val :result branch (\n    true {\n        1\n    }\n    false 2\n)\n"
         );
     }
 }

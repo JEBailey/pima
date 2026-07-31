@@ -3,18 +3,18 @@ import "/pima/library/standard"
 
 // interesting example, we're going to declare a block of code
 // and associate it with a variable
-// then call a function which will execute said block
+// then call a function :which will execute said block
 
 
 Console.println ("##DO TEST")
 Console.println ("following test prints \"hello world my name is jason\" ")
 
-val hello @(:name) {
+val :hello @(:name) {
 	//note that at this point name is undefined
 	Console.println ("hello world my name is " name)
 }
 
-function saysomething (:codeblock :name) {
+function :saysomething (codeblock name) {
 	do codeblock
 }
 
@@ -23,7 +23,7 @@ saysomething (hello "jason")
 
 //Euclidean
 
-function euclid_algorithm_recursive (:u :v) {
+function :euclid_algorithm_recursive (u v) {
     if [= (v 0)] {
     	u
     } {
