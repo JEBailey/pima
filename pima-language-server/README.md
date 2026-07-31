@@ -1,5 +1,8 @@
 # Pima Language Server
 
+The language server and editor integration are dual-licensed under the MIT
+License or Apache License 2.0, at your option.
+
 An LSP server for `.pima` files, built on Pima's lexer and parser.
 
 See [docs/capabilities.md](docs/capabilities.md) for analysis behavior,

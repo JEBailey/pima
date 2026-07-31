@@ -1,5 +1,7 @@
 # Pima
 
+Pima is dual-licensed under the MIT License or Apache License 2.0, at your option.
+
 Pima is an experimental, expression-oriented language implemented with a
 register-based virtual machine in Rust. Its central ideas are:
 
