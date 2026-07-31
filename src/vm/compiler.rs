@@ -11,6 +11,7 @@ use crate::{
 
 use super::analysis::ScopeAnalysis;
 use super::ir::{Function, Instruction, NamespaceBinding, Primitive, Program, Register};
+use super::passes::PassPipeline;
 
 mod blocks;
 mod patterns;
@@ -19,8 +20,25 @@ pub fn compile(module: &Module) -> Result<Program, Vec<Diagnostic>> {
     compile_module(module, 0)
 }
 
+pub fn compile_with_pipeline(
+    module: &Module,
+    pipeline: &PassPipeline,
+) -> Result<Program, Vec<Diagnostic>> {
+    compile_module_with_pipeline(module, 0, pipeline)
+}
+
 pub fn compile_module(module: &Module, module_index: usize) -> Result<Program, Vec<Diagnostic>> {
-    Compiler::new(module, module_index).compile()
+    compile_module_with_pipeline(module, module_index, &PassPipeline::standard())
+}
+
+pub fn compile_module_with_pipeline(
+    module: &Module,
+    module_index: usize,
+    pipeline: &PassPipeline,
+) -> Result<Program, Vec<Diagnostic>> {
+    let mut program = Compiler::new(module, module_index).compile()?;
+    pipeline.run(&mut program)?;
+    Ok(program)
 }
 
 pub fn compile_module_with_globals(
@@ -28,9 +46,25 @@ pub fn compile_module_with_globals(
     module_index: usize,
     globals: impl IntoIterator<Item = (Arc<str>, Value)>,
 ) -> Result<Program, Vec<Diagnostic>> {
+    compile_module_with_globals_and_pipeline(
+        module,
+        module_index,
+        globals,
+        &PassPipeline::standard(),
+    )
+}
+
+pub fn compile_module_with_globals_and_pipeline(
+    module: &Module,
+    module_index: usize,
+    globals: impl IntoIterator<Item = (Arc<str>, Value)>,
+    pipeline: &PassPipeline,
+) -> Result<Program, Vec<Diagnostic>> {
     let mut compiler = Compiler::new(module, module_index);
     compiler.install_globals(globals);
-    compiler.compile()
+    let mut program = compiler.compile()?;
+    pipeline.run(&mut program)?;
+    Ok(program)
 }
 
 fn next_program_id() -> u64 {

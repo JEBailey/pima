@@ -159,6 +159,34 @@ pub enum Instruction {
     },
 }
 
+impl Instruction {
+    pub(crate) fn target(&self) -> Option<usize> {
+        match self {
+            Self::Jump { target }
+            | Self::JumpIfFalse { target, .. }
+            | Self::JumpIfTrue { target, .. }
+            | Self::JumpIfNotListLength { target, .. }
+            | Self::JumpIfNotEqual { target, .. }
+            | Self::JumpIfNotBlock { target, .. } => Some(*target),
+            Self::BeginAttempt { catch_target, .. } => Some(*catch_target),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_target(&mut self, new_target: usize) {
+        match self {
+            Self::Jump { target }
+            | Self::JumpIfFalse { target, .. }
+            | Self::JumpIfTrue { target, .. }
+            | Self::JumpIfNotListLength { target, .. }
+            | Self::JumpIfNotEqual { target, .. }
+            | Self::JumpIfNotBlock { target, .. } => *target = new_target,
+            Self::BeginAttempt { catch_target, .. } => *catch_target = new_target,
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Program {
     pub(crate) id: u64,
@@ -189,5 +217,19 @@ impl Program {
 
     pub fn register_count(&self) -> u16 {
         self.register_count
+    }
+
+    /// Visits the module body and every function body in execution order.
+    ///
+    /// Rewriting passes must keep instructions and source spans aligned and
+    /// must leave all control-flow targets valid when the callback returns.
+    pub fn visit_instruction_sequences_mut(
+        &mut self,
+        mut visitor: impl FnMut(&mut Vec<Instruction>, &mut Vec<Option<Span>>),
+    ) {
+        visitor(&mut self.instructions, &mut self.instruction_spans);
+        for function in &mut self.functions {
+            visitor(&mut function.instructions, &mut function.instruction_spans);
+        }
     }
 }

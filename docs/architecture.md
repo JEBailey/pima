@@ -11,8 +11,18 @@ separate so VM coverage can grow without rewriting the language model.
 The VM pipeline is:
 
 ```text
-AST -> register compiler -> register IR -> VM
+AST -> scope analysis -> register lowering -> compiler pass pipeline -> VM
 ```
+
+The compiler pass pipeline is an explicit extension point between lowering and
+execution. Passes run in insertion order and visit both the module body and all
+compiled function bodies. Custom pipelines can add analysis or transformation
+stages; an empty pipeline is also available for measurement and debugging. The
+standard pipeline currently normalizes control flow by threading jump chains
+and removing no-op moves and jumps while preserving source-span alignment.
+`compile_with_pipeline` and its module/global variants accept a caller-built
+`PassPipeline`; `PassPipeline::standard` selects production passes, while
+`PassPipeline::new` starts empty for baselines and compiler experiments.
 
 The IR supports constants, moves, immutable lists, direct primitive calls,
 private immutable and mutable bindings, conditional and unconditional jumps,
