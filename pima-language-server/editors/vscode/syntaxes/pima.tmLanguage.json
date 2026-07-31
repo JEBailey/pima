@@ -1,0 +1,81 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Pima",
+  "scopeName": "source.pima",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#function-declarations" },
+    { "include": "#binding-declarations" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#symbols" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.pima",
+          "begin": "//",
+          "end": "$"
+        },
+        {
+          "name": "comment.block.pima",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.pima",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.pima",
+          "match": "\\\\(?:[\\\"nrt]|u\\{[0-9A-Fa-f]+\\})"
+        },
+        {
+          "name": "invalid.illegal.escape.pima",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "function-declarations": {
+      "match": "\\b(function)\\s+([A-Za-z_][A-Za-z0-9_?]*)",
+      "captures": {
+        "1": { "name": "storage.type.function.pima" },
+        "2": { "name": "entity.name.function.pima" }
+      }
+    },
+    "binding-declarations": {
+      "match": "\\b(val|var|let)\\s+(:?[A-Za-z_][A-Za-z0-9_?]*)",
+      "captures": {
+        "1": { "name": "storage.type.pima" },
+        "2": { "name": "variable.other.definition.pima" }
+      }
+    },
+    "keywords": {
+      "name": "keyword.control.pima",
+      "match": "\\b(?:as|attempt|branch|break|continue|do|function|if|import|let|match|new|pub|return|throw|until|val|var|while)\\b"
+    },
+    "constants": {
+      "name": "constant.language.pima",
+      "match": "\\b(?:true|false)\\b"
+    },
+    "symbols": {
+      "name": "constant.other.symbol.pima",
+      "match": ":[A-Za-z_][A-Za-z0-9_?]*"
+    },
+    "numbers": {
+      "name": "constant.numeric.pima",
+      "match": "(?<![A-Za-z0-9_])-?(?:\\d+\\.\\d+(?:[eE][+-]?\\d+)?|\\d+(?:[eE][+-]?\\d+)?)\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.pima",
+      "match": "(?<![A-Za-z0-9_])(?:\\+|-|\\*|/|=|<|>|div|mod)(?![A-Za-z0-9_])"
+    }
+  }
+}
