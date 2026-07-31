@@ -126,7 +126,8 @@ the inline-block continuation rule.
 program          = layout*, [ statement-list ], layout* ;
 
 statement-list   = statement, { terminator+, statement } ;
-statement        = expression ;
+statement        = line-expression ;
+line-expression = expression, { separator+, expression } ;
 terminator       = logical-NL ;
 layout           = horizontal-space | NL | comment ;
 separator        = horizontal-space | suppressed-NL | comment ;
@@ -166,7 +167,8 @@ context-requirements
                    [ symbol, { separator+, symbol } ],
                    separator*, ")" ;
 bracket-expression
-                 = "[", separator*, expression-list, separator*, "]" ;
+                 = "[", separator*, expression,
+                   { separator+, expression }, separator*, "]" ;
 expression-list  = expression, { separator+, expression } ;
 
 declaration      = [ visibility, separator+ ], ( binding
@@ -213,26 +215,41 @@ import-expression
 new-expression   = "new", separator+, expression ;
 do-expression    = "do", separator+, expression ;
 
-call             = expression, separator+, expression ;
+call             = expression, separator+, expression,
+                   { separator+, expression } ;
 ```
 
-Every call has exactly two expressions: a callee and one argument expression.
-A list is conventionally used to supply several values to a list parameter
-pattern. A bracket expression provides a boundary when a call is nested:
+Every runtime call still has a callee and one argument value. At a line or
+bracket boundary, however, multiple expressions following the callee are
+implicitly packed into one list argument:
 
 ```pima
-println ([fibonacci (12)])
-+ ([fibonacci (5)] [fibonacci (6)])
+Console.println "sum:" [Math.sum 1 2 3]
+[+ [fibonacci 5] [fibonacci 6]]
 ```
 
-The argument expression is evaluated to one value. The callee then matches that
-value against its parameter pattern. A zero-value convention uses the empty
-list as both pattern and argument: `function run () body` is invoked with
-`[run ()]`.
+Thus `Math.sum 1 2 3` passes `(1 2 3)`. If exactly one expression follows the
+callee, that expression is passed directly: `int "42"` passes the string rather
+than the singleton list `("42")`. Write an explicit list when that distinction
+matters. `operation (a b)` passes one explicitly constructed list, while
+`operation a b` constructs the same two-element argument list implicitly.
 
-Parentheses construct lists; they do not group arithmetic expressions.
-Brackets immediately invoke a call expression. Braces create a block value and
-do not execute its body merely by being encountered.
+A bracketed callee with no operands receives the empty list, so `[run]` and
+`[run ()]` are equivalent zero-value invocations. Outside brackets, a function
+name alone evaluates to the function value rather than invoking it.
+
+Declarations and control structures follow the same surface principle: the
+leading reserved word determines how the rest of its line is interpreted.
+For example, `val Counter { ... }` supplies the binding name and block to
+`val`, while `function set (:value :notify) { ... }` supplies the function
+name, parameter pattern, and body. These are special forms rather than runtime
+function calls, but they share the same prefix layout.
+
+Parentheses explicitly construct lists; they do not group arithmetic
+expressions. They are normally unnecessary for the outer argument list at a
+line or bracket boundary, but remain necessary for nested lists. Brackets
+immediately invoke a call expression. Braces create a block value and do not
+execute its body merely by being encountered.
 
 `@` is a block-construction special form with two syntactic operands: a literal
 list of required context symbols and a block body:
@@ -339,12 +356,12 @@ their name.
 A list evaluates its elements from left to right and produces a new immutable
 list.
 
-A bracket expression evaluates its callee and argument from left to right,
-immediately invokes the callee, and yields the result:
+A bracket expression evaluates its callee and implicitly packed argument from
+left to right, immediately invokes the callee, and yields the result:
 
 ```pima
-[* (6 7)]               // 42
-[produce_value ()]      // empty-list argument
+[* 6 7]                 // 42
+[produce_value]         // empty-list argument
 ```
 
 A block literal evaluates to an inert code-block value. Creating or passing a

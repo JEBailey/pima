@@ -1214,8 +1214,20 @@ fn immediate_call_nested() {
 }
 
 #[test]
+fn calls_pack_multiple_trailing_expressions_into_a_list() {
+    assert_eq!(run_ok("[+ 6 7]"), pima::Value::Integer(13));
+    assert_eq!(run_ok("+ 6 7"), pima::Value::Integer(13));
+}
+
+#[test]
 fn zero_arg_invocation() {
     let value = run_ok("function f () { 99 }\n[f ()]");
+    assert_eq!(value, pima::Value::Integer(99));
+}
+
+#[test]
+fn bracketed_callee_without_operands_receives_an_empty_list() {
+    let value = run_ok("function f () { 99 }\n[f]");
     assert_eq!(value, pima::Value::Integer(99));
 }
 

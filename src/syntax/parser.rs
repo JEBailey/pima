@@ -247,16 +247,8 @@ impl Parser<'_> {
             return Ok(expressions[0]);
         }
 
-        if expressions.len() != 2 {
-            self.diagnostics.push(Diagnostic::at_error(
-                "a call requires exactly one argument expression",
-                self.join(start, end),
-            ));
-            return Err(());
-        }
-
-        let callee = expressions[0];
-        let argument = expressions[1];
+        let callee = expressions.remove(0);
+        let argument = self.pack_call_arguments(expressions, self.join(start, end));
         Ok(self.alloc(
             self.join(start, end),
             NodeKind::Call {
@@ -773,7 +765,18 @@ impl Parser<'_> {
 
     fn parse_unary_special(&mut self, form: UnaryForm) -> ParseResult<NodeId> {
         let start = self.advance().span;
-        let operand = self.require_expression("expected operand")?;
+        if self.at_statement_end() {
+            self.report_here("expected operand");
+            return Err(());
+        }
+        let mut operands = Vec::new();
+        while !self.at_statement_end() {
+            operands.push(self.parse_expression()?);
+        }
+        let end = self
+            .node(*operands.last().expect("an operand was parsed"))
+            .span;
+        let operand = self.pack_explicit_arguments(operands, self.join(start, end));
         let kind = match form {
             UnaryForm::New => NodeKind::New(operand),
             UnaryForm::Do => NodeKind::Do(operand),
@@ -810,21 +813,14 @@ impl Parser<'_> {
     }
 
     fn make_call(&mut self, expressions: Vec<NodeId>, immediate: bool) -> ParseResult<NodeId> {
-        if expressions.len() != 2 {
-            let span = self.join(
-                self.node(expressions[0]).span,
-                self.node(*expressions.last().expect("call has a callee"))
-                    .span,
-            );
-            self.diagnostics.push(Diagnostic::at_error(
-                "a call requires exactly one argument expression",
-                span,
-            ));
-            return Err(());
-        }
-
-        let callee = expressions[0];
-        let argument = expressions[1];
+        let mut expressions = expressions;
+        let callee = expressions.remove(0);
+        let last = expressions
+            .last()
+            .copied()
+            .expect("a statement call has at least one argument");
+        let span = self.join(self.node(callee).span, self.node(last).span);
+        let argument = self.pack_explicit_arguments(expressions, span);
         let end = self.node(argument).span;
         Ok(self.alloc(
             self.join(self.node(callee).span, end),
@@ -834,6 +830,27 @@ impl Parser<'_> {
                 immediate,
             },
         ))
+    }
+
+    /// Packs the expressions following a callee into Pima's single argument.
+    /// One explicit expression is passed through unchanged; multiple expressions
+    /// form an implicit list.
+    fn pack_explicit_arguments(&mut self, expressions: Vec<NodeId>, span: Span) -> NodeId {
+        if expressions.len() == 1 {
+            expressions[0]
+        } else {
+            self.alloc(span, NodeKind::List(expressions))
+        }
+    }
+
+    /// Brackets explicitly request invocation, so a callee with no following
+    /// expressions receives the conventional empty-list argument.
+    fn pack_call_arguments(&mut self, expressions: Vec<NodeId>, span: Span) -> NodeId {
+        if expressions.is_empty() {
+            self.alloc(span, NodeKind::List(Vec::new()))
+        } else {
+            self.pack_explicit_arguments(expressions, span)
+        }
     }
 
     fn is_special_form(&self, id: NodeId) -> bool {

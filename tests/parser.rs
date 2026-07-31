@@ -154,18 +154,50 @@ fn parses_immediate_empty_list_argument_member_call() {
 }
 
 #[test]
-fn rejects_calls_without_exactly_one_argument_expression() {
-    for source in ["[add]\n", "[add 1 2]\n", "add 1 2\n"] {
-        let mut sources = SourceMap::default();
-        let source_id = sources.add("<test>", source);
-        let tokens = lex(source_id, source).expect("source should lex");
-        let diagnostics = parse(&tokens).expect_err("source should not parse");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.message.contains("exactly one argument"))
-        );
+fn packs_implicit_call_arguments_into_lists() {
+    for source in ["[add 1 2]\n", "add 1 2\n"] {
+        let module = parse_source(source);
+        let NodeKind::Call { argument, .. } = module.node(module.statements[0]).kind else {
+            panic!("expected call");
+        };
+        assert!(matches!(
+            &module.node(argument).kind,
+            NodeKind::List(elements) if elements.len() == 2
+        ));
     }
+
+    let module = parse_source("[add]\n");
+    let NodeKind::Call { argument, .. } = module.node(module.statements[0]).kind else {
+        panic!("expected immediate call");
+    };
+    assert!(matches!(
+        &module.node(argument).kind,
+        NodeKind::List(elements) if elements.is_empty()
+    ));
+}
+
+#[test]
+fn preserves_one_explicit_list_as_the_call_argument() {
+    let module = parse_source("add (1 2)\n");
+    let NodeKind::Call { argument, .. } = module.node(module.statements[0]).kind else {
+        panic!("expected call");
+    };
+    assert!(matches!(
+        &module.node(argument).kind,
+        NodeKind::List(elements) if elements.len() == 2
+    ));
+}
+
+#[test]
+fn packs_multiple_new_operands_into_one_list() {
+    let module = parse_source("[new Specialized Base]\n");
+    let NodeKind::New(operand) = module.node(module.statements[0]).kind else {
+        panic!("expected new expression");
+    };
+    assert!(matches!(
+        &module.node(operand).kind,
+        NodeKind::List(elements) if elements.len() == 2
+    ));
 }
 
 #[test]

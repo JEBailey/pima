@@ -59,10 +59,10 @@ val selected [List.filter (greater_than_ten generated)]
 val total [List.fold (add 0 selected)]
 val printable [List.map (String.from selected)]
 
-Console.println ("Generated:" [String.join (printable ", ")])
-Console.println ("Selected total:" total)
-Console.println ("Two to the tenth:" [Math.pow (2 10)])
-Console.println ("PI:" Math.PI)
+Console.println "Generated:" [String.join printable ", "]
+Console.println "Selected total:" total
+Console.println "Two to the tenth:" [Math.pow 2 10]
+Console.println "PI:" Math.PI
 
 val account [create_account ("Ada" total)]
 account.deposit (25)
@@ -70,7 +70,7 @@ account.deposit (10)
 
 // Blocks do not capture scope; do supplies prefix and account at the call site.
 val announce @(:prefix :account) {
-    Console.println (prefix [account.summary ()])
+    Console.println prefix [account.summary]
 }
 
 function announce_account (:prefix :account) {
@@ -78,17 +78,17 @@ function announce_account (:prefix :account) {
 }
 
 announce_account ("Account" account)
-Console.println ("Transactions:" [account.transactions ()])
+Console.println "Transactions:" [account.transactions]
 
 val rejected [attempt {
     create_account ("Grace" -1)
 }]
 
 if [Types.is? (rejected :error)] {
-    Console.println ("Expected error:" rejected.message)
+    Console.println "Expected error:" rejected.message
 } {
-    Console.println ("Unexpected account:" [rejected.summary ()])
+    Console.println "Unexpected account:" [rejected.summary]
 }
 
 // The final expression is useful when this file is run through the embedding API.
-[account.current_balance ()]
+[account.current_balance]

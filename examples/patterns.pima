@@ -3,12 +3,12 @@ import "/pima/library/standard"
 function describe (:result) {
     match result (
         (ok (:name :score)) {
-            Console.println (name "scored" score)
+            Console.println name "scored" score
             score
         }
 
         (error :message) {
-            Console.println ("Error:" message)
+            Console.println "Error:" message
             0
         }
     )
