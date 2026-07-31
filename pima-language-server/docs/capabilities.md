@@ -80,3 +80,12 @@ another executable.
 The client uses full-document synchronization because Pima's physical line
 endings participate in parsing. The server still caches and coalesces analysis,
 so multiple feature requests do not repeatedly parse the same version.
+
+## Release artifacts
+
+Tagged builds produce platform-specific VSIX packages and standalone optimized
+language-server binaries for Windows x64, Linux x64, Intel macOS, and Apple
+Silicon. Every packaged binary completes an LSP initialize/shutdown smoke test,
+and each VSIX is inspected for its client, grammar, icon, and matching server.
+Release artifacts include SHA-256 checksums. Tags containing `-` are published
+as GitHub prereleases.

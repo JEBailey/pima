@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pima-language-server/editors/vscode/package-lock.json
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: npm ci
+        working-directory: pima-language-server/editors/vscode
+      - run: npm run compile
+        working-directory: pima-language-server/editors/vscode
+      - run: npm run verify:release-version
+        working-directory: pima-language-server/editors/vscode
+
+  packaged-extension:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win32-x64
+            binary: target/release/pima-language-server.exe
+            artifact: pima-language-server-win32-x64.exe
+          - os: ubuntu-latest
+            platform: linux-x64
+            binary: target/release/pima-language-server
+            artifact: pima-language-server-linux-x64
+          - os: macos-15-intel
+            platform: darwin-x64
+            binary: target/release/pima-language-server
+            artifact: pima-language-server-darwin-x64
+          - os: macos-14
+            platform: darwin-arm64
+            binary: target/release/pima-language-server
+            artifact: pima-language-server-darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pima-language-server/editors/vscode/package-lock.json
+      - run: cargo build --release -p pima-language-server
+      - run: npm ci
+        working-directory: pima-language-server/editors/vscode
+      - run: npm run compile
+        working-directory: pima-language-server/editors/vscode
+      - run: node scripts/stage-server.mjs "${{ matrix.platform }}" "../../../${{ matrix.binary }}"
+        shell: bash
+        working-directory: pima-language-server/editors/vscode
+      - run: node scripts/smoke-server.mjs "server/${{ matrix.platform }}/${{ startsWith(matrix.platform, 'win32-') && 'pima-language-server.exe' || 'pima-language-server' }}"
+        shell: bash
+        working-directory: pima-language-server/editors/vscode
+      - run: xvfb-run -a npm run test:extension
+        if: runner.os == 'Linux'
+        working-directory: pima-language-server/editors/vscode
+      - run: npm run test:extension
+        if: runner.os != 'Linux'
+        working-directory: pima-language-server/editors/vscode
+      - run: npm run package:vsix -- --target "${{ matrix.platform }}" --out "dist/pima-${{ matrix.platform }}.vsix" --allow-missing-repository
+        shell: bash
+        working-directory: pima-language-server/editors/vscode
+      - run: node scripts/verify-vsix.mjs "dist/pima-${{ matrix.platform }}.vsix" "${{ matrix.platform }}"
+        shell: bash
+        working-directory: pima-language-server/editors/vscode
+      - run: cp "${{ matrix.binary }}" "pima-language-server/editors/vscode/dist/${{ matrix.artifact }}"
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pima-${{ matrix.platform }}
+          path: pima-language-server/editors/vscode/dist/*
+          if-no-files-found: error

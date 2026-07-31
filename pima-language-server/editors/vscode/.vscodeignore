@@ -2,3 +2,8 @@ src/
 .vscode/
 tsconfig.json
 **/*.map
+server/README.md
+scripts/
+package-lock.json
+node_modules/
+test/

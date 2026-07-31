@@ -43,14 +43,20 @@
         "pima.languageServer.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the Pima language-server executable. When empty, the extension uses the workspace build."
+          "description": "Optional path to a compatible Pima language-server executable. When empty, the extension uses its bundled server."
         }
       }
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc --watch -p ./"
+    "compile": "tsc --noEmit -p ./ && node scripts/build-client.mjs",
+    "watch": "node scripts/build-client.mjs --watch",
+    "stage:server": "node scripts/stage-server.mjs",
+    "package:vsix": "node scripts/prepare-package.mjs && vsce package",
+    "verify:vsix": "node scripts/verify-vsix.mjs",
+    "smoke:server": "node scripts/smoke-server.mjs",
+    "test:extension": "node scripts/run-extension-test.mjs",
+    "verify:release-version": "node scripts/verify-release-version.mjs"
   },
   "dependencies": {
     "vscode-languageclient": "^10.0.0"
@@ -58,6 +64,10 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "adm-zip": "^0.6.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.7.0"
   }
 }
