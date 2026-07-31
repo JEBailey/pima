@@ -1,5 +1,5 @@
 use camino::{Utf8Path, Utf8PathBuf};
-use pima::engine::{ModuleIdentity, ModuleLoader, ModuleState};
+use pima::engine::{ModuleIdentity, ModuleLoader};
 
 fn workspace_root() -> Utf8PathBuf {
     Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -53,18 +53,4 @@ fn resolves_relative_to_the_importing_file() {
         .expect("relative import should use importing file directory");
 
     assert!(identity.path().ends_with("Cargo.toml"));
-}
-
-#[test]
-fn module_records_are_stable_per_canonical_identity() {
-    let mut loader = ModuleLoader::new(workspace_root());
-    let identity = loader
-        .resolve("/pima/io", None)
-        .expect("virtual path should resolve");
-
-    loader.record_mut(identity.clone()).state = ModuleState::Loading;
-    assert_eq!(
-        loader.record(&identity).map(|record| record.state),
-        Some(ModuleState::Loading)
-    );
 }

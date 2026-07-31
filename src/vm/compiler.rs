@@ -3,7 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     diagnostic::Diagnostic,
     runtime::Value,
-    syntax::ast::{BindingKind, BlockId, LoopKind, Module, NodeId, NodeKind, Pattern, Visibility},
+    syntax::ast::{
+        BindingKind, BlockId, LoopKind, Module, NamespaceImportSelection, NodeId, NodeKind,
+        Pattern, Visibility,
+    },
 };
 
 use super::analysis::ScopeAnalysis;
@@ -51,6 +54,7 @@ fn empty_function() -> Function {
         instruction_spans: Vec::new(),
         register_count: 0,
         capture_count: 0,
+        parameter_count: None,
         binding_registers: Vec::new(),
     }
 }
@@ -63,13 +67,16 @@ struct Compiler<'a> {
     locals: HashMap<Arc<str>, Local>,
     functions: HashMap<Arc<str>, u16>,
     compiled_functions: Vec<Function>,
+    block_functions: HashMap<BlockId, (u16, Vec<Arc<str>>)>,
     loops: Vec<LoopContext>,
     attempt_depth: usize,
     in_function: bool,
+    capture_count: u16,
     next_register: u16,
     diagnostics: Vec<Diagnostic>,
     binding_registers: Vec<Register>,
     initial_bindings: Vec<(Register, Value)>,
+    imported_bindings: std::collections::HashSet<Arc<str>>,
     module_index: usize,
 }
 
@@ -97,13 +104,16 @@ impl<'a> Compiler<'a> {
             locals: HashMap::new(),
             functions: HashMap::new(),
             compiled_functions: Vec::new(),
+            block_functions: HashMap::new(),
             loops: Vec::new(),
             attempt_depth: 0,
             in_function: false,
+            capture_count: 0,
             next_register: 0,
             diagnostics: Vec::new(),
             binding_registers: Vec::new(),
             initial_bindings: Vec::new(),
+            imported_bindings: std::collections::HashSet::new(),
             module_index,
         }
     }
@@ -134,6 +144,28 @@ impl<'a> Compiler<'a> {
         }
         let module_analysis = ScopeAnalysis::module(self.module);
         self.apply_scope_analysis(&module_analysis);
+        for statement in &self.module.statements {
+            if let NodeKind::NamespaceImport {
+                selection: NamespaceImportSelection::Member(member),
+                alias,
+                ..
+            } = &self.module.node(*statement).kind
+            {
+                let local = alias.as_ref().unwrap_or(member);
+                if !self.locals.contains_key(&local.text) {
+                    let register = self.allocate_register();
+                    self.binding_registers.push(register);
+                    self.locals.insert(
+                        local.text.clone(),
+                        Local {
+                            register,
+                            block: None,
+                            binding: true,
+                        },
+                    );
+                }
+            }
+        }
         let mut module_captures = self
             .locals
             .iter()
@@ -250,13 +282,14 @@ impl<'a> Compiler<'a> {
                 });
                 Some(destination)
             }
+            NodeKind::Placeholder => Some(self.load_constant(Value::Placeholder)),
             NodeKind::Identifier(name) => {
                 let Some(local) = self.locals.get(name).copied() else {
-                    self.diagnostics.push(Diagnostic::at_error(
-                        format!("VM compiler cannot resolve local `{name}`"),
-                        node.span,
-                    ));
-                    return None;
+                    self.instructions.push(Instruction::RaiseTyped {
+                        types: vec![Arc::from("error"), Arc::from("name_error")],
+                        message: Arc::from(format!("unbound identifier `{name}`")),
+                    });
+                    return Some(self.load_constant(Value::Unit));
                 };
                 let destination = self.allocate_register();
                 self.instructions.push(if local.binding {
@@ -331,10 +364,13 @@ impl<'a> Compiler<'a> {
                 callee, argument, ..
             } => self.compile_call(*callee, *argument, node.span),
             NodeKind::Block(block) => {
+                let (function, context) = self.compile_block_function(*block);
                 let destination = self.allocate_register();
                 self.instructions.push(Instruction::MakeBlock {
                     destination,
                     block: block.0,
+                    function,
+                    context,
                 });
                 Some(destination)
             }
@@ -359,7 +395,9 @@ impl<'a> Compiler<'a> {
             NodeKind::New(operand) => self.compile_new(*operand, node.span),
             NodeKind::Do(operand) => self.compile_do(*operand, node.span),
             NodeKind::Match { value, arms } => self.compile_match(*value, arms),
-            NodeKind::Function { name, .. } if !self.in_function => {
+            NodeKind::Function { name, .. }
+                if !self.in_function && self.module.statements.contains(&id) =>
+            {
                 self.compile_top_level_function(name)
             }
             NodeKind::Function {
@@ -378,15 +416,64 @@ impl<'a> Compiler<'a> {
                     .push(Instruction::Return { source: value });
                 Some(value)
             }
-            NodeKind::Import { .. } | NodeKind::NamespaceImport { .. } => {
+            NodeKind::NamespaceImport {
+                path,
+                selection: NamespaceImportSelection::Member(member),
+                alias,
+            } if self.module.statements.contains(&id)
+                && self.locals.contains_key(&path[0].text) =>
+            {
+                let root = self.locals[&path[0].text];
+                let mut value = self.allocate_register();
+                self.instructions.push(Instruction::LoadBinding {
+                    destination: value,
+                    binding: root.register,
+                    name: path[0].text.clone(),
+                });
+                for name in &path[1..] {
+                    let destination = self.allocate_register();
+                    self.instructions.push(Instruction::LoadMember {
+                        destination,
+                        namespace: value,
+                        name: name.text.clone(),
+                    });
+                    value = destination;
+                }
+                let imported = self.allocate_register();
+                self.instructions.push(Instruction::LoadMember {
+                    destination: imported,
+                    namespace: value,
+                    name: member.text.clone(),
+                });
+                let local_name = alias.as_ref().unwrap_or(member).text.clone();
+                let binding = self.locals[&local_name].register;
+                self.instructions.push(Instruction::Bind {
+                    binding,
+                    source: imported,
+                    mutable: false,
+                    name: local_name.clone(),
+                });
+                self.imported_bindings.insert(local_name);
                 Some(self.load_constant(Value::Unit))
             }
-            _ => {
-                self.diagnostics.push(Diagnostic::at_error(
-                    "construct is not supported by the register VM yet",
-                    node.span,
-                ));
-                None
+            NodeKind::Import { .. } | NodeKind::NamespaceImport { .. }
+                if self.module.statements.contains(&id) =>
+            {
+                Some(self.load_constant(Value::Unit))
+            }
+            NodeKind::Import { .. } | NodeKind::NamespaceImport { .. } => {
+                self.instructions.push(Instruction::RaiseTyped {
+                    types: vec![Arc::from("error"), Arc::from("import_error")],
+                    message: Arc::from("imports are allowed only at module scope"),
+                });
+                Some(self.load_constant(Value::Unit))
+            }
+            NodeKind::Return(_) => {
+                self.instructions.push(Instruction::RaiseTyped {
+                    types: vec![Arc::from("error"), Arc::from("control_flow_error")],
+                    message: Arc::from("return outside of a function"),
+                });
+                Some(self.load_constant(Value::Unit))
             }
         }
     }
@@ -406,11 +493,13 @@ impl<'a> Compiler<'a> {
         let outer_attempt_depth = self.attempt_depth;
         let outer_next_register = self.next_register;
         let outer_in_function = self.in_function;
+        let outer_capture_count = self.capture_count;
         let outer_binding_registers = std::mem::take(&mut self.binding_registers);
 
         self.next_register = 1 + captures.len() as u16;
         self.attempt_depth = 0;
         self.in_function = true;
+        self.capture_count = captures.len() as u16;
         for (index, (name, local)) in captures.iter().enumerate() {
             self.locals.insert(
                 name.clone(),
@@ -428,6 +517,22 @@ impl<'a> Compiler<'a> {
             .filter_map(|(name, local)| local.block.map(|block| (name.clone(), block)))
             .collect();
         let function_analysis = ScopeAnalysis::function(self.module, body, inherited_blocks);
+        for name in function_analysis.declarations() {
+            if self.locals.get(&name.text).is_some_and(|local| {
+                local.binding && local.register.0 > 0 && local.register.0 <= self.capture_count
+            }) {
+                let register = self.allocate_register();
+                self.binding_registers.push(register);
+                self.locals.insert(
+                    name.text.clone(),
+                    Local {
+                        register,
+                        block: function_analysis.static_block(&name.text),
+                        binding: true,
+                    },
+                );
+            }
+        }
         self.apply_scope_analysis(&function_analysis);
         let result = self
             .compile_executable_node(body)
@@ -442,6 +547,10 @@ impl<'a> Compiler<'a> {
             instruction_spans,
             register_count: self.next_register,
             capture_count: captures.len() as u16,
+            parameter_count: match parameter {
+                Pattern::List(patterns) => Some(patterns.len() as u16),
+                _ => None,
+            },
             binding_registers: std::mem::take(&mut self.binding_registers),
         };
 
@@ -452,7 +561,73 @@ impl<'a> Compiler<'a> {
         self.attempt_depth = outer_attempt_depth;
         self.next_register = outer_next_register;
         self.in_function = outer_in_function;
+        self.capture_count = outer_capture_count;
         self.binding_registers = outer_binding_registers;
+    }
+
+    fn compile_block_function(&mut self, block: BlockId) -> (u16, Vec<Arc<str>>) {
+        if let Some(compiled) = self.block_functions.get(&block) {
+            return compiled.clone();
+        }
+        let mut names = std::collections::HashSet::new();
+        let mut visited = std::collections::HashSet::new();
+        collect_block_context(self.module, block, &mut names, &mut visited);
+        let mut names = names.into_iter().collect::<Vec<_>>();
+        names.sort();
+        let function = self.compiled_functions.len() as u16;
+        self.compiled_functions.push(empty_function());
+        self.block_functions
+            .insert(block, (function, names.clone()));
+
+        let outer_instructions = std::mem::take(&mut self.instructions);
+        let outer_instruction_spans = std::mem::take(&mut self.instruction_spans);
+        let outer_locals = std::mem::take(&mut self.locals);
+        let outer_loops = std::mem::take(&mut self.loops);
+        let outer_attempt_depth = self.attempt_depth;
+        let outer_next_register = self.next_register;
+        let outer_in_function = self.in_function;
+        let outer_capture_count = self.capture_count;
+        let outer_binding_registers = std::mem::take(&mut self.binding_registers);
+
+        self.next_register = 1 + names.len() as u16;
+        self.attempt_depth = 0;
+        self.in_function = true;
+        self.capture_count = names.len() as u16;
+        for (index, name) in names.iter().enumerate() {
+            self.locals.insert(
+                name.clone(),
+                Local {
+                    register: Register(1 + index as u16),
+                    block: None,
+                    binding: true,
+                },
+            );
+        }
+        let result = self.compile_block(block);
+        self.instructions
+            .push(Instruction::Return { source: result });
+        let instructions = std::mem::take(&mut self.instructions);
+        let instruction_spans = dense_spans(instructions.len(), &self.instruction_spans);
+        self.compiled_functions[function as usize] = Function {
+            name: Arc::from("<block>"),
+            instructions,
+            instruction_spans,
+            register_count: self.next_register,
+            capture_count: names.len() as u16,
+            parameter_count: None,
+            binding_registers: std::mem::take(&mut self.binding_registers),
+        };
+
+        self.instructions = outer_instructions;
+        self.instruction_spans = outer_instruction_spans;
+        self.locals = outer_locals;
+        self.loops = outer_loops;
+        self.attempt_depth = outer_attempt_depth;
+        self.next_register = outer_next_register;
+        self.in_function = outer_in_function;
+        self.capture_count = outer_capture_count;
+        self.binding_registers = outer_binding_registers;
+        (function, names)
     }
 
     fn compile_nested_function(
@@ -487,7 +662,7 @@ impl<'a> Compiler<'a> {
             mutable: false,
             name: name.text.clone(),
         });
-        Some(self.load_constant(Value::Unit))
+        Some(destination)
     }
 
     fn apply_scope_analysis(&mut self, analysis: &ScopeAnalysis) {
@@ -533,7 +708,7 @@ impl<'a> Compiler<'a> {
             mutable: false,
             name: name.text.clone(),
         });
-        Some(self.load_constant(Value::Unit))
+        Some(closure)
     }
 
     fn compile_call(
@@ -574,7 +749,10 @@ impl<'a> Compiler<'a> {
 
     fn compile_executable_node(&mut self, node: NodeId) -> Option<Register> {
         match self.module.node(node).kind {
-            NodeKind::Block(block) => Some(self.compile_block(block)),
+            NodeKind::Block(block) => {
+                self.check_block_requirements(block);
+                Some(self.compile_block(block))
+            }
             _ => self.compile_node(node),
         }
     }
@@ -704,16 +882,18 @@ impl<'a> Compiler<'a> {
     fn compile_break(
         &mut self,
         value: Option<NodeId>,
-        span: crate::source::Span,
+        _span: crate::source::Span,
     ) -> Option<Register> {
         let Some((result, loop_attempt_depth)) = self
             .loops
             .last()
             .map(|context| (context.result, context.attempt_depth))
         else {
-            self.diagnostics
-                .push(Diagnostic::at_error("`break` outside loop", span));
-            return None;
+            self.instructions.push(Instruction::RaiseTyped {
+                types: vec![Arc::from("error"), Arc::from("control_flow_error")],
+                message: Arc::from("break outside of a loop"),
+            });
+            return Some(self.load_constant(Value::Unit));
         };
         let value = match value {
             Some(value) => self.compile_node(value)?,
@@ -735,11 +915,13 @@ impl<'a> Compiler<'a> {
         Some(result)
     }
 
-    fn compile_continue(&mut self, span: crate::source::Span) -> Option<Register> {
+    fn compile_continue(&mut self, _span: crate::source::Span) -> Option<Register> {
         let Some(context) = self.loops.last() else {
-            self.diagnostics
-                .push(Diagnostic::at_error("`continue` outside loop", span));
-            return None;
+            self.instructions.push(Instruction::RaiseTyped {
+                types: vec![Arc::from("error"), Arc::from("control_flow_error")],
+                message: Arc::from("continue outside of a loop"),
+            });
+            return Some(self.load_constant(Value::Unit));
         };
         let result = context.result;
         let target = context.continue_target;
@@ -772,6 +954,10 @@ impl<'a> Compiler<'a> {
                 ..
             }
             | Instruction::JumpIfNotEqual {
+                target: jump_target,
+                ..
+            }
+            | Instruction::JumpIfNotBlock {
                 target: jump_target,
                 ..
             } => *jump_target = target,
@@ -873,5 +1059,127 @@ fn collect_pattern_exports(
             }
         }
         Pattern::Wildcard | Pattern::Literal(_) => {}
+    }
+}
+
+fn collect_block_context(
+    module: &Module,
+    block: BlockId,
+    names: &mut std::collections::HashSet<Arc<str>>,
+    visited: &mut std::collections::HashSet<BlockId>,
+) {
+    if !visited.insert(block) {
+        return;
+    }
+    for requirement in &module.block(block).requirements {
+        names.insert(requirement.text.clone());
+    }
+    for statement in &module.block(block).statements {
+        collect_node_context(module, *statement, names, visited);
+    }
+}
+
+fn collect_node_context(
+    module: &Module,
+    node: NodeId,
+    names: &mut std::collections::HashSet<Arc<str>>,
+    visited: &mut std::collections::HashSet<BlockId>,
+) {
+    match &module.node(node).kind {
+        NodeKind::Identifier(name) => {
+            names.insert(name.clone());
+        }
+        NodeKind::List(nodes) => {
+            for node in nodes {
+                collect_node_context(module, *node, names, visited);
+            }
+        }
+        NodeKind::Block(block) | NodeKind::Attempt(block) => {
+            collect_block_context(module, *block, names, visited)
+        }
+        NodeKind::Member { object, .. } | NodeKind::New(object) | NodeKind::Do(object) => {
+            collect_node_context(module, *object, names, visited)
+        }
+        NodeKind::Call {
+            callee, argument, ..
+        } => {
+            collect_node_context(module, *callee, names, visited);
+            collect_node_context(module, *argument, names, visited);
+        }
+        NodeKind::Binding { pattern, value, .. } => {
+            collect_pattern_names(pattern, names);
+            collect_node_context(module, *value, names, visited);
+        }
+        NodeKind::Assignment { pattern, value } => {
+            collect_pattern_names(pattern, names);
+            collect_node_context(module, *value, names, visited);
+        }
+        NodeKind::Function {
+            name,
+            parameter,
+            body,
+            ..
+        } => {
+            names.insert(name.text.clone());
+            collect_pattern_names(parameter, names);
+            collect_node_context(module, *body, names, visited);
+        }
+        NodeKind::Conditional {
+            condition,
+            consequent,
+            alternative,
+        } => {
+            collect_node_context(module, *condition, names, visited);
+            collect_node_context(module, *consequent, names, visited);
+            if let Some(alternative) = alternative {
+                collect_node_context(module, *alternative, names, visited);
+            }
+        }
+        NodeKind::Loop {
+            condition, body, ..
+        } => {
+            collect_node_context(module, *condition, names, visited);
+            collect_block_context(module, *body, names, visited);
+        }
+        NodeKind::Return(value) | NodeKind::Break(value) => {
+            if let Some(value) = value {
+                collect_node_context(module, *value, names, visited);
+            }
+        }
+        NodeKind::Throw(value) => collect_node_context(module, *value, names, visited),
+        NodeKind::Match { value, arms } => {
+            collect_node_context(module, *value, names, visited);
+            for arm in arms {
+                collect_pattern_names(&arm.pattern, names);
+                collect_block_context(module, arm.body, names, visited);
+            }
+        }
+        NodeKind::Unit
+        | NodeKind::Boolean(_)
+        | NodeKind::Integer(_)
+        | NodeKind::Float(_)
+        | NodeKind::String(_)
+        | NodeKind::Symbol(_)
+        | NodeKind::Placeholder
+        | NodeKind::Continue
+        | NodeKind::Import { .. }
+        | NodeKind::NamespaceImport { .. } => {}
+    }
+}
+
+fn collect_pattern_names(pattern: &Pattern, names: &mut std::collections::HashSet<Arc<str>>) {
+    match pattern {
+        Pattern::Capture(name) => {
+            names.insert(name.text.clone());
+        }
+        Pattern::Literal(node) => {
+            let _ = node;
+        }
+        Pattern::List(patterns) => {
+            for pattern in patterns {
+                collect_pattern_names(pattern, names);
+            }
+        }
+        Pattern::Wildcard => {}
     }
 }

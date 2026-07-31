@@ -12,6 +12,14 @@ pub struct VmClosure {
 pub type VmClosureRef = Gc<VmClosure>;
 
 #[derive(Clone, Debug)]
+pub struct VmPartial {
+    pub(crate) closure: VmClosureRef,
+    pub(crate) arguments: Vec<Option<Value>>,
+}
+
+pub type VmPartialRef = Gc<VmPartial>;
+
+#[derive(Clone, Debug)]
 pub(crate) enum VmValue {
     Uninitialized,
     Value(Value),
@@ -19,7 +27,8 @@ pub(crate) enum VmValue {
 }
 
 #[derive(Debug)]
-pub(crate) struct VmCell {
+#[doc(hidden)]
+pub struct VmCell {
     pub(crate) value: std::cell::RefCell<VmValue>,
     pub(crate) mutable: std::cell::Cell<Option<bool>>,
     pub(crate) fallback: Option<VmValue>,
@@ -32,6 +41,18 @@ impl VmCell {
             value: std::cell::RefCell::new(VmValue::Uninitialized),
             mutable: std::cell::Cell::new(None),
             fallback,
+        }
+    }
+
+    pub(crate) fn current_value(&self) -> Option<Value> {
+        match &*self.value.borrow() {
+            VmValue::Value(value) => Some(value.resolved()),
+            VmValue::Cell(cell) => cell.current_value(),
+            VmValue::Uninitialized => match &self.fallback {
+                Some(VmValue::Value(value)) => Some(value.resolved()),
+                Some(VmValue::Cell(cell)) => cell.current_value(),
+                _ => None,
+            },
         }
     }
 }
@@ -53,6 +74,13 @@ pub fn live_vm_cell_count() -> usize {
 unsafe impl<V: Visitor> TraceWith<V> for VmClosure {
     fn accept(&self, visitor: &mut V) -> Result<(), ()> {
         self.captures.accept(visitor)
+    }
+}
+
+unsafe impl<V: Visitor> TraceWith<V> for VmPartial {
+    fn accept(&self, visitor: &mut V) -> Result<(), ()> {
+        self.closure.accept(visitor)?;
+        self.arguments.accept(visitor)
     }
 }
 

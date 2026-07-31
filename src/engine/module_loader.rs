@@ -1,18 +1,6 @@
 use std::fmt;
 
 use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
-use indexmap::IndexMap;
-
-use crate::runtime::{EnvironmentRef, Value};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// Lifecycle state for a canonical module identity.
-pub enum ModuleState {
-    Unloaded,
-    Loading,
-    Loaded,
-    Failed,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// Canonical cache key for either a built-in or filesystem module.
@@ -29,47 +17,16 @@ impl ModuleIdentity {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ModuleRecord {
-    pub identity: ModuleIdentity,
-    pub state: ModuleState,
-    pub environment: Option<EnvironmentRef>,
-    pub module_index: Option<usize>,
-    pub cached_error: Option<Value>,
-}
-
-impl ModuleRecord {
-    fn unloaded(identity: ModuleIdentity) -> Self {
-        Self {
-            identity,
-            state: ModuleState::Unloaded,
-            environment: None,
-            module_index: None,
-            cached_error: None,
-        }
-    }
-}
-
 #[derive(Debug)]
-/// Resolves import paths and owns the per-interpreter module lifecycle cache.
-///
-/// Evaluation is intentionally handled by the interpreter. Keeping resolution
-/// and lifecycle state here makes cycle detection and repeated-import behavior
-/// independent of the parser and evaluator.
+/// Resolves import paths relative to a configured working directory.
 pub struct ModuleLoader {
     working_directory: Utf8PathBuf,
-    records: IndexMap<ModuleIdentity, ModuleRecord>,
-    loading_stack: Vec<ModuleIdentity>,
 }
 
 impl ModuleLoader {
     /// Creates an empty loader using `working_directory` for pathless importers.
     pub fn new(working_directory: Utf8PathBuf) -> Self {
-        Self {
-            working_directory,
-            records: IndexMap::new(),
-            loading_stack: Vec::new(),
-        }
+        Self { working_directory }
     }
 
     /// Resolves an import to a canonical identity.
@@ -106,44 +63,8 @@ impl ModuleLoader {
         Ok(ModuleIdentity::File(canonical))
     }
 
-    pub fn record_mut(&mut self, identity: ModuleIdentity) -> &mut ModuleRecord {
-        self.records
-            .entry(identity.clone())
-            .or_insert_with(|| ModuleRecord::unloaded(identity))
-    }
-
-    pub fn record(&self, identity: &ModuleIdentity) -> Option<&ModuleRecord> {
-        self.records.get(identity)
-    }
-
     pub fn working_directory(&self) -> &Utf8Path {
         &self.working_directory
-    }
-
-    pub fn begin_loading(&mut self, identity: ModuleIdentity) {
-        self.record_mut(identity.clone()).state = ModuleState::Loading;
-        self.loading_stack.push(identity);
-    }
-
-    pub fn finish_loading(&mut self, identity: &ModuleIdentity) {
-        if self.loading_stack.last() == Some(identity) {
-            self.loading_stack.pop();
-        } else {
-            self.loading_stack.retain(|loading| loading != identity);
-        }
-    }
-
-    pub fn cycle(&self, repeated: &ModuleIdentity) -> Vec<ModuleIdentity> {
-        let start = self
-            .loading_stack
-            .iter()
-            .position(|identity| identity == repeated)
-            .unwrap_or(0);
-        self.loading_stack[start..]
-            .iter()
-            .chain(std::iter::once(repeated))
-            .cloned()
-            .collect()
     }
 }
 

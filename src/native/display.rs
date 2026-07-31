@@ -24,7 +24,12 @@ pub(crate) fn value(input: &Value, context: &mut dyn NativeContext) -> String {
                 .collect::<Vec<_>>();
             format!("({})", elements.join(" "))
         }
-        Value::Function(_) | Value::VmClosure(_) => "#<function>".to_owned(),
+        Value::VmClosure(_) | Value::VmPartial(_) => "#<function>".to_owned(),
+        Value::Placeholder => "_".to_owned(),
+        Value::VmBinding(cell) => cell.current_value().map_or_else(
+            || "#<uninitialized>".to_owned(),
+            |resolved| value(&resolved, context),
+        ),
         Value::NativeFunction(_) => "#<native>".to_owned(),
         Value::Block(_) => "#<block>".to_owned(),
         Value::Namespace(_) => "#<namespace>".to_owned(),

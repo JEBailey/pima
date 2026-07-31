@@ -1,7 +1,7 @@
 use crate::{
     diagnostic::Diagnostic,
     native::{NativeContext, NativeRegistry},
-    runtime::{NativeFunctionId, SymbolId, Value, VmCell, VmClosure, VmValue as Slot},
+    runtime::{NativeFunctionId, SymbolId, Value, VmCell, VmClosure, VmPartial, VmValue as Slot},
 };
 
 use super::ir::{Instruction, Primitive, Program};
@@ -135,7 +135,7 @@ impl Machine {
         &self,
         value: &Value,
     ) -> std::collections::HashMap<std::sync::Arc<str>, Value> {
-        let Value::Namespace(namespace) = value else {
+        let Value::Namespace(namespace) = value.resolved() else {
             return std::collections::HashMap::new();
         };
         namespace
@@ -274,11 +274,19 @@ impl Machine {
                     frame.registers[destination.0 as usize] =
                         Slot::Value(Value::Symbol(self.context.intern_symbol(name)));
                 }
-                Instruction::MakeBlock { destination, block } => {
+                Instruction::MakeBlock {
+                    destination,
+                    block,
+                    function,
+                    context,
+                } => {
                     frame.registers[destination.0 as usize] = Slot::Value(Value::Block(
-                        dumpster::unsync::Gc::new(crate::engine::StoredBlock {
+                        dumpster::unsync::Gc::new(crate::runtime::StoredBlock {
                             module_index: program.module_index,
                             block_id: crate::syntax::ast::BlockId(*block),
+                            vm_program: program.id,
+                            vm_function: *function,
+                            vm_context: context.clone(),
                         }),
                     ));
                 }
@@ -369,6 +377,32 @@ impl Machine {
                         }
                     }
                 }
+                Instruction::CheckWritable { binding, name } => {
+                    let error = match frame.registers[binding.0 as usize].clone() {
+                        Slot::Cell(cell) if cell.mutable.get() == Some(true) => None,
+                        Slot::Cell(cell)
+                            if cell.mutable.get().is_none() && cell.fallback.is_none() =>
+                        {
+                            Some(self.context.typed_error(
+                                &["error", "name_error"],
+                                format!("unbound identifier `{name}` for assignment"),
+                            ))
+                        }
+                        Slot::Cell(_) => Some(self.context.typed_error(
+                            &["error", "mutation_error"],
+                            format!("cannot assign to immutable binding `{name}`"),
+                        )),
+                        _ => {
+                            return Err(VmError::internal(
+                                "CHECK_WRITABLE requires a binding cell",
+                            ));
+                        }
+                    };
+                    if let Some(error) = error {
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    }
+                }
                 Instruction::MakeList {
                     destination,
                     elements,
@@ -390,7 +424,7 @@ impl Machine {
                             Ok((
                                 binding.name.clone(),
                                 binding.public,
-                                language_value(&frame.registers[binding.source.0 as usize])?,
+                                linked_value(&frame.registers[binding.source.0 as usize])?,
                             ))
                         })
                         .collect::<Result<Vec<_>, Diagnostic>>()?;
@@ -456,6 +490,16 @@ impl Machine {
                         frame.instruction_pointer = *target;
                     }
                 }
+                Instruction::JumpIfNotBlock {
+                    source,
+                    module,
+                    block,
+                    target,
+                } => match &frame.registers[source.0 as usize] {
+                    Slot::Value(Value::Block(value))
+                        if value.module_index == *module && value.block_id.0 == *block => {}
+                    _ => frame.instruction_pointer = *target,
+                },
                 Instruction::ListGet {
                     destination,
                     source,
@@ -479,15 +523,13 @@ impl Machine {
                     let arguments = if arguments.len() <= inline_arguments.len() {
                         for (index, register) in arguments.iter().enumerate() {
                             inline_arguments[index] =
-                                language_value_ref(&frame.registers[register.0 as usize])?.clone();
+                                language_value(&frame.registers[register.0 as usize])?;
                         }
                         &inline_arguments[..arguments.len()]
                     } else {
                         heap_arguments = arguments
                             .iter()
-                            .map(|register| {
-                                language_value_ref(&frame.registers[register.0 as usize]).cloned()
-                            })
+                            .map(|register| language_value(&frame.registers[register.0 as usize]))
                             .collect::<Result<Vec<_>, _>>()?;
                         heap_arguments.as_slice()
                     };
@@ -556,9 +598,94 @@ impl Machine {
                     callee,
                     argument,
                 } => {
-                    let callee = language_value(&frame.registers[callee.0 as usize])?;
+                    let mut callee = language_value(&frame.registers[callee.0 as usize])?;
+                    let mut argument = language_value(&frame.registers[argument.0 as usize])?;
+                    let contains_placeholder = matches!(argument, Value::Placeholder)
+                        || matches!(&argument, Value::List(values) if values.iter().any(|value| matches!(value, Value::Placeholder)));
+                    if contains_placeholder {
+                        let Value::VmClosure(closure) = callee else {
+                            let error = self.context.typed_error(
+                                &["error", "type_error"],
+                                "partial application requires a user function".into(),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        };
+                        let Some(owner) = self.programs.get(&closure.program) else {
+                            return Err(VmError::internal(
+                                "partial function's module is not loaded",
+                            ));
+                        };
+                        let Some(parameter_count) =
+                            owner.functions[closure.function as usize].parameter_count
+                        else {
+                            let error = self.context.typed_error(
+                                &["error", "type_error"],
+                                "partial application requires a list parameter pattern".into(),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        };
+                        let Value::List(values) = argument else {
+                            let error = self.context.typed_error(
+                                &["error", "type_error"],
+                                "partial application placeholders must appear in the call argument list".into(),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        };
+                        if values.len() != parameter_count as usize {
+                            let error = self.context.typed_error(
+                                &["error", "match_error"],
+                                "partial argument list does not match the function parameter pattern".into(),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
+                        frame.registers[destination.0 as usize] =
+                            Slot::Value(Value::VmPartial(dumpster::unsync::Gc::new(VmPartial {
+                                closure,
+                                arguments: values
+                                    .iter()
+                                    .map(|value| {
+                                        (!matches!(value, Value::Placeholder))
+                                            .then(|| value.clone())
+                                    })
+                                    .collect(),
+                            })));
+                        continue 'dispatch;
+                    }
+                    if let Value::VmPartial(partial) = callee {
+                        let supplied = match argument {
+                            Value::List(values) => values.to_vec(),
+                            value => vec![value],
+                        };
+                        let remaining = partial
+                            .arguments
+                            .iter()
+                            .filter(|value| value.is_none())
+                            .count();
+                        if supplied.len() != remaining {
+                            let error = self.context.typed_error(
+                                &["error", "match_error"],
+                                "function argument does not match its parameter pattern".into(),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
+                        let mut supplied = supplied.into_iter();
+                        argument = Value::List(
+                            partial
+                                .arguments
+                                .iter()
+                                .map(|value| {
+                                    value.clone().unwrap_or_else(|| supplied.next().unwrap())
+                                })
+                                .collect(),
+                        );
+                        callee = Value::VmClosure(partial.closure.clone());
+                    }
                     if let Value::NativeFunction(native) = callee {
-                        let argument = language_value(&frame.registers[argument.0 as usize])?;
                         let arguments = match argument {
                             Value::List(values) => values.to_vec(),
                             value => vec![value],
@@ -616,12 +743,73 @@ impl Machine {
                         &compiled.binding_registers,
                         &[],
                     );
-                    registers[0] = frame.registers[argument.0 as usize].clone();
+                    registers[0] = Slot::Value(argument);
                     for (index, capture) in captures.into_iter().enumerate() {
                         registers[index + 1] = capture;
                     }
                     frames.push(Frame {
                         program: closure.program,
+                        function: Some(function),
+                        instruction_pointer: 0,
+                        registers,
+                        return_destination: Some(*destination),
+                        call_span: active_span,
+                    });
+                }
+                Instruction::DoDynamic {
+                    destination,
+                    block,
+                    context,
+                } => {
+                    let value = language_value(&frame.registers[block.0 as usize])?;
+                    let Value::Block(block) = value else {
+                        let error = self.context.typed_error(
+                            &["error", "type_error"],
+                            "do requires a block value".into(),
+                        );
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    };
+                    let owner_id = block.vm_program;
+                    let function = block.vm_function;
+                    let Some(owner) = self.programs.get(&owner_id) else {
+                        return Err(VmError::internal("block's compiled module is not loaded"));
+                    };
+                    let compiled = &owner.functions[function as usize];
+                    let available = context
+                        .iter()
+                        .map(|(name, register)| {
+                            (name.as_ref(), frame.registers[register.0 as usize].clone())
+                        })
+                        .collect::<std::collections::HashMap<_, _>>();
+                    let mut captures = Vec::with_capacity(block.vm_context.len());
+                    let mut missing = None;
+                    for name in &block.vm_context {
+                        let Some(value) = available.get(name.as_ref()).cloned() else {
+                            missing = Some(name.clone());
+                            break;
+                        };
+                        captures.push(context_cell(value));
+                    }
+                    if let Some(name) = missing {
+                        let error = self.context.typed_error(
+                            &["error", "name_error", "missing_context"],
+                            format!("cannot execute block: required context binding `{name}` is unavailable"),
+                        );
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    }
+                    let mut registers = initialize_registers(
+                        compiled.register_count,
+                        &compiled.binding_registers,
+                        &[],
+                    );
+                    registers[0] = Slot::Value(Value::Unit);
+                    for (index, capture) in captures.into_iter().enumerate() {
+                        registers[index + 1] = capture;
+                    }
+                    frames.push(Frame {
+                        program: owner_id,
                         function: Some(function),
                         instruction_pointer: 0,
                         registers,
@@ -666,7 +854,7 @@ impl Machine {
                             Ok((
                                 binding.name.clone(),
                                 binding.public,
-                                exported_value(&frame.registers[binding.source.0 as usize])?,
+                                linked_value(&frame.registers[binding.source.0 as usize])?,
                             ))
                         })
                         .collect::<Result<Vec<_>, Diagnostic>>()?;
@@ -690,22 +878,18 @@ impl Machine {
 }
 
 fn language_value(value: &Slot) -> Result<Value, Diagnostic> {
-    language_value_ref(value).cloned()
-}
-
-fn exported_value(value: &Slot) -> Result<Value, Diagnostic> {
     match value {
-        Slot::Cell(cell) => language_value(&cell.value.borrow()),
-        value => language_value(value),
-    }
-}
-
-fn language_value_ref(value: &Slot) -> Result<&Value, Diagnostic> {
-    match value {
-        Slot::Value(value) => Ok(value),
+        Slot::Value(value) => Ok(value.resolved()),
         Slot::Uninitialized | Slot::Cell(_) => Err(Diagnostic::error(format!(
             "internal VM storage cannot cross the language-value boundary: {value:?}"
         ))),
+    }
+}
+
+fn linked_value(value: &Slot) -> Result<Value, Diagnostic> {
+    match value {
+        Slot::Cell(cell) => Ok(Value::VmBinding(cell.clone())),
+        value => language_value(value),
     }
 }
 
@@ -734,6 +918,16 @@ fn initialize_registers(
             Slot::Cell(dumpster::unsync::Gc::new(VmCell::binding(fallback)));
     }
     registers
+}
+
+fn context_cell(value: Slot) -> Slot {
+    if matches!(value, Slot::Cell(_)) {
+        return value;
+    }
+    let cell = dumpster::unsync::Gc::new(VmCell::binding(None));
+    *cell.value.borrow_mut() = value;
+    cell.mutable.set(Some(false));
+    Slot::Cell(cell)
 }
 
 struct Handler {
@@ -813,6 +1007,7 @@ mod tests {
                 instruction_spans: vec![None; 2],
                 register_count: 2,
                 capture_count: 0,
+                parameter_count: Some(0),
                 binding_registers: Vec::new(),
             }],
             binding_registers: Vec::new(),

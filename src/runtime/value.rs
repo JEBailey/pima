@@ -2,11 +2,7 @@ use std::sync::Arc;
 
 use dumpster::{TraceWith, Visitor, unsync::Gc};
 
-use super::{
-    FunctionRef, NamespaceRef, NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId,
-};
-
-pub type BlockRef = Gc<crate::engine::StoredBlock>;
+use super::{NamespaceRef, NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId};
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -17,10 +13,14 @@ pub enum Value {
     String(Arc<str>),
     Symbol(SymbolId),
     List(PersistentList),
-    Function(FunctionRef),
     NativeFunction(NativeFunctionId),
     VmClosure(super::VmClosureRef),
-    Block(BlockRef),
+    VmPartial(super::VmPartialRef),
+    #[doc(hidden)]
+    VmBinding(Gc<super::VmCell>),
+    #[doc(hidden)]
+    Placeholder,
+    Block(super::BlockRef),
     Namespace(NamespaceRef),
     TcpListener(TcpListenerId),
     TcpConnection(TcpConnectionId),
@@ -42,7 +42,12 @@ impl Value {
             Self::String(_) => "string",
             Self::Symbol(_) => "symbol",
             Self::List(_) => "list",
-            Self::Function(_) | Self::NativeFunction(_) | Self::VmClosure(_) => "function",
+            Self::NativeFunction(_) | Self::VmClosure(_) | Self::VmPartial(_) => "function",
+            Self::Placeholder => "placeholder",
+            Self::VmBinding(cell) => cell
+                .current_value()
+                .as_ref()
+                .map_or("unit", Value::type_name),
             Self::Block(_) => "block",
             Self::Namespace(_) => "namespace",
             Self::TcpListener(_) => "tcp_listener",
@@ -52,6 +57,13 @@ impl Value {
 
     pub(crate) fn type_symbol(&self) -> String {
         format!(":{}", self.type_name())
+    }
+
+    pub(crate) fn resolved(&self) -> Value {
+        match self {
+            Self::VmBinding(cell) => cell.current_value().unwrap_or(Value::Unit),
+            value => value.clone(),
+        }
     }
 }
 
@@ -75,9 +87,11 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
             let bv: Vec<_> = b.iter().collect();
             av.len() == bv.len() && av.iter().zip(bv.iter()).all(|(x, y)| x == y)
         }
-        (Value::Function(a), Value::Function(b)) => Gc::ptr_eq(a, b),
         (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
         (Value::VmClosure(a), Value::VmClosure(b)) => Gc::ptr_eq(a, b),
+        (Value::VmPartial(a), Value::VmPartial(b)) => Gc::ptr_eq(a, b),
+        (Value::VmBinding(a), Value::VmBinding(b)) => Gc::ptr_eq(a, b),
+        (Value::Placeholder, Value::Placeholder) => true,
         (Value::Block(a), Value::Block(b)) => Gc::ptr_eq(a, b),
         (Value::Namespace(a), Value::Namespace(b)) => Gc::ptr_eq(a, b),
         (Value::TcpListener(a), Value::TcpListener(b)) => a == b,
@@ -94,8 +108,9 @@ unsafe impl<V: Visitor> TraceWith<V> for Value {
                     value.accept(visitor)?;
                 }
             }
-            Self::Function(function) => function.accept(visitor)?,
             Self::VmClosure(function) => function.accept(visitor)?,
+            Self::VmPartial(function) => function.accept(visitor)?,
+            Self::VmBinding(cell) => cell.accept(visitor)?,
             Self::Block(block) => block.accept(visitor)?,
             Self::Namespace(namespace) => namespace.accept(visitor)?,
             _ => {}

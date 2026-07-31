@@ -57,7 +57,7 @@ fn representative_programs_have_exact_results() {
     ];
 
     for (source, expected) in cases {
-        let mut interpreter = Interpreter::default();
+        let mut interpreter = Interpreter::new(Config::default());
         let outcome = interpreter.run_source("<conformance>", source);
         assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
         assert_eq!(outcome.value, Some(expected));
@@ -67,7 +67,7 @@ fn representative_programs_have_exact_results() {
 #[test]
 fn representative_failures_preserve_portable_error_types() {
     let source = "import \"/pima/library/standard\"\nval result [attempt {\n    List.head (())\n}]\n[Types.is? (result :index_error)]\n";
-    let mut interpreter = Interpreter::default();
+    let mut interpreter = Interpreter::new(Config::default());
     let outcome = interpreter.run_source("<conformance>", source);
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);

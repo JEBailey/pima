@@ -73,7 +73,7 @@ fn prepared_program_is_rejected_by_another_interpreter() {
 
 #[test]
 fn interpreter_executes_supported_sources_with_the_register_vm() {
-    let mut interpreter = Interpreter::new_vm(Config::default());
+    let mut interpreter = Interpreter::new(Config::default());
     let outcome = interpreter.run_source(
         "<vm-interpreter-test>",
         "function answer () { Math.int 42.9 }\n[answer ()]",
@@ -85,7 +85,7 @@ fn interpreter_executes_supported_sources_with_the_register_vm() {
 #[test]
 fn register_vm_diagnostics_retain_source_and_call_stack() {
     let mut interpreter = Interpreter::default();
-    let outcome = interpreter.run_source_vm(
+    let outcome = interpreter.run_source(
         "<vm-diagnostic-test>",
         "function fail () { / (1 0) }\n[fail ()]",
     );
@@ -111,7 +111,7 @@ fn register_vm_loads_modules_and_calls_exported_functions() {
     let mut interpreter = Interpreter::new(Config {
         working_directory: Some(directory.clone()),
     });
-    let outcome = interpreter.run_source_vm(
+    let outcome = interpreter.run_source(
         "<vm-module-test>",
         "import \"math.pima\" as custom\n[custom.add (20 22)]",
     );
@@ -123,14 +123,14 @@ fn register_vm_loads_modules_and_calls_exported_functions() {
 #[test]
 fn register_vm_loads_native_modules_and_selected_members() {
     let mut interpreter = Interpreter::default();
-    let native = interpreter.run_source_vm(
+    let native = interpreter.run_source(
         "<vm-native-module-test>",
         "import /pima/io as io\n[io.current_directory ()]",
     );
     assert!(native.is_success(), "{:?}", native.diagnostics);
     assert!(matches!(native.value, Some(pima::Value::String(_))));
 
-    let selected = interpreter.run_source_vm(
+    let selected = interpreter.run_source(
         "<vm-selected-import-test>",
         "import Math.int as integer\n[integer 42.9]",
     );
@@ -141,7 +141,7 @@ fn register_vm_loads_native_modules_and_selected_members() {
 #[test]
 fn register_vm_loads_the_standard_library() {
     let mut interpreter = Interpreter::default();
-    let outcome = interpreter.run_source_vm(
+    let outcome = interpreter.run_source(
         "<vm-standard-library-test>",
         "import /pima/library/standard\n[Math.sum ((10 20 12))]",
     );
@@ -152,12 +152,12 @@ fn register_vm_loads_the_standard_library() {
 #[test]
 fn register_vm_interpreter_retains_session_bindings() {
     let mut interpreter = Interpreter::default();
-    let declaration = interpreter.run_source_vm(
+    let declaration = interpreter.run_source(
         "<vm-session-declaration>",
         "var value 40\nfunction add_two () { + (value 2) }",
     );
     assert!(declaration.is_success(), "{:?}", declaration.diagnostics);
-    let call = interpreter.run_source_vm("<vm-session-call>", "[add_two ()]");
+    let call = interpreter.run_source("<vm-session-call>", "[add_two ()]");
     assert!(call.is_success(), "{:?}", call.diagnostics);
     assert_eq!(call.value, Some(pima::Value::Integer(42)));
 }
@@ -175,7 +175,7 @@ fn register_vm_reports_import_cycles() {
     let mut interpreter = Interpreter::new(Config {
         working_directory: Some(directory.clone()),
     });
-    let outcome = interpreter.run_source_vm("<vm-cycle-test>", "import \"left.pima\"\n");
+    let outcome = interpreter.run_source("<vm-cycle-test>", "import \"left.pima\"\n");
     assert!(!outcome.is_success());
     assert!(outcome.diagnostics[0].message.contains("import cycle"));
     std::fs::remove_dir_all(directory).unwrap();

@@ -18,7 +18,7 @@ pub fn namespace_types(
     {
         return Err("namespace `types` must be declared with `pub val`".into());
     }
-    let Value::List(list) = binding.value else {
+    let Value::List(list) = binding.value.resolved() else {
         return Err("namespace `types` must be a list".into());
     };
     let fundamental = [
@@ -76,7 +76,7 @@ pub fn throwable_error(symbols: &mut SymbolInterner, value: &Value) -> Result<()
         .is_some_and(|binding| {
             binding.visibility == BindingVisibility::Public
                 && matches!(binding.mutability, BindingMutability::Immutable)
-                && matches!(binding.value, Value::String(_))
+                && matches!(binding.value.resolved(), Value::String(_))
         });
     if !valid_message {
         return Err("an error namespace must expose `message` as a public immutable string".into());

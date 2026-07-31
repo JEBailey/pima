@@ -281,13 +281,13 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("engine_comparison");
     let source = "+ (20 22)";
 
-    let mut tree = Interpreter::default();
-    let tree_program = tree
+    let mut interpreter = Interpreter::default();
+    let interpreter_program = interpreter
         .prepare_source("<benchmark>", source)
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/primitive_add", |b| {
+    group.bench_function("interpreter_vm/primitive_add", |b| {
         b.iter(|| {
-            let outcome = tree.run_prepared(tree_program);
+            let outcome = interpreter.run_prepared(interpreter_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -310,13 +310,13 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     });
 
     let branch_source = "if [< (20 22)] 1 0";
-    let mut tree_branch = Interpreter::default();
-    let tree_branch_program = tree_branch
+    let mut interpreter_branch = Interpreter::default();
+    let interpreter_branch_program = interpreter_branch
         .prepare_source("<benchmark>", branch_source)
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/branch", |b| {
+    group.bench_function("interpreter_vm/branch", |b| {
         b.iter(|| {
-            let outcome = tree_branch.run_prepared(tree_branch_program);
+            let outcome = interpreter_branch.run_prepared(interpreter_branch_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -336,16 +336,16 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let mut tree_scalar_call = Interpreter::default();
-    let setup =
-        tree_scalar_call.run_source("<benchmark-setup>", "function identity :value { value }\n");
+    let mut interpreter_scalar_call = Interpreter::default();
+    let setup = interpreter_scalar_call
+        .run_source("<benchmark-setup>", "function identity :value { value }\n");
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
-    let tree_scalar_program = tree_scalar_call
+    let interpreter_scalar_program = interpreter_scalar_call
         .prepare_source("<benchmark>", "[identity 42]")
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/scalar_capture_call", |b| {
+    group.bench_function("interpreter_vm/scalar_capture_call", |b| {
         b.iter(|| {
-            let outcome = tree_scalar_call.run_prepared(tree_scalar_program);
+            let outcome = interpreter_scalar_call.run_prepared(interpreter_scalar_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -361,18 +361,18 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let mut tree_list_call = Interpreter::default();
-    let setup = tree_list_call.run_source(
+    let mut interpreter_list_call = Interpreter::default();
+    let setup = interpreter_list_call.run_source(
         "<benchmark-setup>",
         "function add (:left :right) { + (left right) }\n",
     );
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
-    let tree_list_program = tree_list_call
+    let interpreter_list_program = interpreter_list_call
         .prepare_source("<benchmark>", "[add (20 22)]")
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/list_pattern_call", |b| {
+    group.bench_function("interpreter_vm/list_pattern_call", |b| {
         b.iter(|| {
-            let outcome = tree_list_call.run_prepared(tree_list_program);
+            let outcome = interpreter_list_call.run_prepared(interpreter_list_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -392,15 +392,15 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     let fibonacci_declaration = "function fibonacci (:value) {\n\
          if [< (value 3)] 1 [+ ([fibonacci ([- (value 1)])] [fibonacci ([- (value 2)])])]\n\
      }\n";
-    let mut tree_fibonacci = Interpreter::default();
-    let setup = tree_fibonacci.run_source("<benchmark-setup>", fibonacci_declaration);
+    let mut interpreter_fibonacci = Interpreter::default();
+    let setup = interpreter_fibonacci.run_source("<benchmark-setup>", fibonacci_declaration);
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
-    let tree_fibonacci_program = tree_fibonacci
+    let interpreter_fibonacci_program = interpreter_fibonacci
         .prepare_source("<benchmark>", "[fibonacci (15)]")
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/fibonacci_15", |b| {
+    group.bench_function("interpreter_vm/fibonacci_15", |b| {
         b.iter(|| {
-            let outcome = tree_fibonacci.run_prepared(tree_fibonacci_program);
+            let outcome = interpreter_fibonacci.run_prepared(interpreter_fibonacci_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -422,15 +422,15 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
          add\n\
      }\n\
      val add_five [make_adder (5)]\n";
-    let mut tree_closure = Interpreter::default();
-    let setup = tree_closure.run_source("<benchmark-setup>", closure_source);
+    let mut interpreter_closure = Interpreter::default();
+    let setup = interpreter_closure.run_source("<benchmark-setup>", closure_source);
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
-    let tree_closure_program = tree_closure
+    let interpreter_closure_program = interpreter_closure
         .prepare_source("<benchmark>", "[add_five (37)]")
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/captured_closure_call", |b| {
+    group.bench_function("interpreter_vm/captured_closure_call", |b| {
         b.iter(|| {
-            let outcome = tree_closure.run_prepared(tree_closure_program);
+            let outcome = interpreter_closure.run_prepared(interpreter_closure_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -457,7 +457,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
      val instance [counter (0)]\n\
      [instance ()]\n\
      [instance ()]";
-    group.bench_function("tree_walk/mutable_closure_roundtrip", |b| {
+    group.bench_function("interpreter_vm/mutable_closure_roundtrip", |b| {
         b.iter_batched(
             || {
                 let mut interpreter = Interpreter::default();
@@ -493,7 +493,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
                        }\n\
                        total";
     group.throughput(Throughput::Elements(1_000));
-    group.bench_function("tree_walk/sum_loop_1000", |b| {
+    group.bench_function("interpreter_vm/sum_loop_1000", |b| {
         b.iter_batched(
             || {
                 let mut interpreter = Interpreter::default();
@@ -527,13 +527,13 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
 
     let attempt_source = "attempt { / (1 0) }";
     group.throughput(Throughput::Elements(1));
-    let mut tree_attempt = Interpreter::default();
-    let tree_attempt_program = tree_attempt
+    let mut interpreter_attempt = Interpreter::default();
+    let interpreter_attempt_program = interpreter_attempt
         .prepare_source("<benchmark>", attempt_source)
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/attempt_caught_error", |b| {
+    group.bench_function("interpreter_vm/attempt_caught_error", |b| {
         b.iter(|| {
-            let outcome = tree_attempt.run_prepared(tree_attempt_program);
+            let outcome = interpreter_attempt.run_prepared(interpreter_attempt_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -550,13 +550,13 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     });
 
     let namespace_source = "new { pub val answer 42 }";
-    let mut tree_namespace = Interpreter::default();
-    let tree_namespace_program = tree_namespace
+    let mut interpreter_namespace = Interpreter::default();
+    let interpreter_namespace_program = interpreter_namespace
         .prepare_source("<benchmark>", namespace_source)
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/namespace_construct", |b| {
+    group.bench_function("interpreter_vm/namespace_construct", |b| {
         b.iter(|| {
-            let outcome = tree_namespace.run_prepared(tree_namespace_program);
+            let outcome = interpreter_namespace.run_prepared(interpreter_namespace_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -573,13 +573,13 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     });
 
     let do_source = "do { + (20 22) }";
-    let mut tree_do = Interpreter::default();
-    let tree_do_program = tree_do
+    let mut interpreter_do = Interpreter::default();
+    let interpreter_do_program = interpreter_do
         .prepare_source("<benchmark>", do_source)
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/do_block", |b| {
+    group.bench_function("interpreter_vm/do_block", |b| {
         b.iter(|| {
-            let outcome = tree_do.run_prepared(tree_do_program);
+            let outcome = interpreter_do.run_prepared(interpreter_do_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });
@@ -596,13 +596,13 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     });
 
     let match_source = "match (:ok 42) ( (ok :value) { + (value 1) } _ { 0 } )";
-    let mut tree_match = Interpreter::default();
-    let tree_match_program = tree_match
+    let mut interpreter_match = Interpreter::default();
+    let interpreter_match_program = interpreter_match
         .prepare_source("<benchmark>", match_source)
         .expect("benchmark source should prepare");
-    group.bench_function("tree_walk/match_nested", |b| {
+    group.bench_function("interpreter_vm/match_nested", |b| {
         b.iter(|| {
-            let outcome = tree_match.run_prepared(tree_match_program);
+            let outcome = interpreter_match.run_prepared(interpreter_match_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
             black_box(outcome.value);
         });

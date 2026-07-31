@@ -28,6 +28,18 @@ impl ScopeAnalysis {
         Self::run(module, roots, inherited_blocks)
     }
 
+    pub(super) fn block(
+        module: &Module,
+        block: BlockId,
+        inherited_blocks: HashMap<Arc<str>, BlockId>,
+    ) -> Self {
+        Self::run(
+            module,
+            module.block(block).statements.clone(),
+            inherited_blocks,
+        )
+    }
+
     pub(super) fn declarations(&self) -> &[Name] {
         &self.declarations
     }

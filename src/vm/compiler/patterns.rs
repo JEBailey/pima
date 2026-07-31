@@ -127,6 +127,13 @@ impl Compiler<'_> {
     pub(super) fn commit_assignment_captures(&mut self, captures: Vec<(Name, Register)>) {
         let mut assignments = Vec::with_capacity(captures.len());
         for (name, source) in captures {
+            if self.imported_bindings.contains(&name.text) {
+                self.instructions.push(Instruction::RaiseTyped {
+                    types: vec![Arc::from("error"), Arc::from("mutation_error")],
+                    message: Arc::from(format!("cannot assign to imported binding `{name}`")),
+                });
+                return;
+            }
             let Some(local) = self.locals.get(&name.text).copied() else {
                 self.instructions.push(Instruction::RaiseTyped {
                     types: vec![Arc::from("error"), Arc::from("name_error")],
@@ -142,6 +149,12 @@ impl Compiler<'_> {
                 return;
             }
             assignments.push((name.text, local, source));
+        }
+        for (name, local, _) in &assignments {
+            self.instructions.push(Instruction::CheckWritable {
+                binding: local.register,
+                name: name.clone(),
+            });
         }
         for (name, local, source) in assignments {
             self.instructions.push(Instruction::StoreBinding {

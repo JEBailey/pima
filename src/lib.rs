@@ -1,4 +1,4 @@
-//! Parser and tree-walk interpreter for the Pima language.
+//! Parser, compiler, and register virtual machine for the Pima language.
 //!
 //! [`Interpreter`] is the embedding entry point. Call
 //! [`Interpreter::run_source`] for in-memory source or

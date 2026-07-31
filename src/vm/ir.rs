@@ -40,6 +40,8 @@ pub enum Instruction {
     MakeBlock {
         destination: Register,
         block: u32,
+        function: u16,
+        context: Vec<Arc<str>>,
     },
     Move {
         destination: Register,
@@ -59,6 +61,10 @@ pub enum Instruction {
     StoreBinding {
         binding: Register,
         source: Register,
+        name: Arc<str>,
+    },
+    CheckWritable {
+        binding: Register,
         name: Arc<str>,
     },
     MakeList {
@@ -87,6 +93,12 @@ pub enum Instruction {
     JumpIfNotEqual {
         left: Register,
         right: Register,
+        target: usize,
+    },
+    JumpIfNotBlock {
+        source: Register,
+        module: usize,
+        block: u32,
         target: usize,
     },
     ListGet {
@@ -121,6 +133,11 @@ pub enum Instruction {
         destination: Register,
         callee: Register,
         argument: Register,
+    },
+    DoDynamic {
+        destination: Register,
+        block: Register,
+        context: Vec<(Arc<str>, Register)>,
     },
     BeginAttempt {
         destination: Register,
@@ -162,6 +179,7 @@ pub(crate) struct Function {
     pub(crate) instruction_spans: Vec<Option<Span>>,
     pub(crate) register_count: u16,
     pub(crate) capture_count: u16,
+    pub(crate) parameter_count: Option<u16>,
     pub(crate) binding_registers: Vec<Register>,
 }
 impl Program {

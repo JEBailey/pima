@@ -64,7 +64,7 @@ impl VmNativeContext {
         &mut self,
         bindings: Vec<(std::sync::Arc<str>, bool, Value)>,
     ) -> NativeResult {
-        let mut environment = crate::runtime::Environment::new(None);
+        let mut environment = crate::runtime::Environment::new();
         for (name, public, value) in bindings {
             environment.bindings.insert(
                 self.symbols.intern(&name),
@@ -95,7 +95,7 @@ impl VmNativeContext {
         &mut self,
         bindings: Vec<(std::sync::Arc<str>, bool, Value)>,
     ) -> Value {
-        let mut environment = crate::runtime::Environment::new(None);
+        let mut environment = crate::runtime::Environment::new();
         for (name, public, value) in bindings {
             environment.bindings.insert(
                 self.symbols.intern(&name),

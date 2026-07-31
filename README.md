@@ -1,7 +1,7 @@
 # Pima
 
-Pima is an experimental, expression-oriented language implemented as a
-tree-walk interpreter in Rust. Its central ideas are:
+Pima is an experimental, expression-oriented language implemented with a
+register-based virtual machine in Rust. Its central ideas are:
 
 - physical line endings terminate statements;
 - square brackets invoke immediately;

@@ -56,15 +56,15 @@ fn value_type_names(machine: &Machine, value: &Value) -> Vec<String> {
         .collect()
 }
 
-fn run_tree(source: &str) -> Value {
+fn run_interpreter(source: &str) -> Value {
     let mut interpreter = Interpreter::default();
-    let outcome = interpreter.run_source("<tree-test>", source);
+    let outcome = interpreter.run_source("<interpreter-test>", source);
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     outcome.value.expect("program should return a value")
 }
 
 #[test]
-fn register_vm_matches_tree_walker_for_supported_programs() {
+fn public_interpreter_matches_direct_vm_execution() {
     for source in [
         "42",
         "val value 42",
@@ -120,7 +120,7 @@ fn register_vm_matches_tree_walker_for_supported_programs() {
         "var retained 0\nval failure [attempt { let (retained missing) (1 2) }]\nretained",
         "function outer (:value) {\n    function count (:remaining) {\n        if [= (remaining 0)] value [count ([- (remaining 1)])]\n    }\n    [count (3)]\n}\n[outer (42)]",
     ] {
-        assert_eq!(run_vm(source), run_tree(source), "{source}");
+        assert_eq!(run_vm(source), run_interpreter(source), "{source}");
     }
 }
 
@@ -141,18 +141,32 @@ fn register_vm_calls_standard_native_namespaces() {
 }
 
 #[test]
-fn compiler_rejects_unsupported_constructs_explicitly() {
+fn register_vm_user_bindings_shadow_standard_globals() {
+    let source = "val Counter {\n    var value 0\n    pub function next () { let value [+ (value 1)] }\n}\nval counter [new Counter]\n[counter.next ()]\n[counter.next ()]";
+    let mut sources = SourceMap::default();
+    let source_id = sources.add("<vm-shadow-test>", source);
+    let module = parse(&lex(source_id, source).unwrap()).unwrap();
+    let mut machine = Machine::default();
+    let program =
+        pima::vm::compile_module_with_globals(&module, 0, machine.standard_globals()).unwrap();
+    assert_eq!(
+        machine
+            .execute(&program)
+            .map_err(|error| machine.diagnostic(error))
+            .unwrap(),
+        Value::Integer(2)
+    );
+}
+
+#[test]
+fn compiler_supports_mutable_namespace_bindings() {
     let mut sources = SourceMap::default();
     let source = "new { var value 1 }";
     let source_id = sources.add("<vm-test>", source);
     let tokens = lex(source_id, source).unwrap();
     let module = parse(&tokens).unwrap();
-    let diagnostics = compile(&module).expect_err("mutable namespaces are not implemented yet");
-    assert!(
-        diagnostics[0]
-            .message
-            .contains("currently support immutable value bindings only")
-    );
+    let program = compile(&module).expect("mutable namespace should compile");
+    assert!(Machine::default().execute(&program).is_ok());
 }
 
 #[test]

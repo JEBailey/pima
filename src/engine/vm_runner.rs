@@ -31,6 +31,8 @@ fn execute_module(
         globals.extend(interpreter.vm_session_globals.clone());
     }
     let statements = interpreter.parsed_modules[module_index].statements.clone();
+    let declared = module_declarations(&interpreter.parsed_modules[module_index]);
+    let mut imported_names = std::collections::HashSet::new();
     let importer = interpreter
         .sources
         .get(interpreter.parsed_modules[module_index].source)
@@ -44,10 +46,16 @@ fn execute_module(
             NodeKind::Import { path, alias } => {
                 let namespace = load_module(interpreter, &path, importer.as_deref())?;
                 if let Some(alias) = alias {
-                    insert_unique(&mut globals, alias, namespace)?;
+                    insert_unique(
+                        &mut globals,
+                        &declared,
+                        &mut imported_names,
+                        alias,
+                        namespace,
+                    )?;
                 } else {
                     for (name, value) in interpreter.vm.namespace_globals(&namespace) {
-                        globals.insert(name, value);
+                        insert_unique(&mut globals, &declared, &mut imported_names, name, value)?;
                     }
                 }
             }
@@ -56,12 +64,15 @@ fn execute_module(
                 selection,
                 alias,
             } => {
-                let mut value = globals.get(&path[0].text).cloned().ok_or_else(|| {
-                    vec![Diagnostic::at_error(
+                let Some(mut value) = globals.get(&path[0].text).cloned() else {
+                    if declared.contains(&path[0].text) {
+                        continue;
+                    }
+                    return Err(vec![Diagnostic::at_error(
                         format!("unbound import namespace `{}`", path[0].text),
                         path[0].span,
-                    )]
-                })?;
+                    )]);
+                };
                 for name in &path[1..] {
                     value = interpreter
                         .vm
@@ -78,7 +89,13 @@ fn execute_module(
                 match selection {
                     NamespaceImportSelection::Wildcard(_) => {
                         for (name, value) in interpreter.vm.namespace_globals(&value) {
-                            insert_unique(&mut globals, name, value)?;
+                            insert_unique(
+                                &mut globals,
+                                &declared,
+                                &mut imported_names,
+                                name,
+                                value,
+                            )?;
                         }
                     }
                     NamespaceImportSelection::Member(member) => {
@@ -94,7 +111,13 @@ fn execute_module(
                                 )]
                             })?;
                         let local = alias.map(|name| name.text).unwrap_or(member.text);
-                        insert_unique(&mut globals, local, member_value)?;
+                        insert_unique(
+                            &mut globals,
+                            &declared,
+                            &mut imported_names,
+                            local,
+                            member_value,
+                        )?;
                     }
                 }
             }
@@ -113,7 +136,9 @@ fn execute_module(
     interpreter.vm_programs.insert(module_index, compiled);
     if session_root {
         let program = interpreter.vm_programs.get(&module_index).unwrap();
-        interpreter.vm_session_globals = interpreter.vm.exported_globals(program);
+        interpreter
+            .vm_session_globals
+            .extend(interpreter.vm.exported_globals(program));
     }
     Ok(result)
 }
@@ -204,13 +229,47 @@ fn load_module(
 
 fn insert_unique(
     globals: &mut HashMap<Arc<str>, Value>,
+    declared: &std::collections::HashSet<Arc<str>>,
+    imported: &mut std::collections::HashSet<Arc<str>>,
     name: Arc<str>,
     value: Value,
 ) -> Result<(), Vec<Diagnostic>> {
-    if globals.insert(name.clone(), value).is_some() {
+    if declared.contains(&name) || !imported.insert(name.clone()) {
         return Err(vec![Diagnostic::error(format!(
-            "import collides with existing binding `{name}`"
+            "import collision for existing binding `{name}`"
         ))]);
     }
+    globals.insert(name, value);
     Ok(())
+}
+
+fn module_declarations(module: &crate::syntax::ast::Module) -> std::collections::HashSet<Arc<str>> {
+    let mut names = std::collections::HashSet::new();
+    for statement in &module.statements {
+        match &module.node(*statement).kind {
+            NodeKind::Binding { pattern, .. } => collect_pattern_names(pattern, &mut names),
+            NodeKind::Function { name, .. } => {
+                names.insert(name.text.clone());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn collect_pattern_names(
+    pattern: &crate::syntax::ast::Pattern,
+    names: &mut std::collections::HashSet<Arc<str>>,
+) {
+    match pattern {
+        crate::syntax::ast::Pattern::Capture(name) => {
+            names.insert(name.text.clone());
+        }
+        crate::syntax::ast::Pattern::List(patterns) => {
+            for pattern in patterns {
+                collect_pattern_names(pattern, names);
+            }
+        }
+        crate::syntax::ast::Pattern::Wildcard | crate::syntax::ast::Pattern::Literal(_) => {}
+    }
 }

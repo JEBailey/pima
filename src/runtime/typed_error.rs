@@ -5,7 +5,7 @@ use super::{
 };
 
 pub fn create_typed_error(symbols: &mut SymbolInterner, types: &[&str], message: String) -> Value {
-    let mut environment = Environment::new(None);
+    let mut environment = Environment::new();
     let type_symbols = types
         .iter()
         .map(|name| symbols.intern(name))
