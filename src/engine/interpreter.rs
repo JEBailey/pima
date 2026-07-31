@@ -1,6 +1,6 @@
 use crate::{
     diagnostic::Diagnostic,
-    engine::{ModuleLoader, Signal, eval::CallFrame},
+    engine::{ModuleIdentity, ModuleLoader, Signal, eval::CallFrame},
     native::NativeRegistry,
     runtime::{Environment, EnvironmentRef, Namespace, SymbolInterner, Value},
     source::{SourceMap, Span},
@@ -32,8 +32,8 @@ pub struct RunOutcome {
 /// An immutable parsed Pima source unit owned by one [`Interpreter`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PreparedProgram {
-    interpreter_id: u64,
-    module_index: usize,
+    pub(crate) interpreter_id: u64,
+    pub(crate) module_index: usize,
 }
 
 impl RunOutcome {
@@ -61,6 +61,7 @@ unsafe impl<V: dumpster::Visitor> dumpster::TraceWith<V> for StoredBlock {
 #[derive(Debug)]
 pub struct Interpreter {
     instance_id: u64,
+    execution_engine: ExecutionEngine,
     pub(crate) sources: SourceMap,
     pub(crate) symbols: SymbolInterner,
     pub(crate) prelude_environment: EnvironmentRef,
@@ -69,14 +70,24 @@ pub struct Interpreter {
     pub(crate) parsed_modules: Vec<Module>,
     pub(crate) module_loader: ModuleLoader,
     pub(crate) module_environments: Vec<EnvironmentRef>,
-    pub(crate) tcp_listeners: Vec<Option<std::net::TcpListener>>,
-    pub(crate) tcp_connections: Vec<Option<std::net::TcpStream>>,
+    pub(crate) host: crate::native::host::HostResources,
+    pub(crate) vm: crate::vm::Machine,
+    pub(crate) vm_programs: std::collections::HashMap<usize, crate::vm::Program>,
+    pub(crate) vm_module_indices: std::collections::HashMap<ModuleIdentity, usize>,
+    pub(crate) vm_loading: Vec<ModuleIdentity>,
+    pub(crate) vm_session_globals: std::collections::HashMap<std::sync::Arc<str>, Value>,
 
     // Execution state
     pub(crate) current_environment: EnvironmentRef,
     pub(crate) current_module: usize,
     pub(crate) call_stack: Vec<CallFrame>,
     pub(crate) active_span: Option<Span>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExecutionEngine {
+    TreeWalk,
+    RegisterVm,
 }
 
 impl Interpreter {
@@ -87,6 +98,8 @@ impl Interpreter {
             .clone()
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let host = crate::native::host::HostResources::new(working_directory.clone());
+        let vm = crate::vm::Machine::new(working_directory.clone());
         let working_directory = camino::Utf8PathBuf::from_path_buf(working_directory)
             .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
         let prelude_environment =
@@ -99,6 +112,7 @@ impl Interpreter {
 
         let mut interpreter = Self {
             instance_id: NEXT_INTERPRETER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            execution_engine: ExecutionEngine::TreeWalk,
             sources: SourceMap::default(),
             symbols: SymbolInterner::default(),
             prelude_environment,
@@ -107,8 +121,12 @@ impl Interpreter {
             parsed_modules: Vec::new(),
             module_loader: ModuleLoader::new(working_directory),
             module_environments: vec![root_environment.clone()],
-            tcp_listeners: Vec::new(),
-            tcp_connections: Vec::new(),
+            host,
+            vm,
+            vm_programs: std::collections::HashMap::new(),
+            vm_module_indices: std::collections::HashMap::new(),
+            vm_loading: Vec::new(),
+            vm_session_globals: std::collections::HashMap::new(),
             current_environment: root_environment,
             current_module: 0,
             call_stack: Vec::new(),
@@ -121,6 +139,13 @@ impl Interpreter {
         interpreter
     }
 
+    /// Creates an interpreter whose ordinary run methods use the register VM.
+    pub fn new_vm(config: Config) -> Self {
+        let mut interpreter = Self::new(config);
+        interpreter.execution_engine = ExecutionEngine::RegisterVm;
+        interpreter
+    }
+
     /// Lexes, parses, and evaluates `source` in the interpreter's current root
     /// environment.
     ///
@@ -130,6 +155,17 @@ impl Interpreter {
     pub fn run_source(&mut self, name: &str, source: &str) -> RunOutcome {
         match self.prepare_source(name, source) {
             Ok(program) => self.run_prepared(program),
+            Err(diagnostics) => RunOutcome {
+                value: None,
+                diagnostics,
+            },
+        }
+    }
+
+    /// Lexes, parses, compiles, and executes a source unit with the register VM.
+    pub fn run_source_vm(&mut self, name: &str, source: &str) -> RunOutcome {
+        match self.prepare_source(name, source) {
+            Ok(program) => self.run_prepared_vm(program),
             Err(diagnostics) => RunOutcome {
                 value: None,
                 diagnostics,
@@ -166,6 +202,9 @@ impl Interpreter {
     /// Evaluates a source unit previously returned by
     /// [`Interpreter::prepare_source`].
     pub fn run_prepared(&mut self, program: PreparedProgram) -> RunOutcome {
+        if self.execution_engine == ExecutionEngine::RegisterVm {
+            return self.run_prepared_vm(program);
+        }
         if program.interpreter_id != self.instance_id
             || program.module_index >= self.parsed_modules.len()
         {
@@ -187,6 +226,21 @@ impl Interpreter {
         };
 
         self.outcome_from_result(result)
+    }
+
+    /// Compiles and executes a prepared source unit with the register VM.
+    pub fn run_prepared_vm(&mut self, program: PreparedProgram) -> RunOutcome {
+        if program.interpreter_id != self.instance_id
+            || program.module_index >= self.parsed_modules.len()
+        {
+            return RunOutcome {
+                value: None,
+                diagnostics: vec![Diagnostic::error(
+                    "prepared program belongs to a different interpreter",
+                )],
+            };
+        }
+        crate::engine::vm_runner::run(self, program)
     }
 
     fn outcome_from_result(&mut self, result: Result<Value, Signal>) -> RunOutcome {
@@ -275,11 +329,7 @@ impl Default for Interpreter {
 
 fn register_natives(interpreter: &mut Interpreter) {
     // Register all native definitions
-    crate::native::numbers::register(&mut interpreter.natives);
-    crate::native::strings::register(&mut interpreter.natives);
-    crate::native::lists::register(&mut interpreter.natives);
-    crate::native::types::register(&mut interpreter.natives);
-    crate::native::console::register(&mut interpreter.natives);
+    crate::native::register_core(&mut interpreter.natives);
 
     let definitions = interpreter
         .natives
@@ -287,18 +337,7 @@ fn register_natives(interpreter: &mut Interpreter) {
         .map(|(id, definition)| (id, definition.name))
         .collect::<Vec<_>>();
     for (id, name) in definitions {
-        let namespace = match name {
-            "+" | "-" | "*" | "/" | "<" | ">" | "=" => None,
-            "div" | "mod" | "int" => Some("Math"),
-            "concat" | "length" | "byte_length" | "slice" | "chars" | "code_point"
-            | "from_code_point" | "string" | "lower" | "upper" | "trim" | "contains?"
-            | "starts_with?" | "ends_with?" | "replace" | "split" | "join" => Some("String"),
-            "push" | "append" | "head" | "rest" | "empty?" => Some("List"),
-            "types" | "is?" => Some("Types"),
-            "println" => Some("Console"),
-            "not" => Some("Logic"),
-            _ => None,
-        };
+        let namespace = crate::native::core_namespace(name);
         if let Some(namespace) = namespace {
             bind_native_member(interpreter, namespace, name, id);
             // Core natives remain available to the implementation prelude.

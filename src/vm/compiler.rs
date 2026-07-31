@@ -6,7 +6,11 @@ use crate::{
     syntax::ast::{BindingKind, BlockId, LoopKind, Module, NodeId, NodeKind, Pattern, Visibility},
 };
 
+use super::analysis::ScopeAnalysis;
 use super::ir::{Function, Instruction, NamespaceBinding, Primitive, Program, Register};
+
+mod blocks;
+mod patterns;
 
 pub fn compile(module: &Module) -> Result<Program, Vec<Diagnostic>> {
     compile_module(module, 0)
@@ -16,9 +20,35 @@ pub fn compile_module(module: &Module, module_index: usize) -> Result<Program, V
     Compiler::new(module, module_index).compile()
 }
 
+pub fn compile_module_with_globals(
+    module: &Module,
+    module_index: usize,
+    globals: impl IntoIterator<Item = (Arc<str>, Value)>,
+) -> Result<Program, Vec<Diagnostic>> {
+    let mut compiler = Compiler::new(module, module_index);
+    compiler.install_globals(globals);
+    compiler.compile()
+}
+
+fn next_program_id() -> u64 {
+    static NEXT_PROGRAM_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT_PROGRAM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn dense_spans(
+    instruction_count: usize,
+    spans: &HashMap<usize, crate::source::Span>,
+) -> Vec<Option<crate::source::Span>> {
+    (0..instruction_count)
+        .map(|instruction| spans.get(&instruction).copied())
+        .collect()
+}
+
 fn empty_function() -> Function {
     Function {
+        name: Arc::from("<uncompiled>"),
         instructions: Vec::new(),
+        instruction_spans: Vec::new(),
         register_count: 0,
         capture_count: 0,
         binding_registers: Vec::new(),
@@ -29,6 +59,7 @@ struct Compiler<'a> {
     module: &'a Module,
     constants: Vec<Value>,
     instructions: Vec<Instruction>,
+    instruction_spans: HashMap<usize, crate::source::Span>,
     locals: HashMap<Arc<str>, Local>,
     functions: HashMap<Arc<str>, u16>,
     compiled_functions: Vec<Function>,
@@ -38,13 +69,13 @@ struct Compiler<'a> {
     next_register: u16,
     diagnostics: Vec<Diagnostic>,
     binding_registers: Vec<Register>,
+    initial_bindings: Vec<(Register, Value)>,
     module_index: usize,
 }
 
 #[derive(Clone, Copy)]
 struct Local {
     register: Register,
-    mutable: bool,
     block: Option<BlockId>,
     binding: bool,
 }
@@ -62,6 +93,7 @@ impl<'a> Compiler<'a> {
             module,
             constants: Vec::new(),
             instructions: Vec::new(),
+            instruction_spans: HashMap::new(),
             locals: HashMap::new(),
             functions: HashMap::new(),
             compiled_functions: Vec::new(),
@@ -71,6 +103,7 @@ impl<'a> Compiler<'a> {
             next_register: 0,
             diagnostics: Vec::new(),
             binding_registers: Vec::new(),
+            initial_bindings: Vec::new(),
             module_index,
         }
     }
@@ -99,15 +132,16 @@ impl<'a> Compiler<'a> {
             }
             self.compiled_functions.push(empty_function());
         }
-        self.predeclare_module_bindings();
+        let module_analysis = ScopeAnalysis::module(self.module);
+        self.apply_scope_analysis(&module_analysis);
         let mut module_captures = self
             .locals
             .iter()
             .map(|(name, local)| (name.clone(), *local))
             .collect::<Vec<_>>();
         module_captures.sort_by(|left, right| left.0.cmp(&right.0));
-        for (index, (_, parameter, body, _)) in declarations.iter().enumerate() {
-            self.compile_function(index as u16, parameter, *body, &module_captures);
+        for (index, (name, parameter, body, _)) in declarations.iter().enumerate() {
+            self.compile_function(index as u16, name, parameter, *body, &module_captures);
         }
 
         let mut result = self.load_constant(Value::Unit);
@@ -116,16 +150,23 @@ impl<'a> Compiler<'a> {
                 result = register;
             }
         }
+        let exports = self.module_bindings();
+        self.instructions
+            .push(Instruction::PublishExports { bindings: exports });
         self.instructions
             .push(Instruction::Return { source: result });
 
         if self.diagnostics.is_empty() {
+            let instruction_spans = dense_spans(self.instructions.len(), &self.instruction_spans);
             Ok(Program {
+                id: next_program_id(),
                 constants: self.constants,
                 instructions: self.instructions,
+                instruction_spans,
                 register_count: self.next_register,
                 functions: self.compiled_functions,
                 binding_registers: self.binding_registers,
+                initial_bindings: self.initial_bindings,
                 module_index: self.module_index,
             })
         } else {
@@ -133,7 +174,67 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn install_globals(&mut self, globals: impl IntoIterator<Item = (Arc<str>, Value)>) {
+        for (name, value) in globals {
+            if self.locals.contains_key(&name) {
+                continue;
+            }
+            let binding = self.allocate_register();
+            self.binding_registers.push(binding);
+            self.locals.insert(
+                name.clone(),
+                Local {
+                    register: binding,
+                    block: None,
+                    binding: true,
+                },
+            );
+            self.initial_bindings.push((binding, value));
+        }
+    }
+
+    fn module_bindings(&self) -> Vec<NamespaceBinding> {
+        let mut exports = Vec::new();
+        for statement in &self.module.statements {
+            match &self.module.node(*statement).kind {
+                NodeKind::Binding {
+                    visibility,
+                    pattern,
+                    ..
+                } => collect_pattern_exports(
+                    pattern,
+                    &self.locals,
+                    *visibility == Visibility::Public,
+                    &mut exports,
+                ),
+                NodeKind::Function {
+                    visibility, name, ..
+                } => {
+                    if let Some(local) = self.locals.get(&name.text) {
+                        exports.push(NamespaceBinding {
+                            name: name.text.clone(),
+                            source: local.register,
+                            public: *visibility == Visibility::Public,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        exports
+    }
+
     fn compile_node(&mut self, id: NodeId) -> Option<Register> {
+        let start = self.instructions.len();
+        let result = self.compile_node_inner(id);
+        let span = self.module.node(id).span;
+        for instruction in start..self.instructions.len() {
+            self.instruction_spans.entry(instruction).or_insert(span);
+        }
+        result
+    }
+
+    fn compile_node_inner(&mut self, id: NodeId) -> Option<Register> {
         let node = self.module.node(id);
         match &node.kind {
             NodeKind::Unit => Some(self.load_constant(Value::Unit)),
@@ -163,11 +264,6 @@ impl<'a> Compiler<'a> {
                         destination,
                         binding: local.register,
                         name: name.clone(),
-                    }
-                } else if local.mutable {
-                    Instruction::LoadCell {
-                        destination,
-                        cell: local.register,
                     }
                 } else {
                     Instruction::Move {
@@ -200,7 +296,7 @@ impl<'a> Compiler<'a> {
                 Some(destination)
             }
             NodeKind::Binding {
-                visibility: Visibility::Private,
+                visibility: _,
                 mutability,
                 pattern,
                 value,
@@ -282,6 +378,9 @@ impl<'a> Compiler<'a> {
                     .push(Instruction::Return { source: value });
                 Some(value)
             }
+            NodeKind::Import { .. } | NodeKind::NamespaceImport { .. } => {
+                Some(self.load_constant(Value::Unit))
+            }
             _ => {
                 self.diagnostics.push(Diagnostic::at_error(
                     "construct is not supported by the register VM yet",
@@ -295,11 +394,13 @@ impl<'a> Compiler<'a> {
     fn compile_function(
         &mut self,
         function: u16,
+        name: &Arc<str>,
         parameter: &Pattern,
         body: NodeId,
         captures: &[(Arc<str>, Local)],
     ) {
         let outer_instructions = std::mem::take(&mut self.instructions);
+        let outer_instruction_spans = std::mem::take(&mut self.instruction_spans);
         let outer_locals = std::mem::take(&mut self.locals);
         let outer_loops = std::mem::take(&mut self.loops);
         let outer_attempt_depth = self.attempt_depth;
@@ -315,29 +416,37 @@ impl<'a> Compiler<'a> {
                 name.clone(),
                 Local {
                     register: Register(1 + index as u16),
-                    mutable: local.mutable,
                     block: local.block,
                     binding: local.binding,
                 },
             );
         }
         self.compile_parameter_pattern(parameter, Register(0));
-        if let NodeKind::Block(block) = self.module.node(body).kind {
-            self.predeclare_block_bindings(block);
-        }
+        let inherited_blocks = self
+            .locals
+            .iter()
+            .filter_map(|(name, local)| local.block.map(|block| (name.clone(), block)))
+            .collect();
+        let function_analysis = ScopeAnalysis::function(self.module, body, inherited_blocks);
+        self.apply_scope_analysis(&function_analysis);
         let result = self
             .compile_executable_node(body)
             .unwrap_or_else(|| self.load_constant(Value::Unit));
         self.instructions
             .push(Instruction::Return { source: result });
+        let instructions = std::mem::take(&mut self.instructions);
+        let instruction_spans = dense_spans(instructions.len(), &self.instruction_spans);
         self.compiled_functions[function as usize] = Function {
-            instructions: std::mem::take(&mut self.instructions),
+            name: name.clone(),
+            instructions,
+            instruction_spans,
             register_count: self.next_register,
             capture_count: captures.len() as u16,
             binding_registers: std::mem::take(&mut self.binding_registers),
         };
 
         self.instructions = outer_instructions;
+        self.instruction_spans = outer_instruction_spans;
         self.locals = outer_locals;
         self.loops = outer_loops;
         self.attempt_depth = outer_attempt_depth;
@@ -360,7 +469,7 @@ impl<'a> Compiler<'a> {
         captures.sort_by(|left, right| left.0.cmp(&right.0));
         let function = self.compiled_functions.len() as u16;
         self.compiled_functions.push(empty_function());
-        self.compile_function(function, parameter, body, &captures);
+        self.compile_function(function, &name.text, parameter, body, &captures);
         let destination = self.allocate_register();
         self.instructions.push(Instruction::MakeClosure {
             destination,
@@ -381,121 +490,22 @@ impl<'a> Compiler<'a> {
         Some(self.load_constant(Value::Unit))
     }
 
-    fn compile_parameter_pattern(&mut self, pattern: &Pattern, source: Register) {
-        match pattern {
-            Pattern::Wildcard => {}
-            Pattern::Capture(name) => {
-                self.locals.insert(
-                    name.text.clone(),
-                    Local {
-                        register: source,
-                        mutable: false,
-                        block: None,
-                        binding: false,
-                    },
-                );
+    fn apply_scope_analysis(&mut self, analysis: &ScopeAnalysis) {
+        for name in analysis.declarations() {
+            if let Some(local) = self.locals.get_mut(&name.text) {
+                local.block = local.block.or_else(|| analysis.static_block(&name.text));
+                continue;
             }
-            Pattern::List(patterns) => {
-                self.instructions.push(Instruction::CheckListLength {
-                    source,
-                    length: patterns.len() as u16,
-                    message: Arc::from("function argument does not match its parameter pattern"),
-                });
-                for (index, pattern) in patterns.iter().enumerate() {
-                    let element = self.allocate_register();
-                    self.instructions.push(Instruction::ListGet {
-                        destination: element,
-                        source,
-                        index: index as u16,
-                    });
-                    self.compile_parameter_pattern(pattern, element);
-                }
-            }
-            Pattern::Literal(_) => unreachable!("function parameters use binding patterns"),
-        }
-    }
-
-    fn compile_capture_pattern(
-        &mut self,
-        pattern: &Pattern,
-        source: Register,
-        message: Arc<str>,
-        captures: &mut Vec<(crate::syntax::ast::Name, Register)>,
-    ) {
-        match pattern {
-            Pattern::Wildcard => {}
-            Pattern::Capture(name) => captures.push((name.clone(), source)),
-            Pattern::List(patterns) => {
-                self.instructions.push(Instruction::CheckListLength {
-                    source,
-                    length: patterns.len() as u16,
-                    message: message.clone(),
-                });
-                for (index, pattern) in patterns.iter().enumerate() {
-                    let element = self.allocate_register();
-                    self.instructions.push(Instruction::ListGet {
-                        destination: element,
-                        source,
-                        index: index as u16,
-                    });
-                    self.compile_capture_pattern(pattern, element, message.clone(), captures);
-                }
-            }
-            Pattern::Literal(_) => unreachable!("bindings use capture patterns"),
-        }
-    }
-
-    fn predeclare_block_bindings(&mut self, block: BlockId) {
-        for statement in &self.module.block(block).statements {
-            let mut names = Vec::new();
-            match &self.module.node(*statement).kind {
-                NodeKind::Binding { pattern, .. } => collect_capture_names(pattern, &mut names),
-                NodeKind::Function { name, .. } => names.push(name.clone()),
-                _ => continue,
-            };
-            for name in names {
-                if self.locals.contains_key(&name.text) {
-                    continue;
-                }
-                let register = self.allocate_register();
-                self.binding_registers.push(register);
-                self.locals.insert(
-                    name.text,
-                    Local {
-                        register,
-                        mutable: false,
-                        block: None,
-                        binding: true,
-                    },
-                );
-            }
-        }
-    }
-
-    fn predeclare_module_bindings(&mut self) {
-        for statement in &self.module.statements {
-            let mut names = Vec::new();
-            match &self.module.node(*statement).kind {
-                NodeKind::Binding { pattern, .. } => collect_capture_names(pattern, &mut names),
-                NodeKind::Function { name, .. } => names.push(name.clone()),
-                _ => continue,
-            }
-            for name in names {
-                if self.locals.contains_key(&name.text) {
-                    continue;
-                }
-                let register = self.allocate_register();
-                self.binding_registers.push(register);
-                self.locals.insert(
-                    name.text,
-                    Local {
-                        register,
-                        mutable: false,
-                        block: None,
-                        binding: true,
-                    },
-                );
-            }
+            let register = self.allocate_register();
+            self.binding_registers.push(register);
+            self.locals.insert(
+                name.text.clone(),
+                Local {
+                    register,
+                    block: analysis.static_block(&name.text),
+                    binding: true,
+                },
+            );
         }
     }
 
@@ -526,63 +536,6 @@ impl<'a> Compiler<'a> {
         Some(self.load_constant(Value::Unit))
     }
 
-    fn commit_binding_captures(
-        &mut self,
-        captures: Vec<(crate::syntax::ast::Name, Register)>,
-        mutable: bool,
-        block: Option<BlockId>,
-    ) {
-        let mut seen = std::collections::HashSet::new();
-        if let Some((name, _)) = captures
-            .iter()
-            .find(|(name, _)| !seen.insert(name.text.clone()))
-        {
-            self.instructions.push(Instruction::RaiseTyped {
-                types: vec![Arc::from("error"), Arc::from("match_error")],
-                message: Arc::from(format!("pattern captures `{name}` more than once")),
-            });
-            return;
-        }
-        for (name, source) in captures {
-            if self
-                .locals
-                .get(&name.text)
-                .is_some_and(|local| !local.binding)
-            {
-                self.instructions.push(Instruction::RaiseTyped {
-                    types: vec![Arc::from("error"), Arc::from("name_error")],
-                    message: Arc::from(format!("duplicate binding `{name}` in current scope")),
-                });
-                continue;
-            }
-            let register = if let Some(local) = self.locals.get(&name.text) {
-                local.register
-            } else {
-                let register = self.allocate_register();
-                self.binding_registers.push(register);
-                register
-            };
-            self.instructions.push(Instruction::Bind {
-                binding: register,
-                source,
-                mutable,
-                name: name.text.clone(),
-            });
-            self.locals
-                .entry(name.text.clone())
-                .and_modify(|local| {
-                    local.mutable = mutable;
-                    local.block = block.or(local.block);
-                })
-                .or_insert(Local {
-                    register,
-                    mutable,
-                    block,
-                    binding: true,
-                });
-        }
-    }
-
     fn compile_call(
         &mut self,
         callee: NodeId,
@@ -606,44 +559,6 @@ impl<'a> Compiler<'a> {
             argument,
         });
         Some(destination)
-    }
-
-    fn commit_assignment_captures(&mut self, captures: Vec<(crate::syntax::ast::Name, Register)>) {
-        let mut assignments = Vec::with_capacity(captures.len());
-        for (name, source) in captures {
-            let Some(local) = self.locals.get(&name.text).copied() else {
-                self.diagnostics.push(Diagnostic::at_error(
-                    format!("VM compiler cannot resolve local `{name}`"),
-                    name.span,
-                ));
-                continue;
-            };
-            if !local.binding && !local.mutable {
-                self.diagnostics.push(Diagnostic::at_error(
-                    format!("cannot assign to immutable local `{name}`"),
-                    name.span,
-                ));
-                continue;
-            }
-            assignments.push((name.text, local, source));
-        }
-        if !self.diagnostics.is_empty() {
-            return;
-        }
-        for (name, local, source) in assignments {
-            if local.binding {
-                self.instructions.push(Instruction::StoreBinding {
-                    binding: local.register,
-                    source,
-                    name,
-                });
-            } else {
-                self.instructions.push(Instruction::StoreCell {
-                    cell: local.register,
-                    source,
-                });
-            }
-        }
     }
 
     fn compile_block(&mut self, block: BlockId) -> Register {
@@ -734,219 +649,6 @@ impl<'a> Compiler<'a> {
         let end = self.instructions.len();
         self.patch_jump(end_jump, end);
         destination
-    }
-
-    fn compile_new(&mut self, operand: NodeId, span: crate::source::Span) -> Option<Register> {
-        let Some(block) = self.resolve_static_block(operand) else {
-            self.diagnostics.push(Diagnostic::at_error(
-                "register VM currently requires a statically known block after `new`",
-                span,
-            ));
-            return None;
-        };
-        if matches!(self.module.node(operand).kind, NodeKind::Identifier(_)) {
-            self.compile_node(operand)?;
-        }
-        self.check_block_requirements(block);
-        let outer_locals = self.locals.clone();
-        let mut bindings = Vec::new();
-        let mut names = std::collections::HashSet::new();
-        for statement in self.module.block(block).statements.clone() {
-            let node = self.module.node(statement);
-            match &node.kind {
-                NodeKind::Binding {
-                    visibility,
-                    mutability: BindingKind::Immutable,
-                    pattern: Pattern::Capture(name),
-                    value,
-                } => {
-                    if !names.insert(name.text.clone()) {
-                        self.diagnostics.push(Diagnostic::at_error(
-                            format!("duplicate namespace binding `{name}`"),
-                            name.span,
-                        ));
-                        continue;
-                    }
-                    let block_value = self.resolve_static_block(*value);
-                    let source = self.compile_node(*value)?;
-                    self.locals.insert(
-                        name.text.clone(),
-                        Local {
-                            register: source,
-                            mutable: false,
-                            block: block_value,
-                            binding: false,
-                        },
-                    );
-                    bindings.push(NamespaceBinding {
-                        name: name.text.clone(),
-                        source,
-                        public: *visibility == Visibility::Public,
-                    });
-                }
-                _ => {
-                    self.diagnostics.push(Diagnostic::at_error(
-                        "register VM namespaces currently support immutable value bindings only",
-                        node.span,
-                    ));
-                }
-            }
-        }
-        self.locals = outer_locals;
-        let destination = self.allocate_register();
-        self.instructions.push(Instruction::MakeNamespace {
-            destination,
-            bindings,
-        });
-        Some(destination)
-    }
-
-    fn compile_do(&mut self, operand: NodeId, span: crate::source::Span) -> Option<Register> {
-        let Some(block) = self.resolve_static_block(operand) else {
-            self.diagnostics.push(Diagnostic::at_error(
-                "register VM currently requires a statically known block after `do`",
-                span,
-            ));
-            return None;
-        };
-        if matches!(self.module.node(operand).kind, NodeKind::Identifier(_)) {
-            self.compile_node(operand)?;
-        }
-        self.check_block_requirements(block);
-        Some(self.compile_block(block))
-    }
-
-    fn resolve_static_block(&self, operand: NodeId) -> Option<BlockId> {
-        match &self.module.node(operand).kind {
-            NodeKind::Block(block) => Some(*block),
-            NodeKind::Identifier(name) => self.locals.get(name).and_then(|local| local.block),
-            _ => None,
-        }
-    }
-
-    fn compile_match(
-        &mut self,
-        value: NodeId,
-        arms: &[crate::syntax::ast::MatchArm],
-    ) -> Option<Register> {
-        let value = self.compile_node(value)?;
-        let result = self.allocate_register();
-        let mut end_jumps = Vec::new();
-        for arm in arms {
-            let outer_locals = self.locals.clone();
-            let mut failures = Vec::new();
-            let mut captures = std::collections::HashSet::new();
-            let mut duplicate = None;
-            self.compile_match_pattern(
-                &arm.pattern,
-                value,
-                &mut failures,
-                &mut captures,
-                &mut duplicate,
-            );
-            if let Some(name) = duplicate {
-                self.instructions.push(Instruction::RaiseTyped {
-                    types: vec![Arc::from("error"), Arc::from("match_error")],
-                    message: Arc::from(format!("pattern captures `{name}` more than once")),
-                });
-            }
-            let arm_result = self.compile_block(arm.body);
-            self.instructions.push(Instruction::Move {
-                destination: result,
-                source: arm_result,
-            });
-            let end_jump = self.instructions.len();
-            self.instructions
-                .push(Instruction::Jump { target: usize::MAX });
-            end_jumps.push(end_jump);
-            let next_arm = self.instructions.len();
-            for failure in failures {
-                self.patch_jump(failure, next_arm);
-            }
-            self.locals = outer_locals;
-        }
-        self.instructions.push(Instruction::RaiseTyped {
-            types: vec![Arc::from("error"), Arc::from("match_error")],
-            message: Arc::from("no match arm accepted the value"),
-        });
-        let end = self.instructions.len();
-        for jump in end_jumps {
-            self.patch_jump(jump, end);
-        }
-        Some(result)
-    }
-
-    fn compile_match_pattern(
-        &mut self,
-        pattern: &Pattern,
-        source: Register,
-        failures: &mut Vec<usize>,
-        captures: &mut std::collections::HashSet<Arc<str>>,
-        duplicate: &mut Option<Arc<str>>,
-    ) {
-        match pattern {
-            Pattern::Wildcard => {}
-            Pattern::Capture(name) => {
-                if !captures.insert(name.text.clone()) && duplicate.is_none() {
-                    *duplicate = Some(name.text.clone());
-                }
-                self.locals.insert(
-                    name.text.clone(),
-                    Local {
-                        register: source,
-                        mutable: false,
-                        block: None,
-                        binding: false,
-                    },
-                );
-            }
-            Pattern::Literal(literal) => {
-                let Some(expected) = self.compile_node(*literal) else {
-                    return;
-                };
-                failures.push(self.instructions.len());
-                self.instructions.push(Instruction::JumpIfNotEqual {
-                    left: source,
-                    right: expected,
-                    target: usize::MAX,
-                });
-            }
-            Pattern::List(patterns) => {
-                failures.push(self.instructions.len());
-                self.instructions.push(Instruction::JumpIfNotListLength {
-                    source,
-                    length: patterns.len() as u16,
-                    target: usize::MAX,
-                });
-                for (index, pattern) in patterns.iter().enumerate() {
-                    let element = self.allocate_register();
-                    self.instructions.push(Instruction::ListGet {
-                        destination: element,
-                        source,
-                        index: index as u16,
-                    });
-                    self.compile_match_pattern(pattern, element, failures, captures, duplicate);
-                }
-            }
-        }
-    }
-
-    fn check_block_requirements(&mut self, block: BlockId) {
-        for requirement in &self.module.block(block).requirements {
-            if !self.locals.contains_key(&requirement.text) {
-                self.instructions.push(Instruction::RaiseTyped {
-                    types: vec![
-                        Arc::from("error"),
-                        Arc::from("name_error"),
-                        Arc::from("missing_context"),
-                    ],
-                    message: Arc::from(format!(
-                        "cannot execute block: required context binding `{}` is unavailable",
-                        requirement.text
-                    )),
-                });
-            }
-        }
     }
 
     fn compile_loop(
@@ -1149,12 +851,25 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn collect_capture_names(pattern: &Pattern, names: &mut Vec<crate::syntax::ast::Name>) {
+fn collect_pattern_exports(
+    pattern: &Pattern,
+    locals: &HashMap<Arc<str>, Local>,
+    public: bool,
+    exports: &mut Vec<NamespaceBinding>,
+) {
     match pattern {
-        Pattern::Capture(name) => names.push(name.clone()),
+        Pattern::Capture(name) => {
+            if let Some(local) = locals.get(&name.text) {
+                exports.push(NamespaceBinding {
+                    name: name.text.clone(),
+                    source: local.register,
+                    public,
+                });
+            }
+        }
         Pattern::List(patterns) => {
             for pattern in patterns {
-                collect_capture_names(pattern, names);
+                collect_pattern_exports(pattern, locals, public, exports);
             }
         }
         Pattern::Wildcard | Pattern::Literal(_) => {}

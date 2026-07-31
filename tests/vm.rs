@@ -33,6 +33,18 @@ fn compile_vm(source: &str) -> pima::vm::Program {
     compile(&module).expect("source should compile")
 }
 
+fn run_vm_with_standard_globals(source: &str) -> Value {
+    let mut sources = SourceMap::default();
+    let source_id = sources.add("<vm-native-test>", source);
+    let tokens = lex(source_id, source).expect("source should lex");
+    let module = parse(&tokens).expect("source should parse");
+    let mut machine = Machine::default();
+    let globals = machine.standard_globals();
+    let program =
+        pima::vm::compile_module_with_globals(&module, 0, globals).expect("source should compile");
+    machine.execute(&program).expect("source should execute")
+}
+
 fn value_type_names(machine: &Machine, value: &Value) -> Vec<String> {
     let Value::Namespace(namespace) = value else {
         panic!("typed value should be a namespace");
@@ -93,6 +105,7 @@ fn register_vm_matches_tree_walker_for_supported_programs() {
         "function choose (:condition :value) {\n    if condition { return value }\n    0\n}\n[choose (true 42)]",
         "function fibonacci (:value) {\n    if [< (value 3)] 1 [+ ([fibonacci ([- (value 1)])] [fibonacci ([- (value 2)])])]\n}\n[fibonacci (10)]",
         "function read () { later }\nval reader read\nval later 42\n[reader ()]",
+        "function read () { later }\nif true { val later 42 }\n[read ()]",
         "function multiplier (:factor) {\n    function apply (:value) { * (factor value) }\n    apply\n}\nval times_six [multiplier (6)]\n[times_six (7)]",
         "function make_adder (:captured) {\n    function add (:value) { + (captured value) }\n    add\n}\nval add_two [make_adder (2)]\nval add_ten [make_adder (10)]\n+ ([add_two (5)] [add_ten (5)])",
         "function make_adder (:captured) {\n    function add (:value) { + (captured value) }\n    add\n}\nval method [make_adder (2)]\nval (:from_list) (method)\n[from_list (40)]",
@@ -100,10 +113,31 @@ fn register_vm_matches_tree_walker_for_supported_programs() {
         "function counter (:start) {\n    var value start\n    function next () {\n        let value [+ (value 1)]\n        value\n    }\n    next\n}\nval first [counter (0)]\n[first ()]\n[first ()]",
         "function counter (:start) {\n    var value start\n    function next () { let value [+ (value 1)] }\n    next\n}\nval first [counter (0)]\nval second [counter (10)]\n+ ([first ()] [first ()] [second ()])",
         "function make_reader () {\n    function read () { later }\n    val reader read\n    val later 42\n    [reader ()]\n}\n[make_reader ()]",
+        "function make_reader () {\n    function read () { later }\n    if true { val later 42 }\n    [read ()]\n}\n[make_reader ()]",
+        "function make_reader () {\n    function read () { later }\n    attempt { val later 42 }\n    [read ()]\n}\n[make_reader ()]",
+        "val setup { val later 42 }\nfunction run () {\n    do setup\n    later\n}\n[run ()]",
+        "val base { val later 42 }\nval setup base\nfunction run () {\n    do setup\n    later\n}\n[run ()]",
+        "var retained 0\nval failure [attempt { let (retained missing) (1 2) }]\nretained",
         "function outer (:value) {\n    function count (:remaining) {\n        if [= (remaining 0)] value [count ([- (remaining 1)])]\n    }\n    [count (3)]\n}\n[outer (42)]",
     ] {
         assert_eq!(run_vm(source), run_tree(source), "{source}");
     }
+}
+
+#[test]
+fn register_vm_calls_standard_native_namespaces() {
+    assert_eq!(
+        run_vm_with_standard_globals("Math.int 42.9"),
+        Value::Integer(42)
+    );
+    assert_eq!(
+        run_vm_with_standard_globals("String.concat (\"pi\" \"ma\")"),
+        Value::String("pima".into())
+    );
+    assert_eq!(
+        run_vm_with_standard_globals("Logic.not false"),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
@@ -196,6 +230,11 @@ fn register_vm_tracks_runtime_binding_initialization() {
         (
             "val failure [attempt { [later ()] }]\nfunction later () { 42 }\nfailure",
             vec!["error", "name_error"],
+        ),
+        ("attempt { let missing 1 }", vec!["error", "name_error"]),
+        (
+            "function update (:value) { attempt { let value 2 } }\n[update (1)]",
+            vec!["error", "mutation_error"],
         ),
     ] {
         let program = compile_vm(source);

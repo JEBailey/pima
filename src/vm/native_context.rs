@@ -3,21 +3,59 @@ use crate::{
     runtime::{SymbolId, SymbolInterner, Value},
 };
 
+#[derive(Debug)]
 pub(crate) struct VmNativeContext {
     symbols: SymbolInterner,
-    working_directory: std::path::PathBuf,
+    host: crate::native::host::HostResources,
+    active_span: Option<crate::source::Span>,
+    stack: Vec<crate::diagnostic::StackFrame>,
 }
 
 impl Default for VmNativeContext {
     fn default() -> Self {
         Self {
             symbols: SymbolInterner::default(),
-            working_directory: std::env::current_dir().unwrap_or_else(|_| ".".into()),
+            host: crate::native::host::HostResources::new(
+                std::env::current_dir().unwrap_or_else(|_| ".".into()),
+            ),
+            active_span: None,
+            stack: Vec::new(),
         }
     }
 }
 
 impl VmNativeContext {
+    pub(crate) fn new(working_directory: std::path::PathBuf) -> Self {
+        Self {
+            symbols: SymbolInterner::default(),
+            host: crate::native::host::HostResources::new(working_directory),
+            active_span: None,
+            stack: Vec::new(),
+        }
+    }
+}
+
+impl VmNativeContext {
+    pub(crate) fn set_execution_metadata(
+        &mut self,
+        span: Option<crate::source::Span>,
+        stack: Vec<crate::diagnostic::StackFrame>,
+    ) {
+        self.active_span = span;
+        self.stack = stack;
+    }
+
+    pub(crate) fn attach_error_metadata(&self, value: &Value) {
+        let (Some(origin), Value::Namespace(namespace)) = (self.active_span, value) else {
+            return;
+        };
+        if namespace.error_metadata.borrow().is_none() {
+            *namespace.error_metadata.borrow_mut() = Some(crate::runtime::ErrorMetadata {
+                origin,
+                stack: self.stack.clone(),
+            });
+        }
+    }
     pub(crate) fn resolve(&self, symbol: SymbolId) -> Option<&str> {
         self.symbols.resolve(symbol)
     }
@@ -51,6 +89,32 @@ impl VmNativeContext {
                 error_metadata: std::cell::RefCell::new(None),
             },
         )))
+    }
+
+    pub(crate) fn make_native_namespace(
+        &mut self,
+        bindings: Vec<(std::sync::Arc<str>, bool, Value)>,
+    ) -> Value {
+        let mut environment = crate::runtime::Environment::new(None);
+        for (name, public, value) in bindings {
+            environment.bindings.insert(
+                self.symbols.intern(&name),
+                crate::runtime::Binding {
+                    value,
+                    mutability: crate::runtime::BindingMutability::Immutable,
+                    visibility: if public {
+                        crate::runtime::BindingVisibility::Public
+                    } else {
+                        crate::runtime::BindingVisibility::Private
+                    },
+                },
+            );
+        }
+        Value::Namespace(dumpster::unsync::Gc::new(crate::runtime::Namespace {
+            environment: dumpster::unsync::Gc::new(std::cell::RefCell::new(environment)),
+            types: Vec::new(),
+            error_metadata: std::cell::RefCell::new(None),
+        }))
     }
 
     pub(crate) fn load_member(&mut self, value: Value, name: &str) -> NativeResult {
@@ -89,13 +153,16 @@ impl VmNativeContext {
         if let Err(message) = crate::runtime::throwable_error(&mut self.symbols, &value) {
             return self.typed_error(&["error", "type_error"], message);
         }
+        self.attach_error_metadata(&value);
         value
     }
 }
 
 impl NativeContext for VmNativeContext {
     fn typed_error(&mut self, types: &[&str], message: String) -> Value {
-        crate::runtime::create_typed_error(&mut self.symbols, types, message)
+        let value = crate::runtime::create_typed_error(&mut self.symbols, types, message);
+        self.attach_error_metadata(&value);
+        value
     }
     fn intern_symbol(&mut self, name: &str) -> SymbolId {
         self.symbols.intern(name)
@@ -107,34 +174,52 @@ impl NativeContext for VmNativeContext {
         namespace.types.clone()
     }
     fn working_directory(&self) -> &std::path::Path {
-        &self.working_directory
+        self.host.working_directory()
     }
-    fn tcp_listen(&mut self, _: &str, _: u16) -> Result<crate::runtime::TcpListenerId, String> {
-        Err("TCP is not available in the register VM yet".into())
+    fn tcp_listen(
+        &mut self,
+        address: &str,
+        port: u16,
+    ) -> Result<crate::runtime::TcpListenerId, String> {
+        self.host.listen(address, port)
     }
     fn tcp_accept(
         &mut self,
-        _: crate::runtime::TcpListenerId,
+        listener: crate::runtime::TcpListenerId,
     ) -> Result<crate::runtime::TcpConnectionId, String> {
-        Err("TCP is not available in the register VM yet".into())
+        self.host.accept(listener)
     }
-    fn tcp_read(&mut self, _: crate::runtime::TcpConnectionId, _: usize) -> Result<String, String> {
-        Err("TCP is not available in the register VM yet".into())
+    fn tcp_read(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        maximum: usize,
+    ) -> Result<String, String> {
+        self.host.read(connection, maximum)
     }
-    fn tcp_write(&mut self, _: crate::runtime::TcpConnectionId, _: &str) -> Result<(), String> {
-        Err("TCP is not available in the register VM yet".into())
+    fn tcp_write(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+        text: &str,
+    ) -> Result<(), String> {
+        self.host.write(connection, text)
     }
     fn tcp_set_timeout(
         &mut self,
-        _: crate::runtime::TcpConnectionId,
-        _: u64,
+        connection: crate::runtime::TcpConnectionId,
+        milliseconds: u64,
     ) -> Result<(), String> {
-        Err("TCP is not available in the register VM yet".into())
+        self.host.set_timeout(connection, milliseconds)
     }
-    fn tcp_close_listener(&mut self, _: crate::runtime::TcpListenerId) -> Result<(), String> {
-        Err("TCP is not available in the register VM yet".into())
+    fn tcp_close_listener(
+        &mut self,
+        listener: crate::runtime::TcpListenerId,
+    ) -> Result<(), String> {
+        self.host.close_listener(listener)
     }
-    fn tcp_close_connection(&mut self, _: crate::runtime::TcpConnectionId) -> Result<(), String> {
-        Err("TCP is not available in the register VM yet".into())
+    fn tcp_close_connection(
+        &mut self,
+        connection: crate::runtime::TcpConnectionId,
+    ) -> Result<(), String> {
+        self.host.close_connection(connection)
     }
 }

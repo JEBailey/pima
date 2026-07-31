@@ -37,17 +37,26 @@ being reported as VM compiler failures.
 Unsupported AST constructs produce compiler diagnostics rather than falling
 back silently to the tree walker.
 
-Functions compile to ordinary runtime closure values containing a function id
-and captured slots. Their declarations bind shared, initially uninitialized
-cells at the point where the declaration executes. This preserves declaration
-timing while allowing recursion and references to bindings initialized later.
-Dynamic calls restore captures into the callee frame. Mutable bindings use the
-same cells, so closures observe later `let` updates instead of copied snapshots.
+Functions compile to ordinary runtime closure values containing a compiled
+program id, function id, and captured slots. The machine retains loaded
+programs by id, and each call frame selects its owning program's constants,
+function table, and module identity. This lets exported closures cross compiled
+module boundaries without interpreting them against the caller's tables. Declarations
+bind shared, initially uninitialized cells at the point where the declaration
+executes. A separate analysis pass finds bindings and static block identities
+in expressions and executable blocks that share the current scope, while
+stopping at actual child scopes. It expands literal and named `do` blocks,
+resolves block aliases, and guards expansion cycles.
+This preserves declaration timing while allowing recursion and references to
+bindings initialized later. Dynamic calls restore captures into the callee
+frame. Mutable bindings use the same cells, so closures observe later `let`
+updates instead of copied snapshots.
 
 Destructuring first validates and extracts the complete pattern, then commits
 its bindings or assignments. A failed nested pattern therefore cannot leave a
-partial mutation behind. Shape failures and invalid runtime binding operations
-become typed Pima errors and can be caught by `attempt`.
+partial mutation behind. Shape failures and invalid runtime binding operations,
+including unknown or immutable `let` targets, become typed Pima errors and can
+be caught by `attempt`.
 
 VM cells participate in the same tracing collector as tree-walk environments.
 Slots trace language values, closure capture arrays, and nested cells. Closure
@@ -60,20 +69,39 @@ can cross lists, namespace members, results, registers, and captures without
 construct-specific conversion code. VM binding cells remain an internal slot
 detail and participate in the same tracing collector.
 
+Both engines delegate working-directory and TCP resource ownership to the same
+`native::host::HostResources` implementation. Their execution contexts retain
+engine-specific symbol and diagnostic state while sharing host behavior.
+
+`Interpreter::new_vm` selects the register VM for the ordinary `run_source` and
+`run_prepared` APIs; `run_source_vm` and `run_prepared_vm` also provide explicit
+per-call entry points. The interpreter retains one machine, its loaded compiled
+programs, module cache, and session globals, so declarations and closures remain
+usable across source submissions just as they do in the tree walker.
+
+VM module initialization resolves file and virtual imports recursively before
+lowering the importing module. Compiled modules publish bindings with their
+declared visibility; unaliased imports expose public members, aliases retain a
+namespace value, and selected namespace imports are resolved from the linked
+globals. Imported closures retain their owning program id and dispatch through
+that program's constants and function table. `/pima/io`, `/pima/tcp`, and the
+Pima standard library use this same path.
+
 Primitive VM instructions resolve through the shared native registry and invoke
 the same native function pointers as the tree walker. Native failures remain
 typed Pima namespace values in `VmError::Typed`; internal bytecode faults remain
-separate host diagnostics. The VM native context currently supports numeric
-primitives and symbol/error services. Filesystem and TCP context operations are
-deferred until module and host-resource integration.
+separate host diagnostics. The VM currently lowers numeric primitives and
+symbol/error services. Shared filesystem and TCP host operations are available
+to native functions as their namespaces and imports gain VM lowering.
 
 `attempt` records its frame depth, catch instruction, and destination register.
 A typed native failure or explicit `throw` unwinds to the nearest record and
 places the error in that register. Normal completion removes the record, while
 `return`, `break`, and `continue` emit cleanup for any handlers they cross.
 Thrown values and namespace type lists use shared runtime validation in both
-engines. Source and call-stack metadata remain deferred
-until VM instructions carry source spans.
+engines. Compiled instructions carry AST source spans, functions retain their
+declared names, and VM errors attach their origin and cross-program call stack
+before they are caught or returned as host diagnostics.
 
 Registers are numbered function-local value slots. The initial IR is kept
 readable and structurally explicit; compact byte encoding is deferred until the
@@ -92,8 +120,9 @@ The migration sequence is:
 9. recursive declaration and assignment destructuring (implemented);
 10. `match` expressions, scoped captures, literals, and fallthrough (implemented);
 11. indirect block dispatch and mutable namespace bindings;
-12. modules and remaining native integration;
-13. source-aware bytecode diagnostics and VM call stacks;
+12. modules and remaining native integration (implemented for file modules,
+    standard/native virtual modules, aliases, and selected imports);
+13. source-aware bytecode diagnostics and VM call stacks (implemented);
 14. optimized call conventions and compact bytecode.
 
 The tree walker remains the semantic oracle during this work. Every VM feature

@@ -1,36 +1,47 @@
 use crate::{
     diagnostic::Diagnostic,
-    native::{NativeContext, NativeDefinition, NativeRegistry},
-    runtime::{SymbolId, Value, VmCell, VmClosure, VmValue as Slot},
+    native::{NativeContext, NativeRegistry},
+    runtime::{NativeFunctionId, SymbolId, Value, VmCell, VmClosure, VmValue as Slot},
 };
 
 use super::ir::{Instruction, Primitive, Program};
 use super::native_context::VmNativeContext;
 
+#[derive(Debug)]
 pub struct Machine {
-    primitive_natives: Vec<NativeDefinition>,
+    natives: NativeRegistry,
+    primitive_natives: Vec<NativeFunctionId>,
     context: VmNativeContext,
+    programs: std::collections::HashMap<u64, Program>,
+    module_exports: std::collections::HashMap<u64, Value>,
 }
 
 impl Default for Machine {
     fn default() -> Self {
+        Self::with_context(VmNativeContext::default())
+    }
+}
+
+impl Machine {
+    fn with_context(context: VmNativeContext) -> Self {
         let mut natives = NativeRegistry::default();
-        crate::native::numbers::register(&mut natives);
+        crate::native::register_core(&mut natives);
+        crate::native::io::register(&mut natives);
+        crate::native::tcp::register(&mut natives);
         let primitive_natives = PRIMITIVES
             .iter()
             .map(|(_, name)| {
-                let id = natives
-                    .find_id(name)
-                    .unwrap_or_else(|| panic!("native primitive `{name}` must be registered"));
                 natives
-                    .get(id)
-                    .unwrap_or_else(|| panic!("native primitive `{name}` must exist"))
-                    .clone()
+                    .find_id(name)
+                    .unwrap_or_else(|| panic!("native primitive `{name}` must be registered"))
             })
             .collect();
         Self {
+            natives,
             primitive_natives,
-            context: VmNativeContext::default(),
+            context,
+            programs: std::collections::HashMap::new(),
+            module_exports: std::collections::HashMap::new(),
         }
     }
 }
@@ -61,16 +72,149 @@ impl From<Diagnostic> for VmError {
 }
 
 impl Machine {
+    pub fn new(working_directory: std::path::PathBuf) -> Self {
+        Self::with_context(VmNativeContext::new(working_directory))
+    }
+
+    pub fn standard_globals(&mut self) -> std::collections::HashMap<std::sync::Arc<str>, Value> {
+        let definitions = self
+            .natives
+            .iter_with_ids()
+            .map(|(id, definition)| (id, definition.name))
+            .collect::<Vec<_>>();
+        let mut globals = std::collections::HashMap::new();
+        let mut namespaces = std::collections::HashMap::<&str, Vec<_>>::new();
+        for (id, name) in definitions {
+            if let Some(namespace) = crate::native::core_namespace(name) {
+                namespaces.entry(namespace).or_default().push((
+                    std::sync::Arc::from(name),
+                    true,
+                    Value::NativeFunction(id),
+                ));
+            } else if matches!(name, "+" | "-" | "*" | "/" | "<" | ">" | "=") {
+                globals.insert(std::sync::Arc::from(name), Value::NativeFunction(id));
+            }
+        }
+        for (name, bindings) in namespaces {
+            let namespace = self.context.make_native_namespace(bindings);
+            globals.insert(std::sync::Arc::from(name), namespace);
+        }
+        globals
+    }
+
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Option<&str> {
         self.context.resolve(symbol)
     }
 
+    pub fn exported_globals(
+        &self,
+        program: &Program,
+    ) -> std::collections::HashMap<std::sync::Arc<str>, Value> {
+        let Some(Value::Namespace(namespace)) = self.module_exports.get(&program.id) else {
+            return std::collections::HashMap::new();
+        };
+        namespace
+            .environment
+            .borrow()
+            .bindings
+            .iter()
+            .filter_map(|(symbol, binding)| {
+                Some((
+                    std::sync::Arc::from(self.resolve_symbol(*symbol)?),
+                    binding.value.clone(),
+                ))
+            })
+            .collect()
+    }
+
+    pub fn exported_namespace(&self, program: &Program) -> Option<Value> {
+        self.module_exports.get(&program.id).cloned()
+    }
+
+    pub fn namespace_globals(
+        &self,
+        value: &Value,
+    ) -> std::collections::HashMap<std::sync::Arc<str>, Value> {
+        let Value::Namespace(namespace) = value else {
+            return std::collections::HashMap::new();
+        };
+        namespace
+            .environment
+            .borrow()
+            .bindings
+            .iter()
+            .filter_map(|(symbol, binding)| {
+                (binding.visibility == crate::runtime::BindingVisibility::Public).then(|| {
+                    Some((
+                        std::sync::Arc::from(self.resolve_symbol(*symbol)?),
+                        binding.value.clone(),
+                    ))
+                })?
+            })
+            .collect()
+    }
+
+    pub(crate) fn native_module(&mut self, exports: &[(&str, &str)]) -> Result<Value, Diagnostic> {
+        let mut bindings = Vec::new();
+        for &(public_name, native_name) in exports {
+            let native = self.natives.find_id(native_name).ok_or_else(|| {
+                Diagnostic::error(format!("native function `{native_name}` is not registered"))
+            })?;
+            bindings.push((
+                std::sync::Arc::from(public_name),
+                true,
+                Value::NativeFunction(native),
+            ));
+        }
+        Ok(self.context.make_native_namespace(bindings))
+    }
+
+    pub fn diagnostic(&self, error: VmError) -> Diagnostic {
+        match error {
+            VmError::Internal(diagnostic) => diagnostic,
+            VmError::Typed(value) => {
+                let (message, metadata) = match value {
+                    Value::Namespace(namespace) => {
+                        let message = namespace
+                            .environment
+                            .borrow()
+                            .bindings
+                            .iter()
+                            .find(|(symbol, _)| self.resolve_symbol(**symbol) == Some("message"))
+                            .and_then(|(_, binding)| match &binding.value {
+                                Value::String(message) => Some(message.to_string()),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| "<error>".into());
+                        (message, namespace.error_metadata.borrow().clone())
+                    }
+                    _ => ("<error>".into(), None),
+                };
+                Diagnostic {
+                    severity: crate::diagnostic::Severity::Error,
+                    message,
+                    primary_span: metadata.as_ref().map(|metadata| metadata.origin),
+                    stack: metadata.map(|metadata| metadata.stack).unwrap_or_default(),
+                }
+            }
+        }
+    }
+
     pub fn execute(&mut self, program: &Program) -> Result<Value, VmError> {
+        self.programs
+            .entry(program.id)
+            .or_insert_with(|| program.clone());
         let mut frames = vec![Frame {
+            program: program.id,
             function: None,
             instruction_pointer: 0,
-            registers: initialize_registers(program.register_count, &program.binding_registers),
+            registers: initialize_registers(
+                program.register_count,
+                &program.binding_registers,
+                &program.initial_bindings,
+            ),
             return_destination: None,
+            call_span: None,
         }];
         let mut handlers = Vec::new();
         'dispatch: loop {
@@ -78,6 +222,10 @@ impl Machine {
                 .len()
                 .checked_sub(1)
                 .expect("VM must retain an entry frame until return");
+            let program = self
+                .programs
+                .get(&frames[frame_index].program)
+                .ok_or_else(|| VmError::internal("VM frame refers to an unloaded program"))?;
             let instructions = match frames[frame_index].function {
                 Some(function) => &program.functions[function as usize].instructions,
                 None => &program.instructions,
@@ -86,6 +234,32 @@ impl Machine {
             else {
                 return Err(VmError::internal("register VM program did not return"));
             };
+            let instruction_index = frames[frame_index].instruction_pointer;
+            let active_span = match frames[frame_index].function {
+                Some(function) => program.functions[function as usize]
+                    .instruction_spans
+                    .get(instruction_index)
+                    .copied()
+                    .flatten(),
+                None => program
+                    .instruction_spans
+                    .get(instruction_index)
+                    .copied()
+                    .flatten(),
+            };
+            let stack = frames
+                .iter()
+                .filter_map(|frame| {
+                    let function = frame.function?;
+                    let owner = self.programs.get(&frame.program)?;
+                    Some(crate::diagnostic::StackFrame {
+                        name: owner.functions[function as usize].name.to_string(),
+                        span: frame.call_span?,
+                    })
+                })
+                .rev()
+                .collect();
+            self.context.set_execution_metadata(active_span, stack);
             frames[frame_index].instruction_pointer += 1;
             let frame = &mut frames[frame_index];
             match instruction {
@@ -142,12 +316,16 @@ impl Machine {
                     name,
                 } => match frame.registers[binding.0 as usize].clone() {
                     Slot::Cell(cell) if cell.mutable.get().is_none() => {
-                        let error = self.context.typed_error(
-                            &["error", "name_error"],
-                            format!("unbound identifier `{name}`"),
-                        );
-                        catch_typed_error(&mut frames, &mut handlers, error)?;
-                        continue 'dispatch;
+                        if let Some(fallback) = &cell.fallback {
+                            frame.registers[destination.0 as usize] = fallback.clone();
+                        } else {
+                            let error = self.context.typed_error(
+                                &["error", "name_error"],
+                                format!("unbound identifier `{name}`"),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
                     }
                     Slot::Cell(cell) => {
                         frame.registers[destination.0 as usize] = cell.value.borrow().clone();
@@ -162,10 +340,18 @@ impl Machine {
                     let value = frame.registers[source.0 as usize].clone();
                     match frame.registers[binding.0 as usize].clone() {
                         Slot::Cell(cell) if cell.mutable.get().is_none() => {
-                            let error = self.context.typed_error(
-                                &["error", "name_error"],
-                                format!("unbound identifier `{name}` for assignment"),
-                            );
+                            let (types, message) = if cell.fallback.is_some() {
+                                (
+                                    &["error", "mutation_error"][..],
+                                    format!("cannot assign to immutable binding `{name}`"),
+                                )
+                            } else {
+                                (
+                                    &["error", "name_error"][..],
+                                    format!("unbound identifier `{name}` for assignment"),
+                                )
+                            };
+                            let error = self.context.typed_error(types, message);
                             catch_typed_error(&mut frames, &mut handlers, error)?;
                             continue 'dispatch;
                         }
@@ -182,29 +368,6 @@ impl Machine {
                             return Err(VmError::internal("STORE_BINDING requires a binding cell"));
                         }
                     }
-                }
-                Instruction::MakeCell {
-                    destination,
-                    source,
-                } => {
-                    frame.registers[destination.0 as usize] =
-                        Slot::Cell(dumpster::unsync::Gc::new(VmCell::new(
-                            frame.registers[source.0 as usize].clone(),
-                        )));
-                }
-                Instruction::LoadCell { destination, cell } => {
-                    let Slot::Cell(cell) = frame.registers[cell.0 as usize].clone() else {
-                        return Err(VmError::internal("LOAD_CELL requires a cell"));
-                    };
-                    let value = cell.value.borrow().clone();
-                    frame.registers[destination.0 as usize] = value;
-                }
-                Instruction::StoreCell { cell, source } => {
-                    let value = frame.registers[source.0 as usize].clone();
-                    let Slot::Cell(cell) = frame.registers[cell.0 as usize].clone() else {
-                        return Err(VmError::internal("STORE_CELL requires a cell"));
-                    };
-                    *cell.value.borrow_mut() = value;
                 }
                 Instruction::MakeList {
                     destination,
@@ -328,7 +491,10 @@ impl Machine {
                             .collect::<Result<Vec<_>, _>>()?;
                         heap_arguments.as_slice()
                     };
-                    let definition = &self.primitive_natives[primitive_index(*primitive)];
+                    let definition = self
+                        .natives
+                        .get(self.primitive_natives[primitive_index(*primitive)])
+                        .expect("cached primitive id must remain registered");
                     match (definition.call)(&mut self.context, arguments) {
                         Ok(value) => {
                             frame.registers[destination.0 as usize] = Slot::Value(value);
@@ -377,6 +543,7 @@ impl Machine {
                 } => {
                     frame.registers[destination.0 as usize] =
                         Slot::Value(Value::VmClosure(dumpster::unsync::Gc::new(VmClosure {
+                            program: program.id,
                             function: *function,
                             captures: captures
                                 .iter()
@@ -389,33 +556,77 @@ impl Machine {
                     callee,
                     argument,
                 } => {
-                    let callee = frame.registers[callee.0 as usize].clone();
-                    let Slot::Value(Value::VmClosure(closure)) = callee else {
-                        let value = language_value(&callee)?;
+                    let callee = language_value(&frame.registers[callee.0 as usize])?;
+                    if let Value::NativeFunction(native) = callee {
+                        let argument = language_value(&frame.registers[argument.0 as usize])?;
+                        let arguments = match argument {
+                            Value::List(values) => values.to_vec(),
+                            value => vec![value],
+                        };
+                        let definition = self
+                            .natives
+                            .get(native)
+                            .ok_or_else(|| VmError::internal("invalid native function id"))?;
+                        if !definition.arity.check(arguments.len()) {
+                            let error = self.context.typed_error(
+                                &["error", "arity_error"],
+                                format!(
+                                    "native function `{}` argument list has the wrong length",
+                                    definition.name
+                                ),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
+                        match (definition.call)(&mut self.context, &arguments) {
+                            Ok(value) => {
+                                frame.registers[destination.0 as usize] = Slot::Value(value)
+                            }
+                            Err(error) => {
+                                catch_typed_error(&mut frames, &mut handlers, error)?;
+                                continue 'dispatch;
+                            }
+                        }
+                        continue 'dispatch;
+                    }
+                    let Value::VmClosure(closure) = callee else {
                         let error = self.context.typed_error(
                             &["error", "type_error"],
-                            format!("cannot call value of type {}", value.type_symbol()),
+                            format!("cannot call value of type {}", callee.type_symbol()),
                         );
                         catch_typed_error(&mut frames, &mut handlers, error)?;
                         continue 'dispatch;
                     };
                     let function = closure.function;
                     let captures = closure.captures.clone();
-                    let compiled = &program.functions[function as usize];
+                    let Some(owner) = self.programs.get(&closure.program) else {
+                        let error = self.context.typed_error(
+                            &["error", "link_error"],
+                            "function's compiled module is not loaded in this VM".into(),
+                        );
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    };
+                    let compiled = &owner.functions[function as usize];
                     if captures.len() != compiled.capture_count as usize {
                         return Err(VmError::internal("VM closure capture count mismatch"));
                     }
-                    let mut registers =
-                        initialize_registers(compiled.register_count, &compiled.binding_registers);
+                    let mut registers = initialize_registers(
+                        compiled.register_count,
+                        &compiled.binding_registers,
+                        &[],
+                    );
                     registers[0] = frame.registers[argument.0 as usize].clone();
                     for (index, capture) in captures.into_iter().enumerate() {
                         registers[index + 1] = capture;
                     }
                     frames.push(Frame {
+                        program: closure.program,
                         function: Some(function),
                         instruction_pointer: 0,
                         registers,
                         return_destination: Some(*destination),
+                        call_span: active_span,
                     });
                 }
                 Instruction::BeginAttempt {
@@ -448,6 +659,20 @@ impl Machine {
                     catch_typed_error(&mut frames, &mut handlers, error)?;
                     continue 'dispatch;
                 }
+                Instruction::PublishExports { bindings } => {
+                    let bindings = bindings
+                        .iter()
+                        .map(|binding| {
+                            Ok((
+                                binding.name.clone(),
+                                binding.public,
+                                exported_value(&frame.registers[binding.source.0 as usize])?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, Diagnostic>>()?;
+                    let namespace = self.context.make_native_namespace(bindings);
+                    self.module_exports.insert(program.id, namespace);
+                }
                 Instruction::Return { source } => {
                     let value = frame.registers[source.0 as usize].clone();
                     let destination = frame.return_destination;
@@ -468,29 +693,45 @@ fn language_value(value: &Slot) -> Result<Value, Diagnostic> {
     language_value_ref(value).cloned()
 }
 
+fn exported_value(value: &Slot) -> Result<Value, Diagnostic> {
+    match value {
+        Slot::Cell(cell) => language_value(&cell.value.borrow()),
+        value => language_value(value),
+    }
+}
+
 fn language_value_ref(value: &Slot) -> Result<&Value, Diagnostic> {
     match value {
         Slot::Value(value) => Ok(value),
-        Slot::Uninitialized | Slot::Cell(_) => Err(Diagnostic::error(
-            "internal VM storage cannot cross the language-value boundary",
-        )),
+        Slot::Uninitialized | Slot::Cell(_) => Err(Diagnostic::error(format!(
+            "internal VM storage cannot cross the language-value boundary: {value:?}"
+        ))),
     }
 }
 
 struct Frame {
+    program: u64,
     function: Option<u16>,
     instruction_pointer: usize,
     registers: Vec<Slot>,
     return_destination: Option<super::ir::Register>,
+    call_span: Option<crate::source::Span>,
 }
 
 fn initialize_registers(
     register_count: u16,
     binding_registers: &[super::ir::Register],
+    initial_bindings: &[(super::ir::Register, Value)],
 ) -> Vec<Slot> {
     let mut registers = vec![Slot::Uninitialized; register_count as usize];
+    let initial_bindings = initial_bindings
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashMap<_, _>>();
     for register in binding_registers {
-        registers[register.0 as usize] = Slot::Cell(dumpster::unsync::Gc::new(VmCell::binding()));
+        let fallback = initial_bindings.get(register).cloned().map(Slot::Value);
+        registers[register.0 as usize] =
+            Slot::Cell(dumpster::unsync::Gc::new(VmCell::binding(fallback)));
     }
     registers
 }
@@ -535,3 +776,79 @@ const PRIMITIVES: [(Primitive, &str); 9] = [
     (Primitive::GreaterThan, ">"),
     (Primitive::Equal, "="),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vm::ir::{Function, Register};
+
+    #[test]
+    fn calls_closures_owned_by_another_loaded_program() {
+        let owner = Program {
+            id: 1,
+            constants: vec![Value::Integer(42)],
+            instructions: vec![
+                Instruction::MakeClosure {
+                    destination: Register(0),
+                    function: 0,
+                    captures: Vec::new(),
+                },
+                Instruction::Return {
+                    source: Register(0),
+                },
+            ],
+            instruction_spans: vec![None; 2],
+            register_count: 1,
+            functions: vec![Function {
+                name: std::sync::Arc::from("answer"),
+                instructions: vec![
+                    Instruction::LoadConstant {
+                        destination: Register(1),
+                        constant: 0,
+                    },
+                    Instruction::Return {
+                        source: Register(1),
+                    },
+                ],
+                instruction_spans: vec![None; 2],
+                register_count: 2,
+                capture_count: 0,
+                binding_registers: Vec::new(),
+            }],
+            binding_registers: Vec::new(),
+            initial_bindings: Vec::new(),
+            module_index: 0,
+        };
+        let mut machine = Machine::default();
+        let closure = machine.execute(&owner).unwrap();
+        let caller = Program {
+            id: 2,
+            constants: vec![closure, Value::Unit],
+            instructions: vec![
+                Instruction::LoadConstant {
+                    destination: Register(0),
+                    constant: 0,
+                },
+                Instruction::LoadConstant {
+                    destination: Register(1),
+                    constant: 1,
+                },
+                Instruction::CallDynamic {
+                    destination: Register(2),
+                    callee: Register(0),
+                    argument: Register(1),
+                },
+                Instruction::Return {
+                    source: Register(2),
+                },
+            ],
+            instruction_spans: vec![None; 4],
+            register_count: 3,
+            functions: Vec::new(),
+            binding_registers: Vec::new(),
+            initial_bindings: Vec::new(),
+            module_index: 0,
+        };
+        assert_eq!(machine.execute(&caller).unwrap(), Value::Integer(42));
+    }
+}

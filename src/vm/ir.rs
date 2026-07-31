@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use crate::runtime::Value;
+use crate::source::Span;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Register(pub u16);
 
 #[derive(Clone, Debug)]
@@ -59,18 +60,6 @@ pub enum Instruction {
         binding: Register,
         source: Register,
         name: Arc<str>,
-    },
-    MakeCell {
-        destination: Register,
-        source: Register,
-    },
-    LoadCell {
-        destination: Register,
-        cell: Register,
-    },
-    StoreCell {
-        cell: Register,
-        source: Register,
     },
     MakeList {
         destination: Register,
@@ -145,6 +134,9 @@ pub enum Instruction {
         types: Vec<Arc<str>>,
         message: Arc<str>,
     },
+    PublishExports {
+        bindings: Vec<NamespaceBinding>,
+    },
     Return {
         source: Register,
     },
@@ -152,17 +144,22 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub(crate) id: u64,
     pub(crate) constants: Vec<Value>,
     pub(crate) instructions: Vec<Instruction>,
+    pub(crate) instruction_spans: Vec<Option<Span>>,
     pub(crate) register_count: u16,
     pub(crate) functions: Vec<Function>,
     pub(crate) binding_registers: Vec<Register>,
+    pub(crate) initial_bindings: Vec<(Register, Value)>,
     pub(crate) module_index: usize,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Function {
+    pub(crate) name: Arc<str>,
     pub(crate) instructions: Vec<Instruction>,
+    pub(crate) instruction_spans: Vec<Option<Span>>,
     pub(crate) register_count: u16,
     pub(crate) capture_count: u16,
     pub(crate) binding_registers: Vec<Register>,
