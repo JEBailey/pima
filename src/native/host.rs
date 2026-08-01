@@ -147,7 +147,7 @@ impl HostResources {
 
     pub(crate) fn task_complete(&self, handle: crate::runtime::TaskHandle) -> Result<bool, String> {
         self.concurrency
-            .task_complete(handle)
+            .task_complete(&handle)
             .map_err(str::to_owned)
     }
 
@@ -156,7 +156,7 @@ impl HostResources {
         handle: crate::runtime::TaskHandle,
     ) -> Result<Result<crate::runtime::TransportValue, crate::runtime::TransportError>, String>
     {
-        self.concurrency.await_task(handle).map_err(str::to_owned)
+        self.concurrency.await_task(&handle).map_err(str::to_owned)
     }
 
     pub(crate) fn working_directory(&self) -> &Path {
@@ -254,7 +254,7 @@ fn deliver_remote_reply(
             let _ = sender.send(result);
         }
         crate::runtime::RemoteReply::Task(task) => {
-            let _ = concurrency.complete_task(task, result);
+            let _ = concurrency.complete_task(&task, result);
         }
     }
 }

@@ -200,7 +200,7 @@ existing language errors:
 
 The compiler implements composition by extending `new` lowering to recognize a
 list of statically known blocks. It analyzes all participating declarations,
-resolves precedence, and emits one `MakeObject` for the final set of
+resolves precedence, and emits one internal `MakeNamespace` instruction for the final set of
 bindings. `remote` packages those same blocks as a worker blueprint, where the
 ordinary `new` lowering applies the identical rules.
 No contract table, `CheckContract` instruction, runtime reflection API, or new

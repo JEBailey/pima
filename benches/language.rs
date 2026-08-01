@@ -553,7 +553,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     let interpreter_namespace_program = interpreter_namespace
         .prepare_source("<benchmark>", namespace_source)
         .expect("benchmark source should prepare");
-    group.bench_function("interpreter_vm/namespace_construct", |b| {
+    group.bench_function("interpreter_vm/object_construct", |b| {
         b.iter(|| {
             let outcome = interpreter_namespace.run_prepared(interpreter_namespace_program);
             assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -561,12 +561,12 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
     let namespace_program = compile_vm_source(namespace_source);
-    group.bench_function("register_vm/namespace_construct", |b| {
+    group.bench_function("register_vm/object_construct", |b| {
         b.iter(|| {
             black_box(
                 machine
                     .execute(&namespace_program)
-                    .expect("namespace benchmark should execute"),
+                    .expect("object benchmark should execute"),
             );
         });
     });

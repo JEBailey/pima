@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Condvar, Mutex, mpsc},
+    sync::{Arc, Condvar, Mutex, Weak, mpsc},
 };
 
 use super::{PersistentList, SymbolId, Value};
@@ -25,10 +25,42 @@ impl RemoteNamespaceHandle {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub struct TaskHandle {
     hub: u64,
     task: u64,
+    _lease: Arc<TaskLease>,
+}
+
+#[derive(Debug)]
+struct TaskLease {
+    task: u64,
+    hub: Weak<HubShared>,
+}
+
+impl Drop for TaskLease {
+    fn drop(&mut self) {
+        let Some(hub) = self.hub.upgrade() else {
+            return;
+        };
+        let mut state = hub.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.tasks.remove(&self.task);
+    }
+}
+
+impl PartialEq for TaskHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.hub == other.hub && self.task == other.task
+    }
+}
+
+impl Eq for TaskHandle {}
+
+impl std::hash::Hash for TaskHandle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hub.hash(state);
+        self.task.hash(state);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,15 +94,22 @@ pub(crate) enum RemoteReply {
 }
 
 impl TaskHandle {
-    pub(crate) fn new(hub: u64, task: u64) -> Self {
-        Self { hub, task }
+    fn new(hub: u64, task: u64, shared: &Arc<HubShared>) -> Self {
+        Self {
+            hub,
+            task,
+            _lease: Arc::new(TaskLease {
+                task,
+                hub: Arc::downgrade(shared),
+            }),
+        }
     }
 
-    pub(crate) fn hub(self) -> u64 {
+    pub(crate) fn hub(&self) -> u64 {
         self.hub
     }
 
-    pub(crate) fn task(self) -> u64 {
+    pub(crate) fn task(&self) -> u64 {
         self.task
     }
 }
@@ -178,6 +217,11 @@ struct RemoteEntry {
 #[derive(Debug)]
 pub(crate) struct ConcurrencyHub {
     id: u64,
+    shared: Arc<HubShared>,
+}
+
+#[derive(Debug)]
+struct HubShared {
     state: Mutex<HubState>,
     completed: Condvar,
 }
@@ -187,14 +231,20 @@ impl ConcurrencyHub {
         static NEXT_HUB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             id: NEXT_HUB.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            state: Mutex::new(HubState::default()),
-            completed: Condvar::new(),
+            shared: Arc::new(HubShared {
+                state: Mutex::new(HubState::default()),
+                completed: Condvar::new(),
+            }),
         }
     }
 
     #[allow(dead_code)] // safe identity reservation precedes worker blueprint support
     pub(crate) fn reserve_remote(&self) -> RemoteNamespaceHandle {
-        let mut state = self.state.lock().expect("concurrency hub mutex poisoned");
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("concurrency hub mutex poisoned");
         let object = state.next_object;
         state.next_object += 1;
         state.remotes.insert(
@@ -213,7 +263,11 @@ impl ConcurrencyHub {
         sender: mpsc::Sender<RemoteRequest>,
         public_functions: Vec<std::sync::Arc<str>>,
     ) -> RemoteNamespaceHandle {
-        let mut state = self.state.lock().expect("concurrency hub mutex poisoned");
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("concurrency hub mutex poisoned");
         let object = state.next_object;
         state.next_object += 1;
         state.remotes.insert(
@@ -229,24 +283,29 @@ impl ConcurrencyHub {
 
     pub(crate) fn remote_alive(&self, handle: RemoteNamespaceHandle) -> Result<bool, &'static str> {
         self.validate_hub(handle.hub())?;
-        self.state
+        Ok(self
+            .shared
+            .state
             .lock()
             .expect("concurrency hub mutex poisoned")
             .remotes
             .get(&handle.object())
             .map(|remote| remote.alive)
-            .ok_or("unknown remote object")
+            .unwrap_or(false))
     }
 
     pub(crate) fn stop_remote(&self, handle: RemoteNamespaceHandle) -> Result<(), &'static str> {
         self.validate_hub(handle.hub())?;
-        let mut state = self.state.lock().expect("concurrency hub mutex poisoned");
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("concurrency hub mutex poisoned");
         let remote = state
             .remotes
-            .get_mut(&handle.object())
+            .remove(&handle.object())
             .ok_or("unknown remote object")?;
-        remote.alive = false;
-        if let Some(sender) = &remote.sender {
+        if let Some(sender) = remote.sender {
             let (reply, _) = mpsc::channel();
             let _ = sender.send(RemoteRequest {
                 operation: RemoteOperation::Stop,
@@ -262,7 +321,8 @@ impl ConcurrencyHub {
         member: &str,
     ) -> Result<bool, &'static str> {
         self.validate_hub(handle.hub())?;
-        self.state
+        self.shared
+            .state
             .lock()
             .expect("concurrency hub mutex poisoned")
             .remotes
@@ -283,7 +343,11 @@ impl ConcurrencyHub {
     ) -> Result<TaskHandle, &'static str> {
         self.validate_hub(handle.hub())?;
         let sender = {
-            let state = self.state.lock().expect("concurrency hub mutex poisoned");
+            let state = self
+                .shared
+                .state
+                .lock()
+                .expect("concurrency hub mutex poisoned");
             let remote = state
                 .remotes
                 .get(&handle.object())
@@ -300,12 +364,12 @@ impl ConcurrencyHub {
         if sender
             .send(RemoteRequest {
                 operation,
-                reply: RemoteReply::Task(task),
+                reply: RemoteReply::Task(task.clone()),
             })
             .is_err()
         {
             let _ = self.complete_task(
-                task,
+                &task,
                 Err(TransportError {
                     types: vec![
                         std::sync::Arc::from("error"),
@@ -320,32 +384,41 @@ impl ConcurrencyHub {
     }
 
     pub(crate) fn create_task(&self) -> TaskHandle {
-        let mut state = self.state.lock().expect("concurrency hub mutex poisoned");
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("concurrency hub mutex poisoned");
         let task = state.next_task;
         state.next_task += 1;
         state.tasks.insert(task, TaskState::Pending);
-        TaskHandle::new(self.id, task)
+        TaskHandle::new(self.id, task, &self.shared)
     }
 
     pub(crate) fn complete_task(
         &self,
-        handle: TaskHandle,
+        handle: &TaskHandle,
         result: Result<TransportValue, TransportError>,
     ) -> Result<(), &'static str> {
         self.validate_hub(handle.hub())?;
-        let mut state = self.state.lock().expect("concurrency hub mutex poisoned");
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("concurrency hub mutex poisoned");
         let task = state.tasks.get_mut(&handle.task()).ok_or("unknown task")?;
         if matches!(task, TaskState::Complete(_)) {
             return Err("task is already complete");
         }
         *task = TaskState::Complete(result);
-        self.completed.notify_all();
+        self.shared.completed.notify_all();
         Ok(())
     }
 
-    pub(crate) fn task_complete(&self, handle: TaskHandle) -> Result<bool, &'static str> {
+    pub(crate) fn task_complete(&self, handle: &TaskHandle) -> Result<bool, &'static str> {
         self.validate_hub(handle.hub())?;
-        self.state
+        self.shared
+            .state
             .lock()
             .expect("concurrency hub mutex poisoned")
             .tasks
@@ -356,14 +429,19 @@ impl ConcurrencyHub {
 
     pub(crate) fn await_task(
         &self,
-        handle: TaskHandle,
+        handle: &TaskHandle,
     ) -> Result<Result<TransportValue, TransportError>, &'static str> {
         self.validate_hub(handle.hub())?;
-        let mut state = self.state.lock().expect("concurrency hub mutex poisoned");
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("concurrency hub mutex poisoned");
         loop {
             match state.tasks.get(&handle.task()) {
                 Some(TaskState::Pending) => {
                     state = self
+                        .shared
                         .completed
                         .wait(state)
                         .expect("concurrency hub mutex poisoned");
@@ -392,21 +470,22 @@ mod tests {
         let hub = Arc::new(ConcurrencyHub::new());
         let task = hub.create_task();
         let worker_hub = Arc::clone(&hub);
+        let worker_task = task.clone();
         std::thread::spawn(move || {
             worker_hub
-                .complete_task(task, Ok(TransportValue::Integer(42)))
+                .complete_task(&worker_task, Ok(TransportValue::Integer(42)))
                 .expect("worker should complete task");
         })
         .join()
         .expect("worker should not panic");
 
-        assert!(hub.task_complete(task).expect("task should exist"));
+        assert!(hub.task_complete(&task).expect("task should exist"));
         assert_eq!(
-            hub.await_task(task).expect("future should be awaitable"),
+            hub.await_task(&task).expect("future should be awaitable"),
             Ok(TransportValue::Integer(42))
         );
         assert_eq!(
-            hub.await_task(task)
+            hub.await_task(&task)
                 .expect("future should remain awaitable"),
             Ok(TransportValue::Integer(42))
         );
@@ -417,18 +496,32 @@ mod tests {
         let hub = Arc::new(ConcurrencyHub::new());
         let task = hub.create_task();
         let worker_hub = Arc::clone(&hub);
+        let worker_task = task.clone();
         let worker = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(5));
             worker_hub
-                .complete_task(task, Ok(TransportValue::Boolean(true)))
+                .complete_task(&worker_task, Ok(TransportValue::Boolean(true)))
                 .expect("worker should complete task");
         });
 
         assert_eq!(
-            hub.await_task(task).expect("future should be awaitable"),
+            hub.await_task(&task).expect("future should be awaitable"),
             Ok(TransportValue::Boolean(true))
         );
         worker.join().expect("worker should not panic");
+    }
+
+    #[test]
+    fn dropping_the_last_future_handle_releases_its_result() {
+        let hub = ConcurrencyHub::new();
+        let task = hub.create_task();
+        hub.complete_task(&task, Ok(TransportValue::Integer(42)))
+            .expect("task should complete");
+        assert_eq!(hub.shared.state.lock().expect("hub state").tasks.len(), 1);
+
+        drop(task);
+
+        assert!(hub.shared.state.lock().expect("hub state").tasks.is_empty());
     }
 
     #[test]
@@ -441,5 +534,14 @@ mod tests {
         assert!(second.remote_alive(remote).is_err());
         first.stop_remote(remote).expect("remote should stop");
         assert_eq!(first.remote_alive(remote), Ok(false));
+        assert!(
+            first
+                .shared
+                .state
+                .lock()
+                .expect("hub state")
+                .remotes
+                .is_empty()
+        );
     }
 }

@@ -107,15 +107,11 @@ impl Backend {
             .write()
             .expect("analysis lock poisoned")
             .remove(&uri);
-        self.workspace
-            .write()
-            .expect("workspace lock poisoned")
-            .upsert(uri.clone(), text);
-
         let client = self.client.clone();
         let documents = self.documents.clone();
         let analyses = self.analyses.clone();
         let versions = self.versions.clone();
+        let workspace = self.workspace.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(75)).await;
             if versions.read().expect("version lock poisoned").get(&uri) != Some(&version) {
@@ -134,6 +130,10 @@ impl Backend {
                 return;
             }
             let diagnostics = analysis.diagnostics.clone();
+            workspace
+                .write()
+                .expect("workspace lock poisoned")
+                .upsert(uri.clone(), text);
             analyses
                 .write()
                 .expect("analysis lock poisoned")

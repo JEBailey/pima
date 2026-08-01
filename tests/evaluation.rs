@@ -1341,14 +1341,6 @@ fn int_from_float_truncates() {
 // int(0.0) is valid — converts to 0
 // Actual NaN/Infinity tests would need float literals that produce them
 
-// ── Error handling ──
-
-#[test]
-fn throw_and_attempt() {
-    // This requires error namespaces to be implemented
-    // Placeholder - will work after error system
-}
-
 // ── Imports ──
 
 #[test]
@@ -1427,9 +1419,8 @@ fn selected_namespace_imports_are_live_read_only_views() {
 
 #[test]
 fn selected_namespace_import_enforces_visibility_and_collisions() {
-    let private = run(
-        "val :Template { val :hidden 1 }\nval :object [new Template]\nimport object.hidden\n",
-    );
+    let private =
+        run("val :Template { val :hidden 1 }\nval :object [new Template]\nimport object.hidden\n");
     assert!(!private.is_success());
     assert!(private.diagnostics[0].message.contains("private"));
 
@@ -1466,23 +1457,6 @@ fn break_outside_loop_is_error() {
 #[test]
 fn continue_outside_loop_is_error() {
     assert!(!run("continue").is_success());
-}
-
-// ── Conformance examples ──
-
-#[test]
-fn fibonacci_example_runs() {
-    // The fibonacci example expects [fibonacci 12] = 144
-    // Uses <= from standard lib
-    // Placeholder until stdlib + imports work
-}
-
-#[test]
-fn object_test_example_runs() {
-    // square1.area = 400 (length=5, width=80)
-    // square2.area = 400 (independent)
-    // After set_width 40: square1.area = 200
-    // Placeholder until objects fully work
 }
 
 // ── Immediate call syntax ──

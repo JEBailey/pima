@@ -37,8 +37,8 @@ pub trait NativeContext {
         &mut self,
         connection: crate::runtime::TcpConnectionId,
     ) -> Result<(), String>;
-    /// Return the type symbols for a namespace value (without the ":namespace" prefix).
-    /// Returns empty list for non-namespace values.
+    /// Return the type symbols for an object value (without the ":object" prefix).
+    /// Returns an empty list for non-object values.
     fn namespace_type_symbols(
         &self,
         namespace: &crate::runtime::NamespaceRef,

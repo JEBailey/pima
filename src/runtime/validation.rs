@@ -22,15 +22,7 @@ pub fn namespace_types(
         return Err("object `types` must be a list".into());
     };
     let fundamental = [
-        "unit",
-        "boolean",
-        "integer",
-        "float",
-        "string",
-        "symbol",
-        "list",
-        "function",
-        "block",
+        "unit", "boolean", "integer", "float", "string", "symbol", "list", "function", "block",
         "object",
     ]
     .into_iter()

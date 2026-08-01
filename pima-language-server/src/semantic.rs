@@ -694,7 +694,8 @@ mod tests {
 
     #[test]
     fn branch_arms_resolve_in_the_surrounding_scope_and_infer_results() {
-        let source = "val :score 75\nval :response branch ([< score 60] \"fail\" true \"pass\")\nresponse\n";
+        let source =
+            "val :score 75\nval :response branch ([< score 60] \"fail\" true \"pass\")\nresponse\n";
         let model = model(source);
         let response = model
             .symbols

@@ -722,8 +722,7 @@ impl Parser<'_> {
 
     fn parse_namespace_import(&mut self, start: Span) -> ParseResult<NodeId> {
         let mut names = Vec::new();
-        let (first, first_span) =
-            self.expect_identifier("expected object name after `import`")?;
+        let (first, first_span) = self.expect_identifier("expected object name after `import`")?;
         names.push(Name {
             text: first,
             span: first_span,

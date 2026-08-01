@@ -31,7 +31,7 @@ Pima has a **structural type tag system**, not a type system in the traditional 
 
 | Component | Role | Key Constraint |
 |---|---|---|
-| `Value::Object(ObjectRef)` | Runtime value for objects | `ObjectRef = Gc<Object>` |
+| `Value::Namespace(NamespaceRef)` | Internal runtime representation of Pima objects | `NamespaceRef = Gc<Namespace>` |
 | `Object` | Holds environment + type list + error metadata | `environment: EnvironmentRef`, `types: Vec<SymbolId>` |
 | `Environment` | Map of `SymbolId → Binding` | `IndexMap<SymbolId, Binding>` in `RefCell<Gc>` |
 | `Binding` | Value + mutability + visibility | `value: Value`, `mutability: Immutable\|Mutable`, `visibility: Private\|Public` |
@@ -39,13 +39,13 @@ Pima has a **structural type tag system**, not a type system in the traditional 
 
 ### VM IR for Objects
 
-- `MakeObject { destination, bindings }` — Creates an object from a list of `{name, source: Register, public: bool}`. Each source register is read and linked into the object.
+- `MakeNamespace { destination, bindings }` — Creates an object from a list of `{name, source: Register, public: bool}`. Each source register is read and linked into the object.
 - `LoadMember { destination, object, name }` — Loads a public member by name. Enforces visibility at runtime.
-- No IR instruction exists for type checking, field validation, or invariant enforcement beyond what `MakeObject` does via `context.make_object()`.
+- No IR instruction exists for type checking, field validation, or invariant enforcement beyond what `MakeNamespace` does via `context.make_namespace()`.
 
 ### Compiler for `new`
 
-The compiler (`vm/compiler/blocks.rs::compile_new`) walks the template block's statements, extracts bindings and functions, then emits a single `MakeObject` instruction. It does not validate that the template satisfies any schema or that instances will have specific members.
+The compiler (`vm/compiler/blocks.rs::compile_new`) walks the template block's statements, extracts bindings and functions, then emits a single `MakeNamespace` instruction. It does not validate that the template satisfies any schema or that instances will have specific members.
 
 ### What the Spec Says
 
@@ -75,7 +75,7 @@ The spec's type model is deliberately dynamic: "Pima is dynamically and strongly
 
 **The idea:** A compile-time `type` declaration that defines a named shape — a required set of fields with optional type tags — enforced at `new` time.
 
-**Why it fits Pima:** Pima already has object templates as blocks. A `type` declaration annotates a template with its contract. The compiler validates `MakeObject` against the contract, emitting compile-time diagnostics for missing required fields.
+**Why it fits Pima:** Pima already has object templates as blocks. A `type` declaration annotates a template with its contract. The compiler validates `MakeNamespace` against the contract, emitting compile-time diagnostics for missing required fields.
 
 ```pima
 // Declare a type contract
@@ -377,7 +377,7 @@ function :handle_request (req) -> HttpResponse {
 
 **Risk:** Low. Stays within the existing object model. Compile-time checks are optimistic (warn on known violations), runtime checks are the source of truth.
 
-**Dependency:** None. Builds on existing `MakeObject` and `new` compilation.
+**Dependency:** None. Builds on existing `MakeNamespace` and `new` compilation.
 
 **Impact:** Immediately useful. Every object in Pima code can be typed. Catches bugs at `new` time instead of at field access time.
 
