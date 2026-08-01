@@ -8,7 +8,7 @@ register-based virtual machine in Rust. Its central ideas are:
 - physical line endings terminate statements;
 - square brackets invoke immediately;
 - braces produce uninstantiated code blocks;
-- `@(:name...) { ... }` declares a block's required execution context;
+- `@(name...) { ... }` declares a block's required execution context;
 - `do` executes a block in the current environment;
 - bindings are immutable unless declared with `var`;
 - objects are private by default and expose members with `pub`;
@@ -61,7 +61,7 @@ An unsuccessful run has no value.
 ```pima
 import "/pima/library/standard"
 
-function factorial (:number) {
+function factorial (number) {
     if [<= number 1] {
         1
     } {
@@ -71,6 +71,36 @@ function factorial (:number) {
 
 [factorial 6]
 ```
+
+The planned ownership-aware context contract for remote objects keeps context
+requirements on the object template:
+
+```pima
+val Worker @(
+    configuration
+    (:move input)
+    (:share database)
+) {
+    pub function run {
+        // configuration is an immutable snapshot
+        // input is owned exclusively by this worker
+        // database is a shared remote handle
+    }
+}
+
+val configuration (:host "127.0.0.1" :port 8080)
+val input [tcp.accept listener]
+val database [remote Database]
+
+val worker [remote Worker]
+[worker.run]
+```
+
+`configuration`, `input`, and `database` must already be visible where
+`remote Worker` is evaluated. A bare requirement implies `:copy`; `:move`
+transfers ownership and leaves the source binding moved; `:share` passes a
+synchronized remote or future handle. These ownership qualifiers are a design
+direction and are not implemented yet.
 
 More complete programs live in `examples/`, including a JSON parser and a
 directory-backed static file server core.

@@ -8,10 +8,10 @@ mod tests {
 
     #[test]
     fn formats_nested_blocks_and_preserves_comments() {
-        let source = "function :read (value) {\n// comment\nif true {\nvalue   \n} {\n0\n}\n}\n";
+        let source = "function read (value) {\n// comment\nif true {\nvalue   \n} {\n0\n}\n}\n";
         assert_eq!(
             format(source, 4).expect("format"),
-            "function :read (value) {\n    // comment\n    if true {\n        value\n    } {\n        0\n    }\n}\n"
+            "function read (value) {\n    // comment\n    if true {\n        value\n    } {\n        0\n    }\n}\n"
         );
     }
 

@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn resolves_parameters_locals_and_recursive_functions() {
-        let source = "function :sum (value) {\n    val :next [+ value 1]\n    sum next\n}\n";
+        let source = "function sum (value) {\n    val next [+ value 1]\n    sum next\n}\n";
         let model = model(source);
         assert_eq!(model.symbols.len(), 3);
 
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn resolves_match_captures_only_inside_the_arm() {
-        let source = "val :result (:good 42)\nmatch result (\n    (:good value) { value }\n)\n";
+        let source = "val result (:good 42)\nmatch result (\n    (:good value) { value }\n)\n";
         let model = model(source);
         let capture = model
             .symbols
@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn lexical_shadowing_keeps_references_with_the_nearest_definition() {
-        let source = "val :value 1\nfunction :read (value) {\n    value\n}\nvalue\n";
+        let source = "val value 1\nfunction read (value) {\n    value\n}\nvalue\n";
         let model = model(source);
         let values = model
             .symbols
@@ -575,8 +575,7 @@ mod tests {
 
     #[test]
     fn infers_remote_and_future_bindings() {
-        let model =
-            model("val :Worker {}\nval :worker [remote Worker]\nval :pending worker.value\n");
+        let model = model("val Worker {}\nval worker [remote Worker]\nval pending worker.value\n");
         let worker = model
             .symbols
             .iter()
@@ -593,7 +592,7 @@ mod tests {
 
     #[test]
     fn assignments_are_references_not_new_definitions() {
-        let source = "var :count 0\nlet :count [+ count 1]\n";
+        let source = "var count 0\nlet count [+ count 1]\n";
         let model = model(source);
         assert_eq!(
             model
@@ -614,7 +613,7 @@ mod tests {
     #[test]
     fn completion_visibility_follows_scope_and_declaration_order() {
         let source =
-            "val :outer 1\nfunction :calculate (input) {\n    val :local input\n    local\n}\n";
+            "val outer 1\nfunction calculate (input) {\n    val local input\n    local\n}\n";
         let model = model(source);
         let inside = source.find("    local\n").expect("inside function");
         let names = model
@@ -641,7 +640,7 @@ mod tests {
 
     #[test]
     fn reports_only_unambiguous_naming_convention_violations() {
-        let source = "val :Point {}\nfunction :parseValue (inputValue) { inputValue }\n";
+        let source = "val Point {}\nfunction parseValue (inputValue) { inputValue }\n";
         let model = model(source);
         let issues = model.naming_issues();
         assert_eq!(issues.len(), 2);
@@ -660,7 +659,7 @@ mod tests {
 
     #[test]
     fn reports_assignment_to_a_resolved_immutable_binding() {
-        let source = "val :fixed 1\nlet :fixed 2\nvar :changing 1\nlet :changing 2\n";
+        let source = "val fixed 1\nlet fixed 2\nvar changing 1\nlet changing 2\n";
         let model = model(source);
         let issues = model.issues().collect::<Vec<_>>();
         assert_eq!(issues.len(), 1);
@@ -670,7 +669,7 @@ mod tests {
 
     #[test]
     fn leaves_function_pattern_matching_to_runtime() {
-        let source = "function :pair (left right) { (left right) }\nval :value [pair 1 2]\n";
+        let source = "function pair (left right) { (left right) }\nval value [pair 1 2]\n";
         let model = model(source);
         let issues = model.issues().collect::<Vec<_>>();
         assert!(issues.is_empty());
@@ -679,7 +678,7 @@ mod tests {
     #[test]
     fn selected_namespace_import_defines_its_local_name() {
         let source =
-            "import \"/pima/library/standard\"\nimport Logic.not as :negate\n[negate false]\n";
+            "import \"/pima/library/standard\"\nimport Logic.not as negate\n[negate false]\n";
         let model = model(source);
         let offset = source.find("[negate").expect("call should exist") + 2;
         let visible = model
@@ -695,7 +694,7 @@ mod tests {
     #[test]
     fn branch_arms_resolve_in_the_surrounding_scope_and_infer_results() {
         let source =
-            "val :score 75\nval :response branch ([< score 60] \"fail\" true \"pass\")\nresponse\n";
+            "val score 75\nval response branch ([< score 60] \"fail\" true \"pass\")\nresponse\n";
         let model = model(source);
         let response = model
             .symbols

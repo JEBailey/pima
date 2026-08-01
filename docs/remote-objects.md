@@ -24,20 +24,20 @@ operation. `await` is the visible synchronization point.
 ## Language Shape
 
 ```pima
-val :worker [remote Worker]
+val worker [remote Worker]
 
-val :status_request worker.status
-val :work_request [worker.process input]
+val status_request worker.status
+val work_request [worker.process input]
 
-val :done [work_request.complete?]
-val :status [await status_request]
-val :result [await work_request]
+val done [work_request.complete?]
+val status [await status_request]
+val result [await work_request]
 ```
 
 Template composition has the same ordered, leftmost-wins semantics as `new`:
 
 ```pima
-val :service [remote (Service Observable Restartable)]
+val service [remote (Service Observable Restartable)]
 ```
 
 `remote` accepts a statically known object template or template list. It
@@ -50,16 +50,16 @@ error; requests made after construction are asynchronous.
 A remote data member read returns a future containing a transported snapshot:
 
 ```pima
-val :pending service.status
-val :status [await pending]
+val pending service.status
+val status [await pending]
 ```
 
 A remote function call transports its argument list, queues the invocation,
 and returns a future:
 
 ```pima
-val :pending [service.process request]
-val :result [await pending]
+val pending [service.process request]
+val result [await pending]
 ```
 
 Futures are immutable handles with one directly callable member:
@@ -78,7 +78,7 @@ If the remote operation throws, the future stores a transportable error record.
 error handling remains valid:
 
 ```pima
-val :outcome [attempt [await pending]]
+val outcome [attempt [await pending]]
 ```
 
 ## Remote Construction Context
@@ -86,15 +86,15 @@ val :outcome [attempt [await pending]]
 Only names explicitly declared by an annotated template are captured:
 
 ```pima
-val :limit 10
+val limit 10
 
-val :Worker @(:limit) {
-    var :processed 0
+val Worker @(limit) {
+    var processed 0
 
-    pub function :limit () limit
+    pub function limit () limit
 }
 
-val :worker [remote Worker]
+val worker [remote Worker]
 ```
 
 `limit` is resolved before the worker starts, transported by value, and

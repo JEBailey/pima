@@ -3,17 +3,17 @@ import "/pima/library/standard"
 
 // Following examples indicate different ways of writing the fib sequence
 
-function :fibonacci (x) {
+function fibonacci (x) {
     if [Math.less_or_equal x 2] 1 [+ [fibonacci [- x 1]] [fibonacci [- x 2]]]
 }
 
-function :fibonacci2 (x) {
+function fibonacci2 (x) {
     if [> x 2] [+ [fibonacci2 [- x 1]] [fibonacci2 [- x 2]]] {
         1
     }
 }
 
-function :fibonacci3 (x) {
+function fibonacci3 (x) {
     if [> x 2] {
         + [fibonacci3 [- x 1]] [fibonacci3 [- x 2]]
     } {

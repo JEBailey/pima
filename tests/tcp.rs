@@ -15,18 +15,18 @@ fn pima_implements_http_over_native_tcp_primitives() {
     drop(probe);
 
     let source = format!(
-        r#"import "http_server_lib.pima" as :http
+        r#"import "http_server_lib.pima" as http
 
-function :response (status reason headers body) {{
+function response (status reason headers body) {{
     new {{
-        pub val :status status
-        pub val :reason reason
-        pub val :headers headers
-        pub val :body body
+        pub val status status
+        pub val reason reason
+        pub val headers headers
+        pub val body body
     }}
 }}
 
-function :handle (request) {{
+function handle (request) {{
     response 200 "OK" (("X-Pima-Method" request.method)) request.target
 }}
 

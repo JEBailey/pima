@@ -10,7 +10,7 @@ use pima::{
 #[test]
 fn parses_destructuring_binding_and_match_patterns() {
     let module = parse_source(
-        "val (:x (:y _)) (1 (2 3))\n\
+        "val (x (y _)) (1 (2 3))\n\
          match (:ok 42) (\n\
              (:ok value) { value }\n\
              (_ _) { 0 }\n\
@@ -56,10 +56,10 @@ fn parses_ordered_branch_pairs() {
 }
 
 #[test]
-fn binding_patterns_use_literal_symbols_as_destinations() {
+fn binding_patterns_use_bare_names_as_destinations() {
     let module = parse_source(
-        "val (:left :right) (1 2)\n\
-         let (:left :right) (3 4)\n",
+        "val (left right) (1 2)\n\
+         let (left right) (3 4)\n",
     );
     for &statement in &module.statements {
         let pattern = match &module.node(statement).kind {
@@ -83,9 +83,9 @@ fn parse_source(source: &str) -> pima::syntax::ast::Module {
 }
 
 #[test]
-fn parses_symbol_parameters_and_function_body() {
+fn parses_function_name_parameters_and_body() {
     let module = parse_source(
-        r#"function :add (x y) {
+        r#"function add (x y) {
     + (x y)
 }"#,
     );
@@ -218,7 +218,7 @@ fn eol_terminates_calls_but_blocks_hold_multiple_statements() {
     let module = parse_source(
         r#"while [< (x 2)] {
     println x
-    let :x [+ (x 1)]
+    let x [+ (x 1)]
 }
 println "done"
 "#,
@@ -310,17 +310,17 @@ fn control_transfers_consume_at_most_one_expression() {
         assert!(diagnostics[0].message.contains("unexpected operand"));
     }
 
-    parse_source("function :f () { return [calculate value] }");
-    parse_source("function :f () { return (1 2) }");
+    parse_source("function f () { return [calculate value] }");
+    parse_source("function f () { return (1 2) }");
 }
 
 #[test]
 fn parses_public_types_binding_and_constructor_expression() {
     let module = parse_source(
-        r#"val :Account {
-    pub val :types (:account)
+        r#"val Account {
+    pub val types (:account)
 }
-val :account [new Account]
+val account [new Account]
 "#,
     );
 
@@ -353,7 +353,7 @@ val :account [new Account]
 
 #[test]
 fn parses_bare_import_path_and_alias() {
-    let module = parse_source("import /pima/library/standard as :standard\n");
+    let module = parse_source("import /pima/library/standard as standard\n");
     let NodeKind::Import { path, alias } = &module.node(module.statements[0]).kind else {
         panic!("expected import");
     };
@@ -363,16 +363,32 @@ fn parses_bare_import_path_and_alias() {
 }
 
 #[test]
-fn rejects_bare_import_aliases() {
+fn rejects_symbol_import_aliases() {
     for source in [
-        "import /pima/library/standard as standard\n",
-        "import Logic.not as negate\n",
+        "import /pima/library/standard as :standard\n",
+        "import Logic.not as :negate\n",
     ] {
         let mut sources = SourceMap::default();
         let source_id = sources.add("<test>", source);
         let tokens = lex(source_id, source).expect("source should lex");
-        let diagnostics = parse(&tokens).expect_err("bare alias should not parse");
-        assert!(diagnostics[0].message.contains("literal alias name"));
+        let diagnostics = parse(&tokens).expect_err("symbol alias should not parse");
+        assert!(diagnostics[0].message.contains("alias name"));
+    }
+}
+
+#[test]
+fn rejects_symbols_in_unambiguous_name_positions() {
+    for source in [
+        "val :answer 42\n",
+        "var :answer 42\n",
+        "let :answer 42\n",
+        "function :answer () 42\n",
+        "val report @(:answer) {}\n",
+    ] {
+        let mut sources = SourceMap::default();
+        let source_id = sources.add("<test>", source);
+        let tokens = lex(source_id, source).expect("source should lex");
+        parse(&tokens).expect_err("quoted symbol should not be accepted as a name");
     }
 }
 
@@ -397,7 +413,7 @@ fn parses_static_namespace_import() {
 
 #[test]
 fn parses_selected_nested_namespace_import_with_alias() {
-    let module = parse_source("import standard.Logic.not as :negate\n");
+    let module = parse_source("import standard.Logic.not as negate\n");
     let NodeKind::NamespaceImport {
         path,
         selection,
@@ -425,8 +441,8 @@ fn parses_selected_nested_namespace_import_with_alias() {
 #[test]
 fn rejects_alias_on_wildcard_namespace_import() {
     let mut sources = SourceMap::default();
-    let source_id = sources.add("<test>", "import Logic.* as :logical\n");
-    let tokens = lex(source_id, "import Logic.* as :logical\n").expect("source should lex");
+    let source_id = sources.add("<test>", "import Logic.* as logical\n");
+    let tokens = lex(source_id, "import Logic.* as logical\n").expect("source should lex");
     let diagnostics = parse(&tokens).expect_err("wildcard alias should not parse");
     assert!(
         diagnostics
@@ -438,16 +454,16 @@ fn rejects_alias_on_wildcard_namespace_import() {
 #[test]
 fn accepts_bare_function_parameters() {
     let mut sources = SourceMap::default();
-    let source_id = sources.add("<test>", "function :add (x y) {}\n");
-    let tokens = lex(source_id, "function :add (x y) {}\n").expect("source should lex");
+    let source_id = sources.add("<test>", "function add (x y) {}\n");
+    let tokens = lex(source_id, "function add (x y) {}\n").expect("source should lex");
     parse(&tokens).expect("bare names are valid function parameter captures");
 }
 
 #[test]
 fn rejects_duplicate_function_parameters() {
     let mut sources = SourceMap::default();
-    let source_id = sources.add("<test>", "function :add (x x) {}\n");
-    let tokens = lex(source_id, "function :add (x x) {}\n").expect("source should lex");
+    let source_id = sources.add("<test>", "function add (x x) {}\n");
+    let tokens = lex(source_id, "function add (x x) {}\n").expect("source should lex");
     let diagnostics = parse(&tokens).expect_err("source should not parse");
 
     assert!(
@@ -460,7 +476,7 @@ fn rejects_duplicate_function_parameters() {
 #[test]
 fn parses_do_as_a_caller_scoped_special_form() {
     let module = parse_source(
-        r#"val :code {
+        r#"val code {
     println "hello"
 }
 do code
@@ -482,7 +498,7 @@ do code
 #[test]
 fn parses_annotated_block_context_requirements() {
     let module = parse_source(
-        "val :report @(:name :score) {\n\
+        "val report @(name score) {\n\
              Console.println (name score)\n\
          }\n",
     );
@@ -504,7 +520,7 @@ fn parses_annotated_block_context_requirements() {
 
 #[test]
 fn preserves_editor_spans_for_declared_names() {
-    let source = "function :add (left right) {\n    val :total [+ (left right)]\n    total\n}\n";
+    let source = "function add (left right) {\n    val total [+ (left right)]\n    total\n}\n";
     let module = parse_source(source);
     let NodeKind::Function {
         name,
@@ -516,7 +532,7 @@ fn preserves_editor_spans_for_declared_names() {
         panic!("expected function");
     };
 
-    assert_eq!(&source[name.span.start..name.span.end], ":add");
+    assert_eq!(&source[name.span.start..name.span.end], "add");
     let pima::syntax::ast::Pattern::List(elements) = parameter else {
         panic!("expected list parameter pattern");
     };
@@ -541,13 +557,13 @@ fn preserves_editor_spans_for_declared_names() {
     let Pattern::Capture(total) = pattern else {
         panic!("expected capture");
     };
-    assert_eq!(&source[total.span.start..total.span.end], ":total");
+    assert_eq!(&source[total.span.start..total.span.end], "total");
 }
 
 #[test]
 fn rejects_duplicate_annotated_block_requirements() {
     let mut sources = SourceMap::default();
-    let text = "val :report @(:name :name) {}\n";
+    let text = "val report @(name name) {}\n";
     let source_id = sources.add("<test>", text);
     let tokens = lex(source_id, text).expect("source should lex");
     let diagnostics = parse(&tokens).expect_err("source should not parse");

@@ -253,7 +253,7 @@ mod tests {
     };
 
     fn documentation() -> super::Documentation {
-        let source = "//! Counters.\n\n/// Current count.\npub val :count 0\n";
+        let source = "//! Counters.\n\n/// Current count.\npub val count 0\n";
         let mut sources = SourceMap::default();
         let id = sources.add("counter.pima", source);
         let module = parse(&lex(id, source).unwrap()).unwrap();

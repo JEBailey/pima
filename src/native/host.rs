@@ -61,7 +61,7 @@ impl HostResources {
                     let value = interpreter.vm.import_transport(value);
                     interpreter.vm_session_globals.insert(name, value);
                 }
-                let initialization_source = format!("val :__remote [new {}]\n", blueprint.source);
+                let initialization_source = format!("val __remote [new {}]\n", blueprint.source);
                 let outcome = interpreter.run_source("<remote-init>", &initialization_source);
                 if !outcome.is_success() {
                     let message = outcome

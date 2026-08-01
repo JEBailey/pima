@@ -1,39 +1,39 @@
 import "/pima/library/standard"
-import "/pima/tcp" as :tcp
+import "/pima/tcp" as tcp
 import Logic.not
 
-val :maximum_header_bytes 16384
+val maximum_header_bytes 16384
 
-function :http_error (message) {
+function http_error (message) {
     throw [new {
-        pub val :types (:error :http_error)
-        pub val :message message
+        pub val types (:error :http_error)
+        pub val message message
     }]
 }
 
-function :response (status reason headers body) {
+function response (status reason headers body) {
     new {
-        pub val :status status
-        pub val :reason reason
-        pub val :headers headers
-        pub val :body body
+        pub val status status
+        pub val reason reason
+        pub val headers headers
+        pub val body body
     }
 }
 
-function :error_response (status reason message) {
+function error_response (status reason message) {
     response status reason (
         ("Content-Type" "text/plain; charset=utf-8")
     ) message
 }
 
-function :read_headers (connection received) {
+function read_headers (connection received) {
     branch (
         [String.contains? received "\r\n\r\n"] received
         [> [String.byte_length received] maximum_header_bytes] {
             http_error "request headers are too large"
         }
         true {
-            val :chunk [tcp.read connection 1024]
+            val chunk [tcp.read connection 1024]
             if [= chunk ""] {
                 http_error "connection closed before request headers completed"
             }
@@ -42,57 +42,57 @@ function :read_headers (connection received) {
     )
 }
 
-function :parse_header (line) {
-    val :parts [String.split line ":"]
+function parse_header (line) {
+    val parts [String.split line ":"]
     if [< [List.length parts] 2] {
         http_error "malformed HTTP header"
     }
-    val :name [String.trim [List.head parts]]
-    val :value [String.trim [String.join [List.rest parts] ":"]]
+    val name [String.trim [List.head parts]]
+    val value [String.trim [String.join [List.rest parts] ":"]]
     if [= name ""] {
         http_error "HTTP header name cannot be empty"
     }
     (name value)
 }
 
-function :parse_headers (lines) {
+function parse_headers (lines) {
     if [List.empty? lines] () {
         List.push [parse_headers [List.rest lines]] [parse_header [List.head lines]]
     }
 }
 
-function :parse_request (source) {
-    val :sections [String.split source "\r\n\r\n"]
-    val :lines [String.split [List.head sections] "\r\n"]
+function parse_request (source) {
+    val sections [String.split source "\r\n\r\n"]
+    val lines [String.split [List.head sections] "\r\n"]
     if [List.empty? lines] {
         http_error "HTTP request line is missing"
     }
 
-    val :request_line [String.split [List.head lines] " "]
+    val request_line [String.split [List.head lines] " "]
     if [not [= [List.length request_line] 3]] {
         http_error "malformed HTTP request line"
     }
-    val :method [List.head request_line]
-    val :target [List.head [List.rest request_line]]
-    val :version [List.head [List.rest [List.rest request_line]]]
+    val method [List.head request_line]
+    val target [List.head [List.rest request_line]]
+    val version [List.head [List.rest [List.rest request_line]]]
     if [not [String.starts_with? version "HTTP/1."]] {
         http_error "only HTTP/1.x requests are supported"
     }
 
     new {
-        pub val :method method
-        pub val :target target
-        pub val :version version
-        pub val :headers [parse_headers [List.rest lines]]
+        pub val method method
+        pub val target target
+        pub val version version
+        pub val headers [parse_headers [List.rest lines]]
     }
 }
 
-function :valid_header? (header) {
+function valid_header? (header) {
     branch (
         [not [= [List.length header] 2]] false
         true {
-            val :name [List.head header]
-            val :value [List.head [List.rest header]]
+            val name [List.head header]
+            val value [List.head [List.rest header]]
             branch (
                 [not [Types.is? name :string]] false
                 [not [Types.is? value :string]] false
@@ -107,9 +107,9 @@ function :valid_header? (header) {
     )
 }
 
-function :serialize_headers (headers) {
+function serialize_headers (headers) {
     if [List.empty? headers] "" {
-        val :header [List.head headers]
+        val header [List.head headers]
         if [not [valid_header? header]] {
             http_error "invalid HTTP response header"
         }
@@ -119,7 +119,7 @@ function :serialize_headers (headers) {
     }
 }
 
-function :serialize_response (result) {
+function serialize_response (result) {
     if [not [Types.is? result.status :integer]] {
         http_error "HTTP response status must be an integer"
     }
@@ -148,14 +148,14 @@ function :serialize_response (result) {
         result.body]
 }
 
-function :dispatch (handler source) {
-    val :request [attempt { parse_request source }]
+function dispatch (handler source) {
+    val request [attempt { parse_request source }]
     branch (
         [Types.is? request :error] {
             error_response 400 "Bad Request" request.message
         }
         true {
-            val :result [attempt { handler request }]
+            val result [attempt { handler request }]
             branch (
                 [Types.is? result :error] {
                     error_response 500 "Internal Server Error" "request handler failed"
@@ -166,11 +166,11 @@ function :dispatch (handler source) {
     )
 }
 
-function :handle_connection (connection handler) {
+function handle_connection (connection handler) {
     tcp.set_timeout connection 5000
-    val :outcome [attempt {
-        val :source [read_headers connection ""]
-        val :result [dispatch handler source]
+    val outcome [attempt {
+        val source [read_headers connection ""]
+        val result [dispatch handler source]
         tcp.write connection [serialize_response result]
     }]
     tcp.close connection
@@ -179,20 +179,20 @@ function :handle_connection (connection handler) {
     }
 }
 
-pub function :serve_once (address port handler) {
-    val :listener [tcp.listen address port]
-    val :connection [tcp.accept listener]
+pub function serve_once (address port handler) {
+    val listener [tcp.listen address port]
+    val connection [tcp.accept listener]
     handle_connection connection handler
     tcp.close listener
 }
 
-function :accept_forever (listener handler) {
-    val :connection [tcp.accept listener]
+function accept_forever (listener handler) {
+    val connection [tcp.accept listener]
     handle_connection connection handler
     accept_forever listener handler
 }
 
-pub function :listen (address port handler) {
-    val :listener [tcp.listen address port]
+pub function listen (address port handler) {
+    val listener [tcp.listen address port]
     accept_forever listener handler
 }

@@ -18,8 +18,8 @@ Pima has a **structural type tag system**, not a type system in the traditional 
 1. **Every value has a type list** — a non-empty list of symbols. The first symbol is the fundamental runtime type (`:integer`, `:string`, `:object`, etc.).
 2. **Type tags are declared by objects** via a `pub val types` member:
    ```pima
-   val :Square {
-       pub val :types (:square :shape)
+   val Square {
+       pub val types (:square :shape)
    }
    ```
    The runtime prepends `:object` automatically, so `Square` instances have type list `(:object :square :shape)`.
@@ -67,7 +67,7 @@ The spec's type model is deliberately dynamic: "Pima is dynamically and strongly
 
 4. **No function signature enforcement** — Functions accept one list argument and pattern-match it. Wrong shapes produce `:match_error` at runtime with no提前 warning.
 
-5. **No way to declare "this object must have these members"** — The annotated block `@(:name :score)` checks context bindings for `do`, but there's no equivalent for object membership contracts.
+5. **No way to declare "this object must have these members"** — The annotated block `@(name score)` checks context bindings for `do`, but there's no equivalent for object membership contracts.
 
 ---
 
@@ -86,22 +86,22 @@ type Counter {
 }
 
 // Define an implementation
-val :MyCounter {
-    pub val :types (:counter)
+val MyCounter {
+    pub val types (:counter)
 
-    var :count 0
+    var count 0
 
-    pub function :increment () {
-        let :count [+ count 1]
+    pub function increment () {
+        let count [+ count 1]
     }
 
-    pub function :get () {
+    pub function get () {
         count
     }
 }
 
 // This succeeds — MyCounter satisfies Counter
-val :c [new MyCounter as Counter]
+val c [new MyCounter as Counter]
 ```
 
 ### Implementation Shape
@@ -163,7 +163,7 @@ pub struct ContractMember {
 (:error :type_error :contract_violation)
   — member `count` required but missing
   — member `increment` required as public function but is private
-  — member `count` required as :integer but is :string
+  — member `count` required as integer but is :string
 ```
 
 ### Why This Is the Right First Step
@@ -179,18 +179,18 @@ It adds enforceable structure to objects without changing Pima's dynamic nature.
 **Why it fits Pima:** Pima already has `Types.is?` for single-symbol tests and `Types.of` for full type lists. A structural checker goes further: it can validate that a value has specific members with specific types, without requiring a compile-time `type` declaration.
 
 ```pima
-import "/pima/typecheck" as :typecheck
+import "/pima/typecheck" as typecheck
 
 // Define a type descriptor (a list of requirements)
-val :counter_schema (
+val counter_schema (
     (:field "count" :integer :immutable :private)
-    (:method "increment" :function :public)
-    (:method "get" :function :public)
+    (:method "increment" :function public)
+    (:method "get" :function public)
 )
 
 // Validate at runtime
-val :c [new MyCounter]
-val :valid [typecheck.matches? c counter_schema]
+val c [new MyCounter]
+val valid [typecheck.matches? c counter_schema]
 
 // Or throw on mismatch
 typecheck.assert (c counter_schema)
@@ -209,7 +209,7 @@ typecheck.assert (c counter_schema)
 **Descriptor format** — A list of requirement specs, each a list:
 ```pima
 (:field "name" :expected-type :mutability :visibility)
-(:method "name" :function :public)
+(:method "name" :function public)
 (:has "name")  // just existence check
 ```
 
@@ -245,8 +245,8 @@ type Result {
 }
 
 // Construct variants
-val :success [Result.ok 42]
-val :failure [Result.error "something went wrong"]
+val success [Result.ok 42]
+val failure [Result.error "something went wrong"]
 
 // Match with exhaustiveness checking
 match success (
@@ -354,7 +354,7 @@ type HttpResponse {
     server_error (:status :message)
 }
 
-function :handle_request (req) -> HttpResponse {
+function handle_request (req) -> HttpResponse {
     match req (
         (:request method path headers body) {
             if [= method "GET"] {

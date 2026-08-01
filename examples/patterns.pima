@@ -1,6 +1,6 @@
 import "/pima/library/standard"
 
-function :describe (result) {
+function describe (result) {
     match result (
         (:ok (name score)) {
             Console.println name "scored" score
@@ -14,5 +14,5 @@ function :describe (result) {
     )
 }
 
-val (:name :score) ("Ada" 42)
+val (name score) ("Ada" 42)
 describe (:ok (name score))

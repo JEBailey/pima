@@ -1,7 +1,7 @@
 # Syntax Consistency Review
 
-Status: design review for reference. Always-list call packing, explicit symbolic
-binding destinations, and unified function/match patterns are implemented.
+Status: design review for reference. Always-list call packing, bare binding
+destinations, and consistent name/symbol interpretation are implemented.
 
 ## Purpose
 
@@ -14,8 +14,8 @@ proposes a smaller set of universal syntax rules.
 
 The language should commit to these principles:
 
-1. Bare names represent bindings.
-2. `:name` always represents a literal symbol.
+1. Syntax determines whether a bare name is declared, captured, or resolved.
+2. `:name` always quotes the name and represents a literal symbol.
 3. Every invocation receives one argument list.
 4. A line or bracket implicitly constructs the outer argument list.
 5. Parentheses explicitly delimit nested lists or list patterns.
@@ -26,7 +26,7 @@ The language should commit to these principles:
 For example:
 
 ```pima
-val :result [divide 10 2]
+val result [divide 10 2]
 
 match result (
     (:ok value) { value }
@@ -36,7 +36,7 @@ match result (
 
 Conceptually:
 
-- `val` receives the literal destination `:result` and its initializer;
+- `val` receives the destination name `result` and its initializer;
 - `divide` receives the argument list `(10 2)`;
 - `match` receives syntax describing its subject and arms;
 - `:ok` and `:error` are literal symbols;
@@ -59,7 +59,7 @@ Every invocation should receive an implicitly constructed outer list:
 Function parameter patterns then consistently describe that argument list:
 
 ```pima
-function :square (value) {
+function square (value) {
     * value value
 }
 ```
@@ -67,7 +67,7 @@ function :square (value) {
 A bare parameter remains useful for capturing the complete argument list:
 
 ```pima
-function :arguments values {
+function arguments values {
     values
 }
 
@@ -78,7 +78,7 @@ Every pair of parentheses adds a list layer. A list can therefore be supplied
 as one operand directly:
 
 ```pima
-function :first (values) {
+function first (values) {
     List.head values
 }
 
@@ -94,21 +94,22 @@ three arguments against a one-element parameter pattern.
 The intended universal distinction is:
 
 ```pima
-foo       // resolve or introduce the binding named foo
-:foo      // the literal symbol :foo
+foo       // declare, capture, or resolve foo according to syntax
+:foo      // quote foo as the literal symbol :foo
 ```
 
 In expression position:
 
 ```pima
-val :foo 42
+val foo 42
 
 foo       // 42
 :foo      // :foo
 ```
 
-An unbound bare name is an error, while a symbol literal is always a valid
-value.
+In expression position an unbound bare name is an error, while a symbol literal
+is always a valid value. In a destination or declaration-name position, the
+bare name is consumed as syntax and is not resolved.
 
 ### Match patterns
 
@@ -127,20 +128,19 @@ match result (
 
 ### Binding destinations and function patterns
 
-Declarations and assignment require literal symbol destinations:
+Declarations and assignment use bare destination names:
 
 ```pima
-val (:left :right) pair
-var :count 0
-let :count 1
+val (left right) pair
+var count 0
+let count 1
 ```
 
-This makes the operation explicit: the form changes the binding named by the
-symbol rather than resolving that name as an expression. Function parameters,
-by contrast, use the same pattern language as `match`:
+The surrounding form already makes the operation explicit, so a colon would
+add no information. Function parameters likewise use bare names as captures:
 
 ```pima
-function :add (left right) {
+function add (left right) {
     + left right
 }
 ```
@@ -148,20 +148,20 @@ function :add (left right) {
 A symbol in a function parameter is therefore a literal constraint:
 
 ```pima
-function :handle (:get path) {
+function handle (:get path) {
     ...
 }
 ```
 
 This function would accept only argument lists beginning with `:get`.
 
-Annotated block requirements remain reasonable:
+Annotated block requirements are also unambiguous name positions:
 
 ```pima
-@(:name :score) { ... }
+@(name score) { ... }
 ```
 
-These are explicitly symbolic name descriptors rather than binding patterns.
+These names describe bindings that must be available when the block executes.
 
 ## Brackets and Invocation
 
@@ -176,7 +176,7 @@ foo 1 2
 is a line invocation, while:
 
 ```pima
-val :result [foo 1 2]
+val result [foo 1 2]
 ```
 
 uses brackets to delimit an invocation inside another form.
@@ -191,7 +191,7 @@ Outside brackets, a bare function name evaluates to the function value. Inside
 brackets, a callee with no operands receives the empty argument list:
 
 ```pima
-val :operation calculate
+val operation calculate
 [operation]
 ```
 
@@ -233,7 +233,7 @@ fully parenthesized special forms are ambiguous with patterns.
 For example:
 
 ```pima
-val (:left :right) pair
+val (left right) pair
 ```
 
 uses `(left right)` as a destructuring pattern. If an opening parenthesis after
@@ -243,7 +243,7 @@ two incompatible parses.
 A fully wrapped form would require another layer:
 
 ```pima
-val ((:left :right) pair)
+val ((left right) pair)
 ```
 
 Supporting both dialects would complicate the grammar without adding runtime
@@ -257,7 +257,7 @@ capability. The recommended rule is therefore:
 The normal source form remains:
 
 ```pima
-val :Counter { ... }
+val Counter { ... }
 ```
 
 ## Parentheses
@@ -350,7 +350,7 @@ three preserves a visible evaluation rule while sharing these conventions:
 Imports use `as` in an otherwise prefix-oriented language:
 
 ```pima
-import "/module" as :module
+import "/module" as module
 ```
 
 This should remain a deliberate grammar exception. Import paths and aliases are
@@ -374,7 +374,7 @@ rather than an infix form such as:
 
 1. **Completed:** Make every call receive an implicit outer list, including
    singleton calls.
-2. **Completed:** Require literal symbols for binding and assignment targets.
+2. **Completed:** Use bare names for binding and assignment targets.
 3. **Completed:** Use the same literal/capture patterns in functions and
    `match`.
 4. Remove the unused `immediate` field from call AST nodes.
@@ -402,8 +402,8 @@ data, patterns, calls, and nested expression boundaries.
 
 ## Required Future Constraint Syntax
 
-Pima must add typed pattern suffixes such as `value:list` and
-`:value:list`. They constrain captures and binding destinations using the
+Pima must add typed pattern suffixes such as `value:list`. They constrain
+captures and binding destinations using the
 value's existing list of type symbols; they do not introduce static typing or
 general expression syntax. The normative future design is recorded in
 [`typed-pattern-constraints.md`](typed-pattern-constraints.md).

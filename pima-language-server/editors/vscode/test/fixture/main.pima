@@ -1,5 +1,5 @@
-val :score 75
-val :response branch (
+val score 75
+val response branch (
     [< (score 60)] "fail"
     [< (score 90)] "pass"
     true "excellent"

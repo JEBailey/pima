@@ -1,22 +1,22 @@
 import "/pima/library/standard"
 
-val :Square {
-	val :length 	5
-	var :width 	80
+val Square {
+	val length 	5
+	var width 	80
 	
-	var :total_area 15
+	var total_area 15
 	
-	pub function :area () {
-		let :total_area [* length width]
+	pub function area () {
+		let total_area [* length width]
 	}
 	
-	pub function :set_width (w) {
-		let :width w
+	pub function set_width (w) {
+		let width w
 	}
 }
 
-val :square1 [new Square]
-val :square2 [new Square]
+val square1 [new Square]
+val square2 [new Square]
 
 Console.println "\n** CREATE OBJECT **"
 Console.println "square1 area :  " [square1.area ]

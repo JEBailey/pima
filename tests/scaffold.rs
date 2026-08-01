@@ -30,7 +30,7 @@ fn interpreter_reports_lexer_errors_before_evaluation() {
 #[test]
 fn interpreter_reports_parser_errors_before_evaluation() {
     let mut interpreter = Interpreter::default();
-    let outcome = interpreter.run_source("<test>", "function :invalid (value)\n");
+    let outcome = interpreter.run_source("<test>", "function invalid (value)\n");
 
     assert!(!outcome.is_success());
     assert!(
@@ -76,7 +76,7 @@ fn interpreter_executes_supported_sources_with_the_register_vm() {
     let mut interpreter = Interpreter::new(Config::default());
     let outcome = interpreter.run_source(
         "<vm-interpreter-test>",
-        "function :answer () { Math.int 42.9 }\n[answer ]",
+        "function answer () { Math.int 42.9 }\n[answer ]",
     );
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
@@ -87,7 +87,7 @@ fn register_vm_diagnostics_retain_source_and_call_stack() {
     let mut interpreter = Interpreter::default();
     let outcome = interpreter.run_source(
         "<vm-diagnostic-test>",
-        "function :fail () { / 1 0 }\n[fail ]",
+        "function fail () { / 1 0 }\n[fail ]",
     );
     assert!(!outcome.is_success());
     let diagnostic = &outcome.diagnostics[0];
@@ -105,7 +105,7 @@ fn register_vm_loads_modules_and_calls_exported_functions() {
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("math.pima"),
-        "pub function :add (left right) { + left right }\n",
+        "pub function add (left right) { + left right }\n",
     )
     .unwrap();
     let mut interpreter = Interpreter::new(Config {
@@ -113,7 +113,7 @@ fn register_vm_loads_modules_and_calls_exported_functions() {
     });
     let outcome = interpreter.run_source(
         "<vm-module-test>",
-        "import \"math.pima\" as :custom\n[custom.add 20 22]",
+        "import \"math.pima\" as custom\n[custom.add 20 22]",
     );
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
@@ -125,14 +125,14 @@ fn register_vm_loads_native_modules_and_selected_members() {
     let mut interpreter = Interpreter::default();
     let native = interpreter.run_source(
         "<vm-native-module-test>",
-        "import /pima/io as :io\n[io.current_directory ]",
+        "import /pima/io as io\n[io.current_directory ]",
     );
     assert!(native.is_success(), "{:?}", native.diagnostics);
     assert!(matches!(native.value, Some(pima::Value::String(_))));
 
     let selected = interpreter.run_source(
         "<vm-selected-import-test>",
-        "import Math.int as :integer\n[integer 42.9]",
+        "import Math.int as integer\n[integer 42.9]",
     );
     assert!(selected.is_success(), "{:?}", selected.diagnostics);
     assert_eq!(selected.value, Some(pima::Value::Integer(42)));
@@ -154,7 +154,7 @@ fn register_vm_interpreter_retains_session_bindings() {
     let mut interpreter = Interpreter::default();
     let declaration = interpreter.run_source(
         "<vm-session-declaration>",
-        "var :value 40\nfunction :add_two () { + value 2 }",
+        "var value 40\nfunction add_two () { + value 2 }",
     );
     assert!(declaration.is_success(), "{:?}", declaration.diagnostics);
     let call = interpreter.run_source("<vm-session-call>", "[add_two ]");

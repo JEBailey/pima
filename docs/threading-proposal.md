@@ -32,7 +32,7 @@ Tight for a full language implementation. The parser at 1K LOC and compiler at 1
 
 ### What Stands Out
 
-1. **Blocks as first-class uninstantiated code** — Blocks don't capture; they resolve at execution time via `do`. Annotated blocks (`@(:name...)`) declare context contracts. A clean alternative to closures for template-like patterns.
+1. **Blocks as first-class uninstantiated code** — Blocks don't capture; they resolve at execution time via `do`. Annotated blocks (`@(name...)`) declare context contracts. A clean alternative to closures for template-like patterns.
 2. **Typed errors as object values** — Errors are ordinary values with type lists, thrown explicitly, caught by `attempt`. No Rust-style `Result` leakage.
 3. **Register VM with compiler passes** — Scope analysis, register allocation, IR, optimization passes (jump threading, no-op removal), and source-span preservation throughout.
 4. **Language server** — Full LSP with completions, signatures, semantic tokens, renaming, folding, inlay hints, and document symbols.
@@ -70,7 +70,7 @@ Pima blocks are already inert, unexecuted code that don't capture environments. 
 **Why it fits Pima:** Blocks are already first-class, uninstantiated code. A `spawn` operation takes a block (already inert) and executes it on a separate thread's VM. No new syntax needed — it's a native function operating on existing `:block` values.
 
 ```pima
-import "/pima/thread" as :thread
+import "/pima/thread" as thread
 
 val handle [thread.spawn {
     Math.sum (1 2 3 4 5)
@@ -105,12 +105,12 @@ It lets Pima programs parallelize CPU-bound work (map-reduce, batch processing) 
 **Why it fits Pima:** Pima already has `attempt` for error handling and `branch` for ordered conditionals. A `channel` fits naturally as an object value with `send`, `receive`, and `closed?` operations. Enables worker-pool patterns that `spawn` + `join` alone can't express.
 
 ```pima
-import "/pima/thread" as :thread
-import "/pima/channel" as :channel
+import "/pima/thread" as thread
+import "/pima/channel" as channel
 
 val (sender receiver) [channel.make]
 
-val worker [thread.spawn @(:sender) {
+val worker [thread.spawn @(sender) {
     sender.send ("result from worker")
 }]
 
@@ -143,18 +143,18 @@ Values sent across channels must handle the GC boundary. Two approaches:
 **Why it fits Pima:** Pima already has `var` for mutation and objects for encapsulation. A `Mutex` is just an object with atomic guard acquisition.
 
 ```pima
-import "/pima/thread" as :thread
-import "/pima/mutex" as :mutex
+import "/pima/thread" as thread
+import "/pima/mutex" as mutex
 
 val counter [mutex.make 0]
 
 val handles (
-    [thread.spawn @(:counter) {
+    [thread.spawn @(counter) {
         until [>= [counter.get] 50000] {
             let counter [[counter.increment]]
         }
     }]
-    [thread.spawn @(:counter) {
+    [thread.spawn @(counter) {
         until [>= [counter.get] 50000] {
             let counter [[counter.increment]]
         }

@@ -1,5 +1,5 @@
-pub function :greet (name) {
+pub function greet (name) {
     String.concat ("Hello, " name)
 }
 
-pub val :DEFAULT_NAME "Pima"
+pub val DEFAULT_NAME "Pima"

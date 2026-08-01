@@ -325,8 +325,8 @@ impl Parser<'_> {
             let token = self.peek().cloned().ok_or_else(|| {
                 self.report_eof("unterminated context requirement list; expected `)`");
             })?;
-            let TokenKind::Symbol(requirement) = token.kind else {
-                self.report_here("context requirements must be symbols such as `:name`");
+            let TokenKind::Identifier(requirement) = token.kind else {
+                self.report_here("context requirements must be names such as `name`");
                 return Err(());
             };
             self.advance();
@@ -339,7 +339,7 @@ impl Parser<'_> {
             }
             if !names.insert(requirement.clone()) {
                 self.diagnostics.push(Diagnostic::at_error(
-                    format!("duplicate context requirement `:{requirement}`"),
+                    format!("duplicate context requirement `{requirement}`"),
                     token.span,
                 ));
                 return Err(());
@@ -429,7 +429,7 @@ impl Parser<'_> {
             self.report_eof("expected binding target");
         })?;
         match token.kind {
-            TokenKind::Symbol(name) => {
+            TokenKind::Identifier(name) => {
                 self.advance();
                 Ok(Pattern::Capture(Name {
                     text: name,
@@ -456,7 +456,7 @@ impl Parser<'_> {
                 Ok(Pattern::List(elements))
             }
             _ => {
-                self.report_here("expected `:name`, `_`, or nested binding pattern");
+                self.report_here("expected a binding name, `_`, or nested binding pattern");
                 Err(())
             }
         }
@@ -573,7 +573,7 @@ impl Parser<'_> {
     }
 
     fn parse_function(&mut self, visibility: Visibility) -> ParseResult<NodeId> {
-        let start = self.peek().expect("function :token exists").span;
+        let start = self.peek().expect("function token exists").span;
         self.parse_function_from(start, visibility)
     }
 
@@ -582,8 +582,7 @@ impl Parser<'_> {
             |kind| matches!(kind, TokenKind::Keyword(Keyword::Function)),
             "expected `function`",
         )?;
-        let (name, name_span) =
-            self.expect_symbol("expected literal function name such as `:add`")?;
+        let (name, name_span) = self.expect_identifier("expected function name such as `add`")?;
         let parameter = self.parse_pattern()?;
         let mut captures = HashSet::new();
         if let Some(duplicate) = duplicate_capture(&parameter, &mut captures) {
@@ -709,7 +708,7 @@ impl Parser<'_> {
         let alias = if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
             self.advance();
             Some(
-                self.expect_symbol("expected literal alias name such as `:standard` after `as`")?
+                self.expect_identifier("expected alias name such as `standard` after `as`")?
                     .0,
             )
         } else {
@@ -762,7 +761,7 @@ impl Parser<'_> {
             let alias = if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
                 self.advance();
                 let (text, span) =
-                    self.expect_symbol("expected literal alias name such as `:negate` after `as`")?;
+                    self.expect_identifier("expected alias name such as `negate` after `as`")?;
                 Some(Name { text, span })
             } else {
                 None
@@ -926,19 +925,6 @@ impl Parser<'_> {
                 self.report_here(message);
                 Err(())
             }
-        }
-    }
-
-    fn expect_symbol(&mut self, message: &str) -> ParseResult<(Arc<str>, Span)> {
-        let token = self.peek().cloned().ok_or_else(|| {
-            self.report_eof(message);
-        })?;
-        if let TokenKind::Symbol(symbol) = token.kind {
-            self.advance();
-            Ok((symbol, token.span))
-        } else {
-            self.report_here(message);
-            Err(())
         }
     }
 

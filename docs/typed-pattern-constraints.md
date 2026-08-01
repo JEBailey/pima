@@ -34,7 +34,7 @@ meaning of `:` elsewhere.
 Function parameter patterns:
 
 ```pima
-function :head (values:list) {
+function head (values:list) {
     List.head values
 }
 ```
@@ -52,7 +52,7 @@ match input (
 Nested list patterns:
 
 ```pima
-function :render ((name:string score:integer)) {
+function render ((name:string score:integer)) {
     render_score name score
 }
 ```
@@ -60,16 +60,16 @@ function :render ((name:string score:integer)) {
 Binding and assignment destinations:
 
 ```pima
-val :names:list ("Ada" "Grace")
-var :count:integer 0
-let :count:integer 1
+val names:list ("Ada" "Grace")
+var count:integer 0
+let count:integer 1
 ```
 
-In a binding destination, the first symbol names the destination and the
-second symbol constrains the assigned value:
+In a binding destination, the bare name identifies the destination and the
+suffix names the symbol that constrains the assigned value:
 
 ```text
-:name:type
+name:type
 ```
 
 ## Semantics
@@ -116,7 +116,6 @@ destination:
 
 ```pima
 value:list
-:value:list
 ```
 
 Repeated constraints such as `value:object:account` are deferred. They may
