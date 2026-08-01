@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::runtime::Value;
+use crate::runtime::{RemoteBlueprint, Value};
 use crate::source::Span;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -71,9 +71,22 @@ pub enum Instruction {
         destination: Register,
         elements: Vec<Register>,
     },
+    MergeNamespaceTypes {
+        destination: Register,
+        sources: Vec<Register>,
+    },
     MakeNamespace {
         destination: Register,
         bindings: Vec<NamespaceBinding>,
+    },
+    MakeRemoteNamespace {
+        destination: Register,
+        blueprint: RemoteBlueprint,
+        context: Vec<(Arc<str>, Register)>,
+    },
+    AwaitTask {
+        destination: Register,
+        task: Register,
     },
     LoadMember {
         destination: Register,

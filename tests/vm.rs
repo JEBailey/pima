@@ -68,57 +68,57 @@ fn public_interpreter_matches_direct_vm_execution() {
     for source in [
         "42",
         "val :value 42",
-        "val :left 20\nval :right 22\n+ (left right)",
-        "val (:left (:middle :right)) (10 (20 12))\n+ (left middle right)",
-        "var (:left :right) (20 22)\nlet :left 10\n+ (left right)",
-        "var :left 0\nvar :right 0\nlet (:left :right) (20 22)\n+ (left right)",
+        "val :left 20\nval :right 22\n+ left right",
+        "val (:left (:middle :right)) (10 (20 12))\n+ left middle right",
+        "var (:left :right) (20 22)\nlet :left 10\n+ left right",
+        "var :left 0\nvar :right 0\nlet (:left :right) (20 22)\n+ left right",
         "var :a 0\nvar :b 0\nvar :c 0\nval :failure [attempt {\n    let ((:a :b) (:c _)) ((1 2) (3))\n}]\n(a b c)",
-        "val :result (:ok 42)\nmatch result (\n    (:ok value) { + (value 1) }\n    (:error error) { error }\n)",
+        "val :result (:ok 42)\nmatch result (\n    (:ok value) { + value 1 }\n    (:error error) { error }\n)",
         "match (:point (3 4)) (\n    (:point (3 y)) { y }\n    _ { 0 }\n)",
         "match \"ready\" (\n    \"waiting\" { 0 }\n    \"ready\" { 1 }\n    _ { 2 }\n)",
-        "(1 2 [+ (3 4)])",
-        "/ (9 2)",
-        "< (2 3)",
-        "> (3 2)",
-        "= ((1 2) (1 2))",
+        "(1 2 [+ 3 4])",
+        "/ 9 2",
+        "< 2 3",
+        "> 3 2",
+        "= (1 2) (1 2)",
         "if true 1 2",
         "if false 1 2",
         "if false 1",
         "attempt { 42 }",
         "var :value 0\nval :deferred { let :value 1 }\nvalue",
-        "val :deferred @(:value) { + (value 1) }\nval :value 41\ndo deferred",
-        "do { + (20 22) }",
+        "val :deferred @(:value) { + value 1 }\nval :value 41\ndo deferred",
+        "do { + 20 22 }",
         "val :Template {\n    pub val :answer 42\n}\nval :object [new Template]\nobject.answer",
-        "val :base 40\nval :object [new {\n    pub val :answer [+ (base 2)]\n}]\nobject.answer",
-        "var :value 0\nval :failure [attempt {\n    let :value 1\n    / (1 0)\n}]\nvalue",
-        "function :early () {\n    attempt { return 42 }\n    0\n}\n[early ()]",
+        "val :base 40\nval :object [new {\n    pub val :answer [+ base 2]\n}]\nobject.answer",
+        "var :value 0\nval :failure [attempt {\n    let :value 1\n    / 1 0\n}]\nvalue",
+        "function :early () {\n    attempt { return 42 }\n    0\n}\n[early ]",
         "var :value 0\nwhile true {\n    attempt {\n        let :value 1\n        break 42\n    }\n}\nvalue",
-        "var :index 0\nwhile [< (index 3)] {\n    attempt {\n        let :index [+ (index 1)]\n        continue\n    }\n}\nindex",
-        "var :value 1\nlet :value [+ (value 2)]\nvalue",
-        "var :value 0\nwhile [< (value 5)] {\n    let :value [+ (value 1)]\n}\nvalue",
-        "var :value 0\nuntil [= (value 5)] {\n    let :value [+ (value 1)]\n}\nvalue",
-        "var :value 0\nwhile true {\n    let :value [+ (value 1)]\n    if [= (value 3)] { break value }\n}\nvalue",
-        "var :index 0\nvar :total 0\nwhile [< (index 5)] {\n    let :index [+ (index 1)]\n    if [= (index 3)] { continue }\n    let :total [+ (total index)]\n}\ntotal",
+        "var :index 0\nwhile [< index 3] {\n    attempt {\n        let :index [+ index 1]\n        continue\n    }\n}\nindex",
+        "var :value 1\nlet :value [+ value 2]\nvalue",
+        "var :value 0\nwhile [< value 5] {\n    let :value [+ value 1]\n}\nvalue",
+        "var :value 0\nuntil [= value 5] {\n    let :value [+ value 1]\n}\nvalue",
+        "var :value 0\nwhile true {\n    let :value [+ value 1]\n    if [= value 3] { break value }\n}\nvalue",
+        "var :index 0\nvar :total 0\nwhile [< index 5] {\n    let :index [+ index 1]\n    if [= index 3] { continue }\n    let :total [+ total index]\n}\ntotal",
         "function :identity value { value }\n[identity 42]",
-        "function :add (left right) { + (left right) }\n[add (20 22)]",
-        "function :nested ((left right) tail) { + (left right tail) }\n[nested ((10 20) 12)]",
-        "function :choose (condition value) {\n    if condition { return value }\n    0\n}\n[choose (true 42)]",
-        "function :fibonacci (value) {\n    if [< (value 3)] 1 [+ ([fibonacci ([- (value 1)])] [fibonacci ([- (value 2)])])]\n}\n[fibonacci (10)]",
-        "function :read () { later }\nval :reader read\nval :later 42\n[reader ()]",
-        "function :read () { later }\nif true { val :later 42 }\n[read ()]",
-        "function :multiplier (factor) {\n    function :apply (value) { * (factor value) }\n    apply\n}\nval :times_six [multiplier (6)]\n[times_six (7)]",
-        "function :make_adder (captured) {\n    function :add (value) { + (captured value) }\n    add\n}\nval :add_two [make_adder (2)]\nval :add_ten [make_adder (10)]\n+ ([add_two (5)] [add_ten (5)])",
-        "function :make_adder (captured) {\n    function :add (value) { + (captured value) }\n    add\n}\nval :method [make_adder (2)]\nval (:from_list) (method)\n[from_list (40)]",
-        "function :make_adder (captured) {\n    function :add (value) { + (captured value) }\n    add\n}\nval :method [make_adder (2)]\nval :object [new { pub val :call method }]\n[object.call (40)]",
-        "function :counter (start) {\n    var :value start\n    function :next () {\n        let :value [+ (value 1)]\n        value\n    }\n    next\n}\nval :first [counter (0)]\n[first ()]\n[first ()]",
-        "function :counter (start) {\n    var :value start\n    function :next () { let :value [+ (value 1)] }\n    next\n}\nval :first [counter (0)]\nval :second [counter (10)]\n+ ([first ()] [first ()] [second ()])",
-        "function :make_reader () {\n    function :read () { later }\n    val :reader read\n    val :later 42\n    [reader ()]\n}\n[make_reader ()]",
-        "function :make_reader () {\n    function :read () { later }\n    if true { val :later 42 }\n    [read ()]\n}\n[make_reader ()]",
-        "function :make_reader () {\n    function :read () { later }\n    attempt { val :later 42 }\n    [read ()]\n}\n[make_reader ()]",
-        "val :setup { val :later 42 }\nfunction :run () {\n    do setup\n    later\n}\n[run ()]",
-        "val :base { val :later 42 }\nval :setup base\nfunction :run () {\n    do setup\n    later\n}\n[run ()]",
+        "function :add (left right) { + left right }\n[add 20 22]",
+        "function :nested ((left right) tail) { + left right tail }\n[nested (10 20) 12]",
+        "function :choose (condition value) {\n    if condition { return value }\n    0\n}\n[choose true 42]",
+        "function :fibonacci (value) {\n    if [< value 3] 1 [+ [fibonacci [- value 1]] [fibonacci [- value 2]]]\n}\n[fibonacci 10]",
+        "function :read () { later }\nval :reader read\nval :later 42\n[reader ]",
+        "function :read () { later }\nif true { val :later 42 }\n[read ]",
+        "function :multiplier (factor) {\n    function :apply (value) { * factor value }\n    apply\n}\nval :times_six [multiplier 6]\n[times_six 7]",
+        "function :make_adder (captured) {\n    function :add (value) { + captured value }\n    add\n}\nval :add_two [make_adder 2]\nval :add_ten [make_adder 10]\n+ [add_two 5] [add_ten 5]",
+        "function :make_adder (captured) {\n    function :add (value) { + captured value }\n    add\n}\nval :method [make_adder 2]\nval (:from_list) (method)\n[from_list 40]",
+        "function :make_adder (captured) {\n    function :add (value) { + captured value }\n    add\n}\nval :method [make_adder 2]\nval :object [new { pub val :call method }]\n[object.call 40]",
+        "function :counter (start) {\n    var :value start\n    function :next () {\n        let :value [+ value 1]\n        value\n    }\n    next\n}\nval :first [counter 0]\n[first ]\n[first ]",
+        "function :counter (start) {\n    var :value start\n    function :next () { let :value [+ value 1] }\n    next\n}\nval :first [counter 0]\nval :second [counter 10]\n+ [first ] [first ] [second ]",
+        "function :make_reader () {\n    function :read () { later }\n    val :reader read\n    val :later 42\n    [reader ]\n}\n[make_reader ]",
+        "function :make_reader () {\n    function :read () { later }\n    if true { val :later 42 }\n    [read ]\n}\n[make_reader ]",
+        "function :make_reader () {\n    function :read () { later }\n    attempt { val :later 42 }\n    [read ]\n}\n[make_reader ]",
+        "val :setup { val :later 42 }\nfunction :run () {\n    do setup\n    later\n}\n[run ]",
+        "val :base { val :later 42 }\nval :setup base\nfunction :run () {\n    do setup\n    later\n}\n[run ]",
         "var :retained 0\nval :failure [attempt { let (:retained :missing) (1 2) }]\nretained",
-        "function :outer (value) {\n    function :count (remaining) {\n        if [= (remaining 0)] value [count ([- (remaining 1)])]\n    }\n    [count (3)]\n}\n[outer (42)]",
+        "function :outer (value) {\n    function :count (remaining) {\n        if [= remaining 0] value [count [- remaining 1]]\n    }\n    [count 3]\n}\n[outer 42]",
     ] {
         assert_eq!(run_vm(source), run_interpreter(source), "{source}");
     }
@@ -131,7 +131,7 @@ fn register_vm_calls_standard_native_namespaces() {
         Value::Integer(42)
     );
     assert_eq!(
-        run_vm_with_standard_globals("String.concat (\"pi\" \"ma\")"),
+        run_vm_with_standard_globals("String.concat \"pi\" \"ma\""),
         Value::String("pima".into())
     );
     assert_eq!(
@@ -142,7 +142,7 @@ fn register_vm_calls_standard_native_namespaces() {
 
 #[test]
 fn register_vm_user_bindings_shadow_standard_globals() {
-    let source = "val :Counter {\n    var :value 0\n    pub function :next () { let :value [+ (value 1)] }\n}\nval :counter [new Counter]\n[counter.next ()]\n[counter.next ()]";
+    let source = "val :Counter {\n    var :value 0\n    pub function :next () { let :value [+ value 1] }\n}\nval :counter [new Counter]\n[counter.next ]\n[counter.next ]";
     let mut sources = SourceMap::default();
     let source_id = sources.add("<vm-shadow-test>", source);
     let module = parse(&lex(source_id, source).unwrap()).unwrap();
@@ -242,12 +242,12 @@ fn register_vm_tracks_runtime_binding_initialization() {
         ("attempt { if 1 2 }", vec!["error", "type_error"]),
         ("attempt { [1 2] }", vec!["error", "type_error"]),
         (
-            "val :failure [attempt { [later ()] }]\nfunction :later () { 42 }\nfailure",
+            "val :failure [attempt { [later ] }]\nfunction :later () { 42 }\nfailure",
             vec!["error", "name_error"],
         ),
         ("attempt { let :missing 1 }", vec!["error", "name_error"]),
         (
-            "function :update (value) { attempt { let :value 2 } }\n[update (1)]",
+            "function :update (value) { attempt { let :value 2 } }\n[update 1]",
             vec!["error", "mutation_error"],
         ),
     ] {
@@ -317,7 +317,7 @@ fn register_vm_collects_unreachable_closure_cell_cycles() {
         let :captured cycle\n\
         42\n\
     }\n\
-    [build_cycle ()]";
+    [build_cycle ]";
     let mut sources = SourceMap::default();
     let source_id = sources.add("<vm-cycle-test>", source);
     let tokens = lex(source_id, source).unwrap();
@@ -338,7 +338,7 @@ fn register_vm_collects_unreachable_closure_cell_cycles() {
 
 #[test]
 fn register_vm_preserves_native_typed_errors() {
-    let source = "/ (1 0)";
+    let source = "/ 1 0";
     let mut sources = SourceMap::default();
     let source_id = sources.add("<vm-error-test>", source);
     let tokens = lex(source_id, source).unwrap();
@@ -361,8 +361,8 @@ fn register_vm_preserves_native_typed_errors() {
 
 #[test]
 fn register_vm_attempt_catches_errors_across_function_frames() {
-    let source = "function :fail () { / (1 0) }\n\
-                  val :caught [attempt { [fail ()] }]\n\
+    let source = "function :fail () { / 1 0 }\n\
+                  val :caught [attempt { [fail ] }]\n\
                   caught";
     let mut sources = SourceMap::default();
     let source_id = sources.add("<vm-attempt-test>", source);

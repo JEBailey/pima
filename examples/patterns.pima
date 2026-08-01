@@ -15,4 +15,4 @@ function :describe (result) {
 }
 
 val (:name :score) ("Ada" 42)
-describe ((:ok (name score)))
+describe (:ok (name score))

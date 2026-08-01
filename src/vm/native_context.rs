@@ -5,7 +5,7 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) struct VmNativeContext {
-    symbols: SymbolInterner,
+    pub(crate) symbols: SymbolInterner,
     host: crate::native::host::HostResources,
     active_span: Option<crate::source::Span>,
     stack: Vec<crate::diagnostic::StackFrame>,
@@ -118,6 +118,18 @@ impl VmNativeContext {
     }
 
     pub(crate) fn load_member(&mut self, value: Value, name: &str) -> NativeResult {
+        if let Value::RemoteNamespace(handle) = value {
+            return <Self as NativeContext>::load_remote_member(self, handle, name);
+        }
+        if let Value::Task(handle) = value {
+            return match name {
+                "complete?" => Ok(Value::TaskFunction(handle, std::sync::Arc::from(name))),
+                _ => Err(self.typed_error(
+                    &["error", "name_error"],
+                    format!("task has no member `{name}`"),
+                )),
+            };
+        }
         let Value::Namespace(namespace) = value else {
             return Err(self.typed_error(
                 &["error", "type_error"],
@@ -176,6 +188,99 @@ impl NativeContext for VmNativeContext {
     fn working_directory(&self) -> &std::path::Path {
         self.host.working_directory()
     }
+    fn remote_alive(&self, handle: crate::runtime::RemoteNamespaceHandle) -> Result<bool, String> {
+        self.host.remote_alive(handle)
+    }
+    fn remote_stop(&self, handle: crate::runtime::RemoteNamespaceHandle) -> Result<(), String> {
+        self.host.stop_remote(handle)
+    }
+    fn make_remote_namespace(
+        &mut self,
+        blueprint: crate::runtime::RemoteBlueprint,
+        context: Vec<(std::sync::Arc<str>, Value)>,
+    ) -> NativeResult {
+        let context = context
+            .into_iter()
+            .map(|(name, value)| {
+                crate::runtime::TransportValue::from_value(&value, |symbol| {
+                    self.symbols.resolve(symbol).map(std::sync::Arc::from)
+                })
+                .map(|value| (name, value))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|message| {
+                self.typed_error(
+                    &["error", "remote_error", "unsendable_value"],
+                    message.to_owned(),
+                )
+            })?;
+        self.host
+            .make_remote(blueprint, context)
+            .map(Value::RemoteNamespace)
+            .map_err(|message| self.typed_error(&["error", "remote_error"], message))
+    }
+    fn load_remote_member(
+        &mut self,
+        handle: crate::runtime::RemoteNamespaceHandle,
+        member: &str,
+    ) -> NativeResult {
+        match self.host.remote_member_is_function(handle, member) {
+            Ok(true) => Ok(Value::RemoteFunction(handle, std::sync::Arc::from(member))),
+            Ok(false) => self
+                .host
+                .future_remote(handle, std::sync::Arc::from(member), None)
+                .map(Value::Task)
+                .map_err(|message| self.typed_error(&["error", "remote_error"], message)),
+            Err(message) => Err(self.typed_error(&["error", "remote_error"], message)),
+        }
+    }
+    fn call_remote_function(
+        &mut self,
+        handle: crate::runtime::RemoteNamespaceHandle,
+        member: &str,
+        argument: &Value,
+    ) -> NativeResult {
+        let Value::List(arguments) = argument.resolved() else {
+            return Err(self.typed_error(
+                &["error", "remote_error", "invalid_arguments"],
+                "remote function arguments must be a list".to_owned(),
+            ));
+        };
+        let arguments = arguments
+            .iter()
+            .map(|value| {
+                crate::runtime::TransportValue::from_value(value, |symbol| {
+                    self.symbols.resolve(symbol).map(std::sync::Arc::from)
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|message| {
+                self.typed_error(
+                    &["error", "remote_error", "unsendable_value"],
+                    message.to_owned(),
+                )
+            })?;
+        self.host
+            .future_remote(handle, std::sync::Arc::from(member), Some(arguments))
+            .map(Value::Task)
+            .map_err(|message| self.typed_error(&["error", "remote_error"], message))
+    }
+    fn task_complete(&self, handle: crate::runtime::TaskHandle) -> Result<bool, String> {
+        self.host.task_complete(handle)
+    }
+    fn task_await(&mut self, handle: crate::runtime::TaskHandle) -> NativeResult {
+        match self.host.await_task(handle) {
+            Ok(Ok(value)) => {
+                let symbols = &mut self.symbols;
+                Ok(value.into_value(|name| symbols.intern(name)))
+            }
+            Ok(Err(error)) => {
+                let types = error.types.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+                Err(self.typed_error(&types, error.message.to_string()))
+            }
+            Err(message) => Err(self.typed_error(&["error", "task_error"], message)),
+        }
+    }
     fn tcp_listen(
         &mut self,
         address: &str,
@@ -223,3 +328,5 @@ impl NativeContext for VmNativeContext {
         self.host.close_connection(connection)
     }
 }
+
+impl VmNativeContext {}

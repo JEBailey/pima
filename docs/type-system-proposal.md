@@ -1,5 +1,10 @@
 # Type System Proposal for Pima
 
+Required future typed-pattern constraints are specified separately in
+[`typed-pattern-constraints.md`](typed-pattern-constraints.md). That feature is
+not optional and should precede broader contract or algebraic-type proposals in
+this document.
+
 Generated as a design review after evaluating the current Pima runtime, compiler, VM IR, and namespace model.
 
 ---
@@ -87,7 +92,7 @@ val :MyCounter {
     var :count 0
 
     pub function :increment () {
-        let :count [+ (count 1)]
+        let :count [+ count 1]
     }
 
     pub function :get () {
@@ -174,7 +179,7 @@ It adds enforceable structure to namespaces without changing Pima's dynamic natu
 **Why it fits Pima:** Pima already has `Types.is?` for single-symbol tests and `Types.of` for full type lists. A structural checker goes further: it can validate that a value has specific members with specific types, without requiring a compile-time `type` declaration.
 
 ```pima
-import "/pima/typecheck" as typecheck
+import "/pima/typecheck" as :typecheck
 
 // Define a type descriptor (a list of requirements)
 val :counter_schema (
@@ -185,7 +190,7 @@ val :counter_schema (
 
 // Validate at runtime
 val :c [new MyCounter]
-val :valid [typecheck.matches? (c counter_schema)]
+val :valid [typecheck.matches? c counter_schema]
 
 // Or throw on mismatch
 typecheck.assert (c counter_schema)
@@ -352,7 +357,7 @@ type HttpResponse {
 function :handle_request (req) -> HttpResponse {
     match req (
         (:request method path headers body) {
-            if [= (method "GET")] {
+            if [= method "GET"] {
                 HttpResponse.ok (200 "OK" () "content")
             } {
                 HttpResponse.client_error (405 "Method Not Allowed")

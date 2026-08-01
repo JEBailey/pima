@@ -124,10 +124,17 @@ fn execute_module(
             _ => {}
         }
     }
-    let compiled = crate::vm::compile_module_with_globals(
+    let source = interpreter
+        .sources
+        .get(interpreter.parsed_modules[module_index].source)
+        .expect("parsed module source must remain registered")
+        .text
+        .clone();
+    let compiled = crate::vm::compile_module_with_globals_and_source(
         &interpreter.parsed_modules[module_index],
         module_index,
         globals,
+        source,
     )?;
     let result = interpreter
         .vm
@@ -177,6 +184,7 @@ fn load_module(
         let exports = match path.as_str() {
             "/pima/io" => Some(crate::native::io::EXPORTS),
             "/pima/tcp" => Some(crate::native::tcp::EXPORTS),
+            "/pima/remote" => Some(crate::native::remote::EXPORTS),
             _ => None,
         };
         if let Some(exports) = exports {

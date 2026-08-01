@@ -1,5 +1,6 @@
 mod binding;
 mod block;
+mod concurrency;
 mod environment;
 mod error;
 mod ids;
@@ -12,6 +13,10 @@ mod vm_value;
 
 pub use binding::{Binding, BindingMutability, BindingVisibility};
 pub use block::{BlockRef, StoredBlock};
+pub(crate) use concurrency::{
+    ConcurrencyHub, RemoteOperation, RemoteReply, TransportError, TransportValue,
+};
+pub use concurrency::{RemoteBlueprint, RemoteNamespaceHandle, TaskHandle};
 pub use environment::{Environment, EnvironmentRef};
 pub use error::ErrorMetadata;
 pub use ids::{NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId};

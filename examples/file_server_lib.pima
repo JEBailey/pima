@@ -1,5 +1,5 @@
 import "/pima/library/standard"
-import "/pima/io" as io
+import "/pima/io" as :io
 
 // Transport-independent static file handling. The `/pima/http` module can pass
 // its request values to server.handle and encode the returned response.
@@ -14,15 +14,15 @@ function :response (status reason headers body) {
 }
 
 function :text_response (status reason message) {
-    response (status reason (
+    response status reason (
         ("Content-Type" "text/plain; charset=utf-8")
-    ) message)
+    ) message
 }
 
 function :content_type (path) {
-    val :extension [io.extension (path)]
-    if [Types.is? (extension :unit)] "application/octet-stream" {
-        match [String.lower (extension)] (
+    val :extension [io.extension path]
+    if [Types.is? extension :unit] "application/octet-stream" {
+        match [String.lower extension] (
             "css" { "text/css; charset=utf-8" }
             "gif" { "image/gif" }
             "htm" { "text/html; charset=utf-8" }
@@ -46,27 +46,27 @@ function :content_type (path) {
 // portable across Unix and Windows.
 function :root_prefix (root) {
     val :marker "__pima_document_root_boundary__"
-    val :joined [io.join (root marker)]
-    String.slice (joined 0 [- ([String.length (joined)] [String.length (marker)])])
+    val :joined [io.join root marker]
+    String.slice joined 0 [- [String.length joined] [String.length marker]]
 }
 
 function :within_root? (root candidate) {
-    if [= (candidate root)] true [String.starts_with? (candidate [root_prefix (root)])]
+    if [= candidate root] true [String.starts_with? candidate [root_prefix root]]
 }
 
 function :strip_query (target) {
-    List.head ([String.split (target "?")])
+    List.head [String.split target "?"]
 }
 
 function :relative_target (target) {
-    val :path [strip_query (target)]
-    if [= (path "/")] "index.html" {
+    val :path [strip_query target]
+    if [= path "/"] "index.html" {
         var :relative path
-        if [String.starts_with? (relative "/")] {
-            let :relative [String.slice (relative 1 [String.length (relative)])]
+        if [String.starts_with? relative "/"] {
+            let :relative [String.slice relative 1 [String.length relative]]
         }
-        if [String.ends_with? (relative "/")] {
-            String.concat (relative "index.html")
+        if [String.ends_with? relative "/"] {
+            String.concat relative "index.html"
         } {
             relative
         }
@@ -74,52 +74,52 @@ function :relative_target (target) {
 }
 
 pub function :create_file_server (directory) {
-    val :root [io.canonicalize (directory)]
+    val :root [io.canonicalize directory]
 
     new {
         pub val :document_root root
 
         pub function :handle (method target) {
             branch (
-                [Logic.not ([List.contains? (("GET" "HEAD") method)])] {
-                    response (405 "Method Not Allowed" (
+                [Logic.not [List.contains? ("GET" "HEAD") method]] {
+                    response 405 "Method Not Allowed" (
                         ("Allow" "GET, HEAD")
                         ("Content-Type" "text/plain; charset=utf-8")
-                    ) [String.chars ("method not allowed")])
+                    ) [String.chars "method not allowed"]
                 }
                 true {
-                    val :relative [relative_target (target)]
-                    val :requested [io.join (root relative)]
-                    val :canonical [attempt { io.canonicalize (requested) }]
+                    val :relative [relative_target target]
+                    val :requested [io.join root relative]
+                    val :canonical [attempt { io.canonicalize requested }]
 
                     branch (
-                        [Types.is? (canonical :error)] {
-                            text_response (404 "Not Found" "file not found")
+                        [Types.is? canonical :error] {
+                            text_response 404 "Not Found" "file not found"
                         }
-                        [Logic.not ([within_root? (root canonical)])] {
-                            text_response (403 "Forbidden" "path escapes the document root")
+                        [Logic.not [within_root? root canonical]] {
+                            text_response 403 "Forbidden" "path escapes the document root"
                         }
-                        [Logic.not ([io.file? (canonical)])] {
-                            text_response (404 "Not Found" "file not found")
+                        [Logic.not [io.file? canonical]] {
+                            text_response 404 "Not Found" "file not found"
                         }
                         true {
-                            val :body [attempt { io.read_text (canonical) }]
+                            val :body [attempt { io.read_text canonical }]
                             branch (
-                                [Types.is? (body :invalid_encoding)] {
-                                    text_response (415 "Unsupported Media Type" "file is not UTF-8 text")
+                                [Types.is? body :invalid_encoding] {
+                                    text_response 415 "Unsupported Media Type" "file is not UTF-8 text"
                                 }
-                                [Types.is? (body :error)] {
-                                    text_response (500 "Internal Server Error" "file could not be read")
+                                [Types.is? body :error] {
+                                    text_response 500 "Internal Server Error" "file could not be read"
                                 }
-                                [= (method "HEAD")] {
-                                    response (200 "OK" (
-                                        ("Content-Type" [content_type (canonical)])
-                                    ) "")
+                                [= method "HEAD"] {
+                                    response 200 "OK" (
+                                        ("Content-Type" [content_type canonical])
+                                    ) ""
                                 }
                                 true {
-                                    response (200 "OK" (
-                                        ("Content-Type" [content_type (canonical)])
-                                    ) body)
+                                    response 200 "OK" (
+                                        ("Content-Type" [content_type canonical])
+                                    ) body
                                 }
                             )
                         }
@@ -132,14 +132,14 @@ pub function :create_file_server (directory) {
 
 pub function :header (response name) {
     function :find (headers) {
-        if [List.empty? (headers)] :missing {
-            val :entry [List.head (headers)]
-            if [= ([List.head (entry)] name)] {
-                List.head ([List.rest (entry)])
+        if [List.empty? headers] :missing {
+            val :entry [List.head headers]
+            if [= [List.head entry] name] {
+                List.head [List.rest entry]
             } {
-                find ([List.rest (headers)])
+                find [List.rest headers]
             }
         }
     }
-    find (response.headers)
+    find response.headers
 }

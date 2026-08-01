@@ -128,6 +128,18 @@ fn recognizes_do_as_a_keyword() {
 }
 
 #[test]
+fn recognizes_remote_as_a_keyword() {
+    let kinds = lex_kinds("remote Foo");
+    assert!(matches!(kinds[0], TokenKind::Keyword(Keyword::Remote)));
+}
+
+#[test]
+fn recognizes_await_as_a_keyword() {
+    let kinds = lex_kinds("await pending");
+    assert!(matches!(kinds[0], TokenKind::Keyword(Keyword::Await)));
+}
+
+#[test]
 fn recognizes_branch_as_a_keyword() {
     let kinds = lex_kinds("branch ()\n");
     assert_eq!(

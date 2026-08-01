@@ -1,24 +1,24 @@
 import "/pima/library/standard"
-import "/pima/io" as io
-import "file_server_lib.pima" as files
+import "/pima/io" as :io
+import "file_server_lib.pima" as :files
 
 // The conformance runner uses `examples/` as its working directory, while
 // `cargo run -- examples/file_server.pima` commonly starts at the repository
 // root. Accept both launch locations without weakening the server itself.
-val :example_root [if [io.directory? ("public")] "public" "examples/public"]
-val :server [files.create_file_server (example_root)]
+val :example_root [if [io.directory? "public"] "public" "examples/public"]
+val :server [files.create_file_server example_root]
 
-val :home [server.handle ("GET" "/")]
-val :stylesheet [server.handle ("HEAD" "/assets/site.css?version=1")]
-val :missing [server.handle ("GET" "/missing.txt")]
-val :traversal [server.handle ("GET" "/../json_parser.pima")]
-val :rejected_method [server.handle ("POST" "/")]
+val :home [server.handle "GET" "/"]
+val :stylesheet [server.handle "HEAD" "/assets/site.css?version=1"]
+val :missing [server.handle "GET" "/missing.txt"]
+val :traversal [server.handle "GET" "/../json_parser.pima"]
+val :rejected_method [server.handle "POST" "/"]
 
-Console.println ("GET /:" home.status home.reason [files.header (home "Content-Type")])
-Console.println ("HEAD /assets/site.css:" stylesheet.status [files.header (stylesheet "Content-Type")])
-Console.println ("GET /missing.txt:" missing.status missing.reason)
-Console.println ("GET /../json_parser.pima:" traversal.status traversal.reason)
-Console.println ("POST /:" rejected_method.status rejected_method.reason)
+Console.println "GET /:" home.status home.reason [files.header home "Content-Type"]
+Console.println "HEAD /assets/site.css:" stylesheet.status [files.header stylesheet "Content-Type"]
+Console.println "GET /missing.txt:" missing.status missing.reason
+Console.println "GET /../json_parser.pima:" traversal.status traversal.reason
+Console.println "POST /:" rejected_method.status rejected_method.reason
 
-[= ((home.status stylesheet.status missing.status traversal.status rejected_method.status)
-   (200 200 404 403 405))]
+[= (home.status stylesheet.status missing.status traversal.status rejected_method.status)
+   (200 200 404 403 405)]

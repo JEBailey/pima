@@ -1,5 +1,11 @@
 # Pima Interpreter Architecture
 
+Concurrency foundation: the VM has transport-only remote namespace and future
+handles, a synchronized concurrency hub, and `remote`/`await` AST boundaries.
+Remote namespace requests run in isolated worker VMs and always produce
+futures; only `await` waits for the transported value. See
+[`remote-namespaces.md`](remote-namespaces.md).
+
 Status: register VM implemented as Pima's sole execution engine.
 
 The register compiler and VM implement the Pima execution path. The architecture keeps

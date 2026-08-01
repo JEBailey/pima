@@ -44,6 +44,26 @@ pub trait NativeContext {
         namespace: &crate::runtime::NamespaceRef,
     ) -> Vec<crate::runtime::SymbolId>;
     fn working_directory(&self) -> &std::path::Path;
+    fn remote_alive(&self, handle: crate::runtime::RemoteNamespaceHandle) -> Result<bool, String>;
+    fn remote_stop(&self, handle: crate::runtime::RemoteNamespaceHandle) -> Result<(), String>;
+    fn make_remote_namespace(
+        &mut self,
+        blueprint: crate::runtime::RemoteBlueprint,
+        context: Vec<(std::sync::Arc<str>, Value)>,
+    ) -> NativeResult;
+    fn load_remote_member(
+        &mut self,
+        handle: crate::runtime::RemoteNamespaceHandle,
+        member: &str,
+    ) -> NativeResult;
+    fn call_remote_function(
+        &mut self,
+        handle: crate::runtime::RemoteNamespaceHandle,
+        member: &str,
+        argument: &Value,
+    ) -> NativeResult;
+    fn task_complete(&self, handle: crate::runtime::TaskHandle) -> Result<bool, String>;
+    fn task_await(&mut self, handle: crate::runtime::TaskHandle) -> NativeResult;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

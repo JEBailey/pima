@@ -140,6 +140,8 @@ pub enum NodeKind {
     },
     New(NodeId),
     Do(NodeId),
+    Remote(NodeId),
+    Await(NodeId),
     Attempt(NodeId),
     Match {
         value: NodeId,

@@ -20,13 +20,26 @@ The language is under active design. The normative description lives in
 boundaries and invariants are described in
 [docs/architecture.md](docs/architecture.md).
 
-## Running Pima
+## Command line
 
-The CLI accepts one source file:
+The unified CLI runs programs and provides development tools:
 
 ```console
-cargo run -- examples/fibonacci.pima
+cargo run -- run examples/fibonacci.pima
+cargo run -- check examples
+cargo run -- fmt --check examples
+cargo run -- doc examples -o target/pima-doc
+cargo run -- doc examples/showcase.pima --format markdown
+cargo run -- doc examples/showcase.pima --format json
+cargo run -- lsp
 ```
+
+HTML is the default documentation format and produces an indexed static site.
+Markdown and JSON are available with `--format`. For compatibility,
+`pima file.pima` remains an alias for
+`pima run file.pima`. `check`, `fmt`, and `doc` accept files or directories and
+discover `.pima` files recursively. The formatter deliberately preserves
+physical line boundaries because they are significant Pima syntax.
 
 The interpreter is also available as a Rust library:
 
@@ -34,7 +47,7 @@ The interpreter is also available as a Rust library:
 use pima::{Config, Interpreter};
 
 let mut pima = Interpreter::new(Config::default());
-let outcome = pima.run_source("<embedded>", "[+ (20 22)]\n");
+let outcome = pima.run_source("<embedded>", "[+ 20 22]\n");
 
 assert!(outcome.is_success());
 assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
@@ -49,14 +62,14 @@ An unsuccessful run has no value.
 import "/pima/library/standard"
 
 function factorial (:number) {
-    if [<= (number 1)] {
+    if [<= number 1] {
         1
     } {
-        * (number [factorial ([- (number 1)])])
+        * number [factorial [- number 1]]
     }
 }
 
-[factorial (6)]
+[factorial 6]
 ```
 
 More complete programs live in `examples/`, including a JSON parser and a
@@ -78,7 +91,7 @@ comparison guidance.
 The TCP module can run the Pima HTTP implementation as a real local server:
 
 ```console
-cargo run -- demos/http_file_server.pima
+cargo run -- run demos/http_file_server.pima
 ```
 
 Then open `http://127.0.0.1:8080` or request it with `curl`.

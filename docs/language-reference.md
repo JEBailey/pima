@@ -52,7 +52,7 @@ Here the first `{` follows other tokens, so its balanced contents continue the
 `if` statement. The second `{` likewise continues that same statement after the
 first block closes.
 
-Pima supports two kinds of comments:
+Pima supports line and block comments:
 
 ```pima
 // line comment
@@ -63,6 +63,37 @@ Pima supports two kinds of comments:
 ```
 
 A block comment ends at the next `*/`. Block comments need not nest.
+
+Documentation tooling recognizes two specialized line-comment prefixes:
+
+```pima
+//! Documentation for the containing module.
+
+/// Documentation for the following public declaration.
+pub function :greet (name) {
+    Console.println "Hello" name
+}
+```
+
+`pima doc` associates contiguous `///` lines with the public declaration that
+follows them and emits `//!` lines at the start of a file as module
+documentation. Both remain comments to the language evaluator.
+
+The command-line development tools are:
+
+```text
+pima run file.pima
+pima check file-or-directory
+pima fmt [--check] file-or-directory
+pima doc [--format html|markdown|json] [-o path] file-or-directory
+pima lsp
+```
+
+`pima file.pima` is a compatibility spelling of `pima run file.pima`.
+Formatting preserves physical line boundaries because changing them may change
+the program's parse. HTML documentation is the default and produces an index,
+one page per module, navigation, and a stylesheet. Markdown and JSON are
+alternative representations of the same extracted public API model.
 
 Identifiers are case-sensitive. An identifier may contain letters, decimal
 digits, `_`, or operator punctuation. It must not be mistaken for a number,
@@ -108,8 +139,8 @@ and `<=` retain their symbolic spellings.
 The reserved words are:
 
 ```text
-as  attempt  branch  break  continue  do  function  if  import  let  match  new  pub
-return  val  throw  until  var  while
+as  attempt  await  branch  break  continue  do  function  if  import  let  match  new  pub
+remote  return  val  throw  until  var  while
 ```
 
 ## 3. Grammar
@@ -146,6 +177,8 @@ expression       = literal
                  | import-expression
                  | new-expression
                  | do-expression
+                 | remote-expression
+                 | await-expression
                  | call ;
 
 literal          = number | string | "true" | "false" ;
@@ -184,7 +217,8 @@ match-list-pattern
 function-declaration
                  = "function", separator+, symbol, separator*,
                    match-pattern, separator+, expression ;
-member-access    = identifier, ".", identifier, { ".", identifier } ;
+member-access    = identifier, ".", member-name, { ".", member-name } ;
+member-name      = identifier | reserved-word ;
 
 conditional      = "if", separator+, expression, separator+,
                    expression, [ separator+, expression ] ;
@@ -206,9 +240,11 @@ match-expression = "match", separator+, expression, separator*,
 match-arm        = match-pattern, separator+, expression ;
 import-expression
                  = "import", separator+, ( string | import-path ),
-                   [ separator+, "as", separator+, identifier ] ;
+                   [ separator+, "as", separator+, symbol ] ;
 new-expression   = "new", separator+, expression ;
 do-expression    = "do", separator+, expression ;
+remote-expression = "remote", separator+, expression ;
+await-expression  = "await", separator+, expression ;
 
 call             = expression, separator+, expression,
                    { separator+, expression } ;
@@ -223,28 +259,27 @@ Console.println "sum:" [Math.sum 1 2 3]
 [+ [fibonacci 5] [fibonacci 6]]
 ```
 
-Thus `Math.sum 1 2 3` passes `(1 2 3)`, and `int "42"` passes the singleton
-argument list `("42")`. Parentheses around the complete outer argument list are
-optional: `operation (a b)` and `operation a b` both pass `(a b)`. To pass a
-list as one operand, add an explicit nested list: `operation ((a b))` passes
-`((a b))`.
+Thus `operation a b` passes `(a b)`, and `int "42"` passes the singleton
+argument list `("42")`. Every explicit parenthesized expression contributes
+one element to that implicit argument list: `operation (a b)` passes
+`((a b))`. Parentheses never disappear at a call boundary.
 
-A bracketed callee with no operands receives the empty list, so `[run]` and
-`[run ()]` are equivalent zero-value invocations. Outside brackets, a function
-name alone evaluates to the function value rather than invoking it.
+A bracketed callee with no operands receives the empty argument list, so `[run]`
+is a zero-argument invocation. `[run ()]` is different: it passes one explicit
+empty list and therefore receives `(())`. Outside brackets, a function name
+alone evaluates to the function value rather than invoking it.
 
 Declarations and control structures follow the same surface principle: the
-leading reserved word determines how the rest of its line is interpreted.
+leading reserved word determines the fixed expression operands that follow it.
 For example, `val :Counter { ... }` supplies the binding name and block to
 `val`, while `function :set (value notify) { ... }` supplies the function
 name, parameter pattern, and body. These are special forms rather than runtime
 function calls, but they share the same prefix layout.
 
 Parentheses explicitly construct lists; they do not group arithmetic
-expressions. They are normally unnecessary for the outer argument list at a
-line or bracket boundary, but remain necessary for nested lists. Brackets
-immediately invoke a call expression. Braces create a block value and do not
-execute its body merely by being encountered.
+expressions or optionally wrap a call's operands. Brackets immediately invoke
+a call expression. Braces create a block value and do not execute its body
+merely by being encountered.
 
 `@` is a block-construction special form with two syntactic operands: a literal
 list of required context symbols and a block body:
@@ -304,8 +339,8 @@ The native predicate `is? value type-symbol` reports whether `type-symbol`
 occurs in the value's type list:
 
 ```pima
-[is? (42 :integer)]   // true
-[is? (42 :string)]    // false
+[is? 42 :integer]   // true
+[is? 42 :string]    // false
 ```
 
 The second operand to `is?` must be a symbol. Type lists contain symbols only,
@@ -332,7 +367,7 @@ val :Square {
 
 val :square [new Square]
 [types square]          // (:namespace :square :shape)
-[is? (square :shape)]     // true
+[is? square :shape]     // true
 ```
 
 For a namespace, the runtime prepends `:namespace` to the declared type list.
@@ -431,8 +466,8 @@ throw [new InvalidOrder]
 Consequently, all errors satisfy both:
 
 ```pima
-[is? (error :namespace)]
-[is? (error :error)]
+[is? error :namespace]
+[is? error :error]
 ```
 
 An error namespace must expose an immutable public `message` string. It may
@@ -482,7 +517,7 @@ val :result [attempt {
     read_file path
 }]
 
-if [is? (result :error)] {
+if [is? result :error] {
     println result.message
 } {
     process result
@@ -554,7 +589,9 @@ let (:left :right) (3 4)
 The binding form determines the operation. `let (:left :right) ...` does not
 create bindings: both symbols must name existing mutable bindings.
 
-`match` evaluates its subject once and selects the first matching arm. In this
+`match` is Pima's structural selection form. It evaluates its subject once and
+selects the first matching pattern arm. It does not evaluate arm patterns as
+Boolean conditions. In this
 example, `result` is a two-element immutable list. Its first element is a
 symbol that identifies the kind of result, and its second element is the
 associated value:
@@ -596,8 +633,9 @@ More generally, inside `match` patterns, a bare name captures, `:name` matches
 the literal symbol with that name, ordinary literals require equality, and
 `_` is a wildcard. The colon therefore has the same meaning in expressions and
 patterns: it prevents name lookup and denotes a literal symbol. Captures are
-immutable and visible only within their arm.
-If no arm matches, `match` throws `:match_error`.
+immutable and visible only within their arm. Arms are tested from top to
+bottom, and only the selected result is evaluated. If no arm matches, `match`
+throws `:match_error`; use `_` as an explicit exhaustive fallback.
 
 A function declaration binds its name in the current environment before its
 body can execute. This permits direct recursion. Function parameters are
@@ -678,7 +716,7 @@ not invoke the function; it returns a partially applied function whose
 parameters correspond, from left to right, to the placeholders:
 
 ```pima
-val :add_five [add (5 _)]
+val :add_five [add 5 _]
 add_five (3)
 ```
 
@@ -689,13 +727,26 @@ Brackets perform immediate invocation:
 
 ```pima
 val :operation calculate
-[operation ()]
+[operation]
 
 val :area_function square.area
-[square.area ()]
+[square.area]
 ```
 
 ## 8. Control flow
+
+Pima has three selection forms with deliberately separate roles:
+
+| Form | Selects using | Intended shape | No selection |
+| --- | --- | --- | --- |
+| `if` | One Boolean predicate | Consequent and optional alternative | Unit when false without an alternative |
+| `branch` | Ordered Boolean conditions | Any number of condition/result pairs | Unit |
+| `match` | Patterns against one subject | Any number of pattern/result arms | Throws `:match_error` |
+
+`if` and `branch` evaluate conditions and require Boolean results. `match`
+evaluates its subject once but treats the left side of every arm as a pattern,
+not an ordinary expression. The forms remain separate so source code always
+makes that evaluation distinction visible.
 
 ### 8.1 Conditional
 
@@ -707,27 +758,28 @@ if predicate consequent
 if predicate consequent alternative
 ```
 
-A branch may be a single expression or a block. If it is a block, the selected
-block is executed. The unselected branch is not evaluated. When the predicate
-is true, the value of `if` is the consequent's value. When the predicate is
-false, the value is the alternative's value when present, or unit when no
-alternative was provided.
+The consequent and alternative may each be a single expression or a block. If
+one is a block, the selected block is executed. The unselected result is not
+evaluated. When the predicate is true, the value of `if` is the consequent's
+value. When the predicate is false, the value is the alternative's value when
+present, or unit when no alternative was provided. The predicate must evaluate
+to a Boolean.
 
 The two-part form is useful for conditional effects and control transfer:
 
 ```pima
-if [< (balance 0)] {
+if [< balance 0] {
     return :invalid
 }
 ```
 
 Consequently, a single expression and a block containing that expression are
-equivalent branch forms:
+equivalent result forms:
 
 ```pima
-if [< (x 2)] [return ("this")] alternative
+if [< x 2] [return "this"] alternative
 
-if [< (x 2)] {
+if [< x 2] {
     return "this"
 } alternative
 ```
@@ -739,12 +791,13 @@ control form's result semantics.
 ### 8.2 Branch
 
 `branch` expresses an ordered series of condition/result pairs without nested
-`if` expressions:
+`if` expressions. It is intended for multiple independent Boolean tests, not
+for decomposing one value:
 
 ```pima
 branch (
-    [< (score 60)] { "fail" }
-    [< (score 90)] { "pass" }
+    [< score 60] { "fail" }
+    [< score 90] { "pass" }
     true           { "excellent" }
 )
 ```
@@ -755,6 +808,10 @@ paired with the first true condition is evaluated and becomes the value of the
 result may be a single expression or a block. Every evaluated condition must be
 a Boolean. If no condition is true, or the pair list is empty, `branch` returns
 unit. A final `true` condition is therefore the explicit default form.
+
+Use `if` when there is one predicate. Use `branch` when several predicates are
+tested in order. Use `match` instead when the decision is based on the shape or
+literal content of one value.
 
 ### 8.3 Loops
 
@@ -780,6 +837,17 @@ break value
 
 continue
 ```
+
+Each transfer consumes at most one value expression (`throw` requires one).
+A nested call therefore uses its normal bracket boundary:
+
+```pima
+return [calculate value]
+throw [invalid_value value]
+```
+
+`return calculate value` is invalid because it supplies two expressions to
+`return`; it is not reinterpreted as a call.
 
 - `return value` immediately exits the current function with `value`.
 - Bare `return` immediately exits the current function with unit.
@@ -964,7 +1032,7 @@ unchanged:
 
 ```pima
 val :original (1 2)
-val :extended [push (original 0)]
+val :extended [push original 0]
 
 // original is still (1 2)
 // extended is (0 1 2)
@@ -1017,7 +1085,7 @@ val :Counter {
     var :value 0
 
     function :increment () {
-        let :value [+ (value 1)]
+        let :value [+ value 1]
     }
 }
 
@@ -1039,7 +1107,7 @@ val :InvalidBalance {
 }
 
 function :create_account (opening_balance) {
-    if [< (opening_balance 0)] {
+    if [< opening_balance 0] {
         throw [new InvalidBalance]
     } {
         new {
@@ -1052,7 +1120,7 @@ function :create_account (opening_balance) {
             }
 
             pub function :deposit (amount) {
-                let :balance [+ (balance amount)]
+                let :balance [+ balance amount]
                 balance
             }
         }
@@ -1132,9 +1200,12 @@ import /pima/library/standard
 An import may be assigned a namespace alias:
 
 ```pima
-import "/pima/library/standard" as standard
+import "/pima/library/standard" as :standard
 standard.List.reverse (1 2 3)
 ```
+
+The alias is a literal binding destination, so the `:` is required just as it
+is for `val`, `var`, `let`, and `function` declarations.
 
 A namespace's public members may be imported into the current module:
 
@@ -1142,24 +1213,24 @@ A namespace's public members may be imported into the current module:
 import "/pima/library/standard"
 import Math.*
 
-[pow (2 8)]
+[pow 2 8]
 ```
 
 One public member may be selected, optionally under a different local name:
 
 ```pima
 import Logic.not
-import Math.pow as exponentiate
+import Math.pow as :exponentiate
 
 [not false]
-[exponentiate (2 8)]
+[exponentiate 2 8]
 ```
 
 Namespace paths may be nested:
 
 ```pima
-import "/pima/library/standard" as standard
-import standard.Logic.not as negate
+import "/pima/library/standard" as :standard
+import standard.Logic.not as :negate
 ```
 
 The namespace-import forms are:
@@ -1167,7 +1238,7 @@ The namespace-import forms are:
 ```text
 import namespace-path.*
 import namespace-path.member
-import namespace-path.member as local-name
+import namespace-path.member as :local-name
 ```
 
 They are permitted only at module scope. Every path begins with an ordinary
@@ -1240,7 +1311,7 @@ Filesystem I/O is provided by the bundled `/pima/io` module rather than by core
 syntax:
 
 ```pima
-import "/pima/io" as io
+import "/pima/io" as :io
 
 val :text [io.read_text "input.txt"]
 io.write_text "output.txt" text
@@ -1311,12 +1382,12 @@ directory.
 The `/pima/tcp` module exposes synchronous TCP primitives:
 
 ```pima
-import "/pima/tcp" as tcp
+import "/pima/tcp" as :tcp
 
-val :listener [tcp.listen ("127.0.0.1" 8080)]
+val :listener [tcp.listen "127.0.0.1" 8080]
 val :connection [tcp.accept listener]
 tcp.set_timeout connection 5000
-val :request [tcp.read (connection 1024)]
+val :request [tcp.read connection 1024]
 tcp.write (connection "response")
 tcp.close connection
 tcp.close listener
@@ -1343,15 +1414,51 @@ HTTP/1.x parsing, handler dispatch, response validation, and serialization in
 Pima. `demos/http_file_server.pima` combines it with the static file-serving
 example.
 
-## 13. Excluded functionality
+## 13. Remote namespace construction
+
+`remote Template` is the remote counterpart of `new Template`. It constructs
+the namespace in an isolated worker VM and returns a remote namespace handle.
+Every public member request returns a future immediately; `await` is the only
+language operation that waits for its transported result.
+
+The operand denotes namespace templates rather than executable work:
+
+```pima
+val :worker [remote Worker]
+val :composed [remote (Worker Observable)]
+```
+
+An arbitrary call, closure, or value is not a valid `remote` operand. Templates
+must currently be statically known. Names explicitly listed by an annotated
+template are resolved in the caller, transported as values, and installed as
+immutable worker-local bindings. Mutable cells never cross the worker boundary.
+Ordered composition transports the union of external requirements and uses the
+same leftmost-wins merge contract for `new` and `remote`.
+
+Reads and calls both produce futures:
+
+```pima
+val :status_request worker.status
+val :work_request [worker.process input]
+val :done [work_request.complete?]
+val :status [await status_request]
+val :result [await work_request]
+```
+
+Arguments are transported before a request is queued. The worker completes its
+future with the transported result or error. Futures expose the zero-argument
+`complete?` member. `await` returns the completed value, or rethrows its error,
+and may be repeated on the same future.
+
+## 14. Excluded functionality
 
 The following are not required:
 
 - static typing;
 - classes or inheritance beyond namespace templates; and
-- concurrency or asynchronous evaluation.
+- arbitrary closure scheduling through `remote`.
 
-## 14. Conformance examples
+## 15. Conformance examples
 
 The normative behavioral suite consists of:
 

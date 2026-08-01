@@ -52,8 +52,8 @@ Every invocation should receive an implicitly constructed outer list:
 [f]       -> ()
 [f x]     -> (x)
 [f x y]   -> (x y)
-[f (x y)] -> (x y)
-[f ((x y))] -> ((x y))
+[f (x y)] -> ((x y))
+[f ((x y))] -> (((x y)))
 ```
 
 Function parameter patterns then consistently describe that argument list:
@@ -74,19 +74,20 @@ function :arguments values {
 [arguments 1 2 3] // (1 2 3)
 ```
 
-Parentheses around the complete outer argument list are optional. An additional
-list layer explicitly supplies a list as one operand:
+Every pair of parentheses adds a list layer. A list can therefore be supplied
+as one operand directly:
 
 ```pima
 function :first (values) {
     List.head values
 }
 
-[first ((1 2 3))]
+[first (1 2 3)]
 ```
 
 Here `first` receives `((1 2 3))`, and its pattern captures the inner list as
-`values`. By contrast, `[first (1 2 3)]` is equivalent to `[first 1 2 3]`.
+`values`. By contrast, `[first 1 2 3]` receives `(1 2 3)` and attempts to match
+three arguments against a one-element parameter pattern.
 
 ## Names and Symbols
 
@@ -199,7 +200,8 @@ val :operation calculate
 Reserved forms currently consume operands using different parser rules:
 
 - `new` and `do` consume through a line or bracket boundary;
-- `return`, `break`, and `throw` reinterpret the remaining line as a call;
+- `return` and `break` consume zero or one expression, while `throw` consumes
+  exactly one expression;
 - `val`, `var`, and `let` consume a pattern and one expression;
 - `function` consumes a name, parameter pattern, and body expression;
 - `if` consumes two or three expressions;
@@ -207,9 +209,9 @@ Reserved forms currently consume operands using different parser rules:
 - `attempt` consumes one protected expression;
 - `match` and `branch` assign structural meaning to parentheses.
 
-Some variation is necessary because these are syntax forms. It should,
-however, be expressed intentionally rather than by having individual forms
-greedily consume the rest of a physical line.
+Some variation is necessary because these are syntax forms, but no form
+reinterprets or greedily consumes the rest of a physical line. Each consumes
+its documented expression operands and rejects trailing operands.
 
 The parser should have an explicit concept of the current expression boundary:
 
@@ -312,12 +314,43 @@ Functions and blocks retain different roles:
 - functions capture lexical bindings and are invoked with an argument list;
 - blocks are inert code and are executed against a supplied environment.
 
+## Selection Forms
+
+The three selection forms belong to one family but retain distinct semantics:
+
+```text
+if       one Boolean decision
+branch   ordered Boolean decisions
+match    one structural pattern decision
+```
+
+`if` evaluates one predicate and selects its consequent or optional
+alternative. A false predicate without an alternative produces unit.
+
+`branch` evaluates condition/result pairs from top to bottom and selects the
+first true condition. If none is true, it produces unit. A final `true` pair is
+the explicit default.
+
+`match` evaluates one subject and tests patterns from top to bottom. Patterns
+are structural syntax and are not evaluated as Boolean expressions. If no
+pattern matches, it throws `:match_error`; `_` is the explicit fallback.
+
+Combining `if` and `branch` would give one keyword incompatible operand shapes.
+Combining `branch` and `match` would make an arm's left side switch between an
+evaluated condition and an unevaluated pattern based on context. Keeping all
+three preserves a visible evaluation rule while sharing these conventions:
+
+- only the selected result is evaluated;
+- results may be single expressions or blocks;
+- alternatives or arms are considered in source order; and
+- blocks provide multiple expressions but are never required.
+
 ## Infix Exceptions
 
 Imports use `as` in an otherwise prefix-oriented language:
 
 ```pima
-import "/module" as module
+import "/module" as :module
 ```
 
 This should remain a deliberate grammar exception. Import paths and aliases are
@@ -348,8 +381,8 @@ rather than an infix form such as:
 5. Introduce delimiter-aware expression boundaries in the parser.
 6. Clarify in the specification that reserved forms have fixed syntax rather
    than being ordinary functions.
-7. Update examples to omit redundant outer argument parentheses while retaining
-   parentheses for nested list values.
+7. **Completed:** Update examples so every explicit pair of parentheses adds a
+   list layer, retaining parentheses only when a list value is an operand.
 8. Implement namespace-template composition after the parsing rules settle.
 
 ## Target Syntax Summary
@@ -366,3 +399,11 @@ head operand...   invoke head with the argument list (operand...)
 
 This model gives Pima one consistent explanation for name lookup, symbolic
 data, patterns, calls, and nested expression boundaries.
+
+## Required Future Constraint Syntax
+
+Pima must add typed pattern suffixes such as `value:list` and
+`:value:list`. They constrain captures and binding destinations using the
+value's existing list of type symbols; they do not introduce static typing or
+general expression syntax. The normative future design is recorded in
+[`typed-pattern-constraints.md`](typed-pattern-constraints.md).

@@ -262,6 +262,25 @@ impl<'module> Builder<'module> {
         }
     }
 
+    fn infer_value_type(&self, node: NodeId, scope: ScopeId) -> Option<&'static str> {
+        if let Some(inferred) = infer_node_type(self.module, node) {
+            return Some(inferred);
+        }
+        let object = match &self.module.node(node).kind {
+            NodeKind::Member { object, .. } => Some(*object),
+            NodeKind::Call { callee, .. } => match &self.module.node(*callee).kind {
+                NodeKind::Member { object, .. } => Some(*object),
+                _ => None,
+            },
+            _ => None,
+        }?;
+        let NodeKind::Identifier(name) = &self.module.node(object).kind else {
+            return None;
+        };
+        let symbol = self.resolve(scope, name)?;
+        (self.model.symbols[symbol].inferred_type == Some("remote")).then_some("future")
+    }
+
     fn visit_statements(&mut self, statements: &[NodeId], scope: ScopeId) {
         for statement in statements {
             self.visit_node(*statement, scope);
@@ -306,7 +325,7 @@ impl<'module> Builder<'module> {
                     SymbolKind::Binding,
                     *mutability == BindingKind::Mutable,
                 );
-                if let Some(inferred) = infer_node_type(self.module, *value) {
+                if let Some(inferred) = self.infer_value_type(*value, scope) {
                     for name in pattern_captures(pattern) {
                         if let Some(symbol) = self.model.symbol_at(name.span.start) {
                             self.model.symbols[symbol].inferred_type = Some(inferred);
@@ -364,7 +383,11 @@ impl<'module> Builder<'module> {
                     self.visit_node(*value, scope);
                 }
             }
-            NodeKind::Throw(value) | NodeKind::New(value) | NodeKind::Do(value) => {
+            NodeKind::Throw(value)
+            | NodeKind::New(value)
+            | NodeKind::Do(value)
+            | NodeKind::Remote(value)
+            | NodeKind::Await(value) => {
                 self.visit_node(*value, scope);
             }
             NodeKind::Attempt(body) => self.visit_node(*body, scope),
@@ -464,6 +487,8 @@ fn infer_node_type(module: &Module, node: NodeId) -> Option<&'static str> {
         NodeKind::Block(_) => Some("block"),
         NodeKind::Function { .. } => Some("function"),
         NodeKind::New(_) => Some("namespace"),
+        NodeKind::Remote(_) => Some("remote"),
+        NodeKind::Await(_) => None,
         NodeKind::Conditional {
             consequent,
             alternative: Some(alternative),
@@ -501,7 +526,7 @@ mod tests {
 
     #[test]
     fn resolves_parameters_locals_and_recursive_functions() {
-        let source = "function :sum (value) {\n    val :next [+ (value 1)]\n    sum (next)\n}\n";
+        let source = "function :sum (value) {\n    val :next [+ value 1]\n    sum next\n}\n";
         let model = model(source);
         assert_eq!(model.symbols.len(), 3);
 
@@ -549,8 +574,26 @@ mod tests {
     }
 
     #[test]
+    fn infers_remote_and_future_bindings() {
+        let model =
+            model("val :Worker {}\nval :worker [remote Worker]\nval :pending worker.value\n");
+        let worker = model
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "worker")
+            .expect("worker binding");
+        let pending = model
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "pending")
+            .expect("pending binding");
+        assert_eq!(worker.inferred_type, Some("remote"));
+        assert_eq!(pending.inferred_type, Some("future"));
+    }
+
+    #[test]
     fn assignments_are_references_not_new_definitions() {
-        let source = "var :count 0\nlet :count [+ (count 1)]\n";
+        let source = "var :count 0\nlet :count [+ count 1]\n";
         let model = model(source);
         assert_eq!(
             model
@@ -627,7 +670,7 @@ mod tests {
 
     #[test]
     fn leaves_function_pattern_matching_to_runtime() {
-        let source = "function :pair (left right) { (left right) }\nval :value [pair (1 2)]\n";
+        let source = "function :pair (left right) { (left right) }\nval :value [pair 1 2]\n";
         let model = model(source);
         let issues = model.issues().collect::<Vec<_>>();
         assert!(issues.is_empty());
@@ -636,7 +679,7 @@ mod tests {
     #[test]
     fn selected_namespace_import_defines_its_local_name() {
         let source =
-            "import \"/pima/library/standard\"\nimport Logic.not as negate\n[negate false]\n";
+            "import \"/pima/library/standard\"\nimport Logic.not as :negate\n[negate false]\n";
         let model = model(source);
         let offset = source.find("[negate").expect("call should exist") + 2;
         let visible = model
@@ -651,7 +694,7 @@ mod tests {
 
     #[test]
     fn branch_arms_resolve_in_the_surrounding_scope_and_infer_results() {
-        let source = "val :score 75\nval :response branch ([< (score 60)] \"fail\" true \"pass\")\nresponse\n";
+        let source = "val :score 75\nval :response branch ([< score 60] \"fail\" true \"pass\")\nresponse\n";
         let model = model(source);
         let response = model
             .symbols

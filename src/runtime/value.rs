@@ -24,6 +24,10 @@ pub enum Value {
     Namespace(NamespaceRef),
     TcpListener(TcpListenerId),
     TcpConnection(TcpConnectionId),
+    RemoteNamespace(super::RemoteNamespaceHandle),
+    RemoteFunction(super::RemoteNamespaceHandle, Arc<str>),
+    Task(super::TaskHandle),
+    TaskFunction(super::TaskHandle, Arc<str>),
 }
 
 impl PartialEq for Value {
@@ -42,7 +46,11 @@ impl Value {
             Self::String(_) => "string",
             Self::Symbol(_) => "symbol",
             Self::List(_) => "list",
-            Self::NativeFunction(_) | Self::VmClosure(_) | Self::VmPartial(_) => "function",
+            Self::NativeFunction(_)
+            | Self::VmClosure(_)
+            | Self::VmPartial(_)
+            | Self::RemoteFunction(_, _)
+            | Self::TaskFunction(_, _) => "function",
             Self::Placeholder => "placeholder",
             Self::VmBinding(cell) => cell
                 .current_value()
@@ -52,6 +60,8 @@ impl Value {
             Self::Namespace(_) => "namespace",
             Self::TcpListener(_) => "tcp_listener",
             Self::TcpConnection(_) => "tcp_connection",
+            Self::RemoteNamespace(_) => "remote",
+            Self::Task(_) => "future",
         }
     }
 
@@ -96,6 +106,14 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
         (Value::Namespace(a), Value::Namespace(b)) => Gc::ptr_eq(a, b),
         (Value::TcpListener(a), Value::TcpListener(b)) => a == b,
         (Value::TcpConnection(a), Value::TcpConnection(b)) => a == b,
+        (Value::RemoteNamespace(a), Value::RemoteNamespace(b)) => a == b,
+        (Value::RemoteFunction(a_handle, a_name), Value::RemoteFunction(b_handle, b_name)) => {
+            a_handle == b_handle && a_name == b_name
+        }
+        (Value::Task(a), Value::Task(b)) => a == b,
+        (Value::TaskFunction(a_handle, a_name), Value::TaskFunction(b_handle, b_name)) => {
+            a_handle == b_handle && a_name == b_name
+        }
         _ => false,
     }
 }

@@ -170,6 +170,7 @@ fn token_kind(raw: RawToken, text: &str) -> Result<TokenKind, &'static str> {
 fn word_kind(word: &str) -> TokenKind {
     let keyword = match word {
         "as" => Keyword::As,
+        "await" => Keyword::Await,
         "attempt" => Keyword::Attempt,
         "branch" => Keyword::Branch,
         "break" => Keyword::Break,
@@ -181,6 +182,7 @@ fn word_kind(word: &str) -> TokenKind {
         "let" => Keyword::Let,
         "match" => Keyword::Match,
         "new" => Keyword::New,
+        "remote" => Keyword::Remote,
         "pub" => Keyword::Pub,
         "return" => Keyword::Return,
         "val" => Keyword::Val,

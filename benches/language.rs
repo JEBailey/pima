@@ -11,7 +11,7 @@ use pima::{
 fn generated_bindings(count: usize) -> String {
     let mut source = String::with_capacity(count * 24);
     for index in 0..count {
-        source.push_str(&format!("val value_{index} {index}\n"));
+        source.push_str(&format!("val :value_{index} {index}\n"));
     }
     source
 }
@@ -83,7 +83,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
         b.iter_batched(
             Interpreter::default,
             |mut interpreter| {
-                black_box(successful_value(&mut interpreter, "[+ (20 22)]"));
+                black_box(successful_value(&mut interpreter, "[+ 20 22]"));
             },
             BatchSize::SmallInput,
         );
@@ -95,7 +95,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
             |mut interpreter| {
                 black_box(
                     interpreter
-                        .prepare_source("<benchmark>", "[+ (20 22)]")
+                        .prepare_source("<benchmark>", "[+ 20 22]")
                         .expect("benchmark source should prepare"),
                 );
             },
@@ -108,7 +108,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
 
     let mut arithmetic = Interpreter::default();
     let arithmetic_program = arithmetic
-        .prepare_source("<benchmark>", "[+ (20 22)]")
+        .prepare_source("<benchmark>", "[+ 20 22]")
         .expect("benchmark source should prepare");
     group.bench_function("prepared_native_arithmetic", |b| {
         b.iter(|| {
@@ -120,7 +120,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
 
     let mut whole_capture = Interpreter::default();
     let setup =
-        whole_capture.run_source("<benchmark-setup>", "function identity :value { value }\n");
+        whole_capture.run_source("<benchmark-setup>", "function :identity value { value }\n");
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let whole_capture_program = whole_capture
         .prepare_source("<benchmark>", "[identity 42]")
@@ -134,7 +134,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
     });
 
     let whole_list_capture_program = whole_capture
-        .prepare_source("<benchmark>", "[identity (42)]")
+        .prepare_source("<benchmark>", "[identity 42]")
         .expect("benchmark source should prepare");
     group.bench_function("user_call/list_to_whole_capture", |b| {
         b.iter(|| {
@@ -147,11 +147,11 @@ fn runtime_benchmarks(c: &mut Criterion) {
     let mut destructuring = Interpreter::default();
     let setup = destructuring.run_source(
         "<benchmark-setup>",
-        "function add (:left :right) { + (left right) }\n",
+        "function :add (left right) { + left right }\n",
     );
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let destructuring_program = destructuring
-        .prepare_source("<benchmark>", "[add (20 22)]")
+        .prepare_source("<benchmark>", "[add 20 22]")
         .expect("benchmark source should prepare");
     group.bench_function("user_call/list_to_list_pattern", |b| {
         b.iter(|| {
@@ -164,13 +164,13 @@ fn runtime_benchmarks(c: &mut Criterion) {
     let mut recursion = Interpreter::default();
     let setup = recursion.run_source(
         "<benchmark-setup>",
-        "function fibonacci (:value) {\n\
-             if [< (value 3)] 1 [+ ([fibonacci ([- (value 1)])] [fibonacci ([- (value 2)])])]\n\
+        "function :fibonacci (value) {\n\
+             if [< value 3] 1 [+ [fibonacci [- value 1]] [fibonacci [- value 2]]]\n\
          }\n",
     );
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let fibonacci_program = recursion
-        .prepare_source("<benchmark>", "[fibonacci (15)]")
+        .prepare_source("<benchmark>", "[fibonacci 15]")
         .expect("benchmark source should prepare");
     group.bench_function("prepared_recursive_fibonacci_15", |b| {
         b.iter(|| {
@@ -183,14 +183,14 @@ fn runtime_benchmarks(c: &mut Criterion) {
     let mut closure = Interpreter::default();
     let setup = closure.run_source(
         "<benchmark-setup>",
-        "function make_adder (:captured) {\n\
-             function add (:value) { + (captured value) }\n\
+        "function :make_adder (captured) {\n\
+             function :add (value) { + captured value }\n\
          }\n\
-         val add_five [make_adder (5)]\n",
+         val :add_five [make_adder 5]\n",
     );
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let closure_program = closure
-        .prepare_source("<benchmark>", "[add_five (37)]")
+        .prepare_source("<benchmark>", "[add_five 37]")
         .expect("benchmark source should prepare");
     group.bench_function("prepared_captured_closure_call", |b| {
         b.iter(|| {
@@ -204,7 +204,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
         .map(|value| value.to_string())
         .collect::<Vec<_>>()
         .join(" ");
-    let sum_call = format!("[+ ({values})]");
+    let sum_call = format!("[+ {values}]");
     let mut collection = Interpreter::default();
     let collection_program = collection
         .prepare_source("<benchmark>", &sum_call)
@@ -230,13 +230,13 @@ fn memory_benchmarks(c: &mut Criterion) {
                 let mut interpreter = Interpreter::default();
                 let setup = interpreter.run_source(
                     "<benchmark-setup>",
-                    "function make_cycle () {\n\
-                         function recursive () { recursive }\n\
+                    "function :make_cycle () {\n\
+                         function :recursive () { recursive }\n\
                      }\n",
                 );
                 assert!(setup.is_success(), "{:?}", setup.diagnostics);
                 let program = interpreter
-                    .prepare_source("<benchmark>", "[make_cycle ()]")
+                    .prepare_source("<benchmark>", "[make_cycle]")
                     .expect("benchmark source should prepare");
                 (interpreter, program)
             },
@@ -253,13 +253,13 @@ fn memory_benchmarks(c: &mut Criterion) {
     });
 
     let vm_cycle_program = compile_vm_source(
-        "function build_cycle () {\n\
-             var captured ()\n\
-             function cycle () { captured }\n\
-             let captured cycle\n\
+        "function :build_cycle () {\n\
+             var :captured ()\n\
+             function :cycle () { captured }\n\
+             let :captured cycle\n\
              42\n\
          }\n\
-         [build_cycle ()]",
+         [build_cycle]",
     );
     let mut machine = Machine::default();
     group.bench_function("vm_create_100_closure_cell_cycles_and_collect", |b| {
@@ -279,7 +279,7 @@ fn memory_benchmarks(c: &mut Criterion) {
 
 fn engine_comparison_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("engine_comparison");
-    let source = "+ (20 22)";
+    let source = "+ 20 22";
 
     let mut interpreter = Interpreter::default();
     let interpreter_program = interpreter
@@ -309,7 +309,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let branch_source = "if [< (20 22)] 1 0";
+    let branch_source = "if [< 20 22] 1 0";
     let mut interpreter_branch = Interpreter::default();
     let interpreter_branch_program = interpreter_branch
         .prepare_source("<benchmark>", branch_source)
@@ -338,7 +338,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
 
     let mut interpreter_scalar_call = Interpreter::default();
     let setup = interpreter_scalar_call
-        .run_source("<benchmark-setup>", "function identity :value { value }\n");
+        .run_source("<benchmark-setup>", "function :identity value { value }\n");
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let interpreter_scalar_program = interpreter_scalar_call
         .prepare_source("<benchmark>", "[identity 42]")
@@ -350,7 +350,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
             black_box(outcome.value);
         });
     });
-    let vm_scalar_program = compile_vm_source("function identity :value { value }\n[identity 42]");
+    let vm_scalar_program = compile_vm_source("function :identity value { value }\n[identity 42]");
     group.bench_function("register_vm/scalar_capture_call", |b| {
         b.iter(|| {
             black_box(
@@ -364,11 +364,11 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     let mut interpreter_list_call = Interpreter::default();
     let setup = interpreter_list_call.run_source(
         "<benchmark-setup>",
-        "function add (:left :right) { + (left right) }\n",
+        "function :add (left right) { + left right }\n",
     );
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let interpreter_list_program = interpreter_list_call
-        .prepare_source("<benchmark>", "[add (20 22)]")
+        .prepare_source("<benchmark>", "[add 20 22]")
         .expect("benchmark source should prepare");
     group.bench_function("interpreter_vm/list_pattern_call", |b| {
         b.iter(|| {
@@ -378,7 +378,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
     let vm_list_program =
-        compile_vm_source("function add (:left :right) { + (left right) }\n[add (20 22)]");
+        compile_vm_source("function :add (left right) { + left right }\n[add 20 22]");
     group.bench_function("register_vm/list_pattern_call", |b| {
         b.iter(|| {
             black_box(
@@ -389,14 +389,14 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let fibonacci_declaration = "function fibonacci (:value) {\n\
-         if [< (value 3)] 1 [+ ([fibonacci ([- (value 1)])] [fibonacci ([- (value 2)])])]\n\
+    let fibonacci_declaration = "function :fibonacci (value) {\n\
+         if [< value 3] 1 [+ [fibonacci [- value 1]] [fibonacci [- value 2]]]\n\
      }\n";
     let mut interpreter_fibonacci = Interpreter::default();
     let setup = interpreter_fibonacci.run_source("<benchmark-setup>", fibonacci_declaration);
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let interpreter_fibonacci_program = interpreter_fibonacci
-        .prepare_source("<benchmark>", "[fibonacci (15)]")
+        .prepare_source("<benchmark>", "[fibonacci 15]")
         .expect("benchmark source should prepare");
     group.bench_function("interpreter_vm/fibonacci_15", |b| {
         b.iter(|| {
@@ -405,8 +405,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
             black_box(outcome.value);
         });
     });
-    let vm_fibonacci_program =
-        compile_vm_source(&format!("{fibonacci_declaration}[fibonacci (15)]"));
+    let vm_fibonacci_program = compile_vm_source(&format!("{fibonacci_declaration}[fibonacci 15]"));
     group.bench_function("register_vm/fibonacci_15", |b| {
         b.iter(|| {
             black_box(
@@ -417,16 +416,16 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let closure_source = "function make_adder (:captured) {\n\
-         function add (:value) { + (captured value) }\n\
+    let closure_source = "function :make_adder (captured) {\n\
+         function :add (value) { + captured value }\n\
          add\n\
      }\n\
-     val add_five [make_adder (5)]\n";
+     val :add_five [make_adder 5]\n";
     let mut interpreter_closure = Interpreter::default();
     let setup = interpreter_closure.run_source("<benchmark-setup>", closure_source);
     assert!(setup.is_success(), "{:?}", setup.diagnostics);
     let interpreter_closure_program = interpreter_closure
-        .prepare_source("<benchmark>", "[add_five (37)]")
+        .prepare_source("<benchmark>", "[add_five 37]")
         .expect("benchmark source should prepare");
     group.bench_function("interpreter_vm/captured_closure_call", |b| {
         b.iter(|| {
@@ -435,7 +434,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
             black_box(outcome.value);
         });
     });
-    let vm_closure_program = compile_vm_source(&format!("{closure_source}[add_five (37)]"));
+    let vm_closure_program = compile_vm_source(&format!("{closure_source}[add_five 37]"));
     group.bench_function("register_vm/captured_closure_call", |b| {
         b.iter(|| {
             black_box(
@@ -446,17 +445,17 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let mutable_closure_source = "function counter (:start) {\n\
-         var value start\n\
-         function next () {\n\
-             let value [+ (value 1)]\n\
+    let mutable_closure_source = "function :counter (start) {\n\
+         var :value start\n\
+         function :next () {\n\
+             let :value [+ value 1]\n\
              value\n\
          }\n\
          next\n\
      }\n\
-     val instance [counter (0)]\n\
-     [instance ()]\n\
-     [instance ()]";
+     val :instance [counter 0]\n\
+     [instance]\n\
+     [instance]";
     group.bench_function("interpreter_vm/mutable_closure_roundtrip", |b| {
         b.iter_batched(
             || {
@@ -485,11 +484,11 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let loop_source = "var index 0\n\
-                       var total 0\n\
-                       while [< (index 1000)] {\n\
-                           let index [+ (index 1)]\n\
-                           let total [+ (total index)]\n\
+    let loop_source = "var :index 0\n\
+                       var :total 0\n\
+                       while [< index 1000] {\n\
+                           let :index [+ index 1]\n\
+                           let :total [+ total index]\n\
                        }\n\
                        total";
     group.throughput(Throughput::Elements(1_000));
@@ -525,7 +524,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let attempt_source = "attempt { / (1 0) }";
+    let attempt_source = "attempt { / 1 0 }";
     group.throughput(Throughput::Elements(1));
     let mut interpreter_attempt = Interpreter::default();
     let interpreter_attempt_program = interpreter_attempt
@@ -549,7 +548,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let namespace_source = "new { pub val answer 42 }";
+    let namespace_source = "new { pub val :answer 42 }";
     let mut interpreter_namespace = Interpreter::default();
     let interpreter_namespace_program = interpreter_namespace
         .prepare_source("<benchmark>", namespace_source)
@@ -572,7 +571,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let do_source = "do { + (20 22) }";
+    let do_source = "do { + 20 22 }";
     let mut interpreter_do = Interpreter::default();
     let interpreter_do_program = interpreter_do
         .prepare_source("<benchmark>", do_source)
@@ -595,7 +594,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let match_source = "match (:ok 42) ( (ok :value) { + (value 1) } _ { 0 } )";
+    let match_source = "match (:ok 42) ( (:ok value) { + value 1 } _ { 0 } )";
     let mut interpreter_match = Interpreter::default();
     let interpreter_match_program = interpreter_match
         .prepare_source("<benchmark>", match_source)

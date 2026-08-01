@@ -5,6 +5,7 @@ pub mod io;
 pub mod lists;
 pub mod numbers;
 pub mod registry;
+pub mod remote;
 pub mod strings;
 pub mod tcp;
 pub mod types;

@@ -135,8 +135,8 @@ fn parses_symbol_parameters_and_function_body() {
 }
 
 #[test]
-fn parses_immediate_empty_list_argument_member_call() {
-    let module = parse_source("[square.area ()]\n");
+fn parses_immediate_zero_argument_member_call() {
+    let module = parse_source("[square.area]\n");
     let NodeKind::Call {
         callee,
         argument,
@@ -177,14 +177,15 @@ fn packs_implicit_call_arguments_into_lists() {
 }
 
 #[test]
-fn preserves_one_explicit_list_as_the_call_argument() {
+fn explicit_list_adds_one_call_argument_layer() {
     let module = parse_source("add (1 2)\n");
     let NodeKind::Call { argument, .. } = module.node(module.statements[0]).kind else {
         panic!("expected call");
     };
     assert!(matches!(
         &module.node(argument).kind,
-        NodeKind::List(elements) if elements.len() == 2
+        NodeKind::List(elements) if elements.len() == 1
+            && matches!(module.node(elements[0]).kind, NodeKind::List(ref inner) if inner.len() == 2)
     ));
 }
 
@@ -260,6 +261,60 @@ match :ok (
 }
 
 #[test]
+fn parses_remote_namespace_construction() {
+    let module = parse_source("remote Foo");
+    let NodeKind::Remote(operand) = module.node(module.statements[0]).kind else {
+        panic!("expected remote expression");
+    };
+    assert!(matches!(module.node(operand).kind, NodeKind::Identifier(_)));
+
+    let module = parse_source("remote (Foo Barr)");
+    let NodeKind::Remote(operand) = module.node(module.statements[0]).kind else {
+        panic!("expected remote expression");
+    };
+    assert!(matches!(module.node(operand).kind, NodeKind::List(_)));
+}
+
+#[test]
+fn parses_await_expression() {
+    let module = parse_source("await pending");
+    let NodeKind::Await(operation) = module.node(module.statements[0]).kind else {
+        panic!("expected await expression");
+    };
+    assert!(matches!(
+        module.node(operation).kind,
+        NodeKind::Identifier(_)
+    ));
+}
+
+#[test]
+fn keyword_names_are_valid_member_selectors() {
+    let module = parse_source("Remote.new");
+    assert!(matches!(
+        &module.node(module.statements[0]).kind,
+        NodeKind::Member { member, .. } if member.text.as_ref() == "new"
+    ));
+}
+
+#[test]
+fn control_transfers_consume_at_most_one_expression() {
+    for source in [
+        "return value extra",
+        "break value extra",
+        "throw value extra",
+    ] {
+        let mut sources = SourceMap::default();
+        let source_id = sources.add("<test>", source);
+        let tokens = lex(source_id, source).expect("source should lex");
+        let diagnostics = parse(&tokens).expect_err("extra operand should not parse");
+        assert!(diagnostics[0].message.contains("unexpected operand"));
+    }
+
+    parse_source("function :f () { return [calculate value] }");
+    parse_source("function :f () { return (1 2) }");
+}
+
+#[test]
 fn parses_public_types_binding_and_constructor_expression() {
     let module = parse_source(
         r#"val :Account {
@@ -298,13 +353,27 @@ val :account [new Account]
 
 #[test]
 fn parses_bare_import_path_and_alias() {
-    let module = parse_source("import /pima/library/standard as standard\n");
+    let module = parse_source("import /pima/library/standard as :standard\n");
     let NodeKind::Import { path, alias } = &module.node(module.statements[0]).kind else {
         panic!("expected import");
     };
 
     assert_eq!(path.as_ref(), "/pima/library/standard");
     assert_eq!(alias.as_deref(), Some("standard"));
+}
+
+#[test]
+fn rejects_bare_import_aliases() {
+    for source in [
+        "import /pima/library/standard as standard\n",
+        "import Logic.not as negate\n",
+    ] {
+        let mut sources = SourceMap::default();
+        let source_id = sources.add("<test>", source);
+        let tokens = lex(source_id, source).expect("source should lex");
+        let diagnostics = parse(&tokens).expect_err("bare alias should not parse");
+        assert!(diagnostics[0].message.contains("literal alias name"));
+    }
 }
 
 #[test]
@@ -328,7 +397,7 @@ fn parses_static_namespace_import() {
 
 #[test]
 fn parses_selected_nested_namespace_import_with_alias() {
-    let module = parse_source("import standard.Logic.not as negate\n");
+    let module = parse_source("import standard.Logic.not as :negate\n");
     let NodeKind::NamespaceImport {
         path,
         selection,
@@ -356,8 +425,8 @@ fn parses_selected_nested_namespace_import_with_alias() {
 #[test]
 fn rejects_alias_on_wildcard_namespace_import() {
     let mut sources = SourceMap::default();
-    let source_id = sources.add("<test>", "import Logic.* as logical\n");
-    let tokens = lex(source_id, "import Logic.* as logical\n").expect("source should lex");
+    let source_id = sources.add("<test>", "import Logic.* as :logical\n");
+    let tokens = lex(source_id, "import Logic.* as :logical\n").expect("source should lex");
     let diagnostics = parse(&tokens).expect_err("wildcard alias should not parse");
     assert!(
         diagnostics
@@ -490,21 +559,22 @@ fn rejects_duplicate_annotated_block_requirements() {
 }
 
 #[test]
-fn parses_all_examples() {
-    let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+fn parses_all_examples_and_demos() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for directory in [root.join("examples"), root.join("demos")] {
+        for entry in std::fs::read_dir(directory).expect("source directory should exist") {
+            let path = entry.expect("example entry should be readable").path();
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("pima") {
+                continue;
+            }
 
-    for entry in std::fs::read_dir(examples).expect("examples directory should exist") {
-        let path = entry.expect("example entry should be readable").path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("pima") {
-            continue;
+            let source = std::fs::read_to_string(&path).expect("example should be readable");
+            let mut sources = SourceMap::default();
+            let source_id = sources.add(path.display().to_string(), source.as_str());
+            let tokens = lex(source_id, &source)
+                .unwrap_or_else(|errors| panic!("{} failed to lex: {errors:#?}", path.display()));
+            parse(&tokens)
+                .unwrap_or_else(|errors| panic!("{} failed to parse: {errors:#?}", path.display()));
         }
-
-        let source = std::fs::read_to_string(&path).expect("example should be readable");
-        let mut sources = SourceMap::default();
-        let source_id = sources.add(path.display().to_string(), source.as_str());
-        let tokens = lex(source_id, &source)
-            .unwrap_or_else(|errors| panic!("{} failed to lex: {errors:#?}", path.display()));
-        parse(&tokens)
-            .unwrap_or_else(|errors| panic!("{} failed to parse: {errors:#?}", path.display()));
     }
 }

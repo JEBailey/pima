@@ -13,9 +13,15 @@ pub fn namespace_members(namespace: &str) -> Option<&'static [Member]> {
         "Logic" => Some(&LOGIC),
         "io" => Some(&IO),
         "tcp" => Some(&TCP),
+        "future" => Some(&FUTURE),
         _ => None,
     }
 }
+
+const FUTURE: [Member; 1] = [Member {
+    name: "complete?",
+    signature: "future.complete?()",
+}];
 
 pub const NAMESPACES: &[&str] = &["Console", "List", "Logic", "Math", "String", "Types"];
 

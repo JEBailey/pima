@@ -94,6 +94,10 @@ impl Parser<'_> {
 
     fn parse_statement(&mut self) -> ParseResult<NodeId> {
         let first = self.parse_expression()?;
+        if self.is_special_form(first) && !self.at_statement_end() {
+            self.report_here("unexpected operand after completed special form");
+            return Err(());
+        }
         let mut expressions = vec![first];
 
         while !self.at_statement_end() {
@@ -130,6 +134,8 @@ impl Parser<'_> {
             Some(TokenKind::Keyword(Keyword::Import)) => self.parse_import(),
             Some(TokenKind::Keyword(Keyword::New)) => self.parse_unary_special(UnaryForm::New),
             Some(TokenKind::Keyword(Keyword::Do)) => self.parse_unary_special(UnaryForm::Do),
+            Some(TokenKind::Keyword(Keyword::Remote)) => self.parse_remote(),
+            Some(TokenKind::Keyword(Keyword::Await)) => self.parse_await(),
             Some(TokenKind::Keyword(Keyword::Attempt)) => self.parse_attempt(),
             Some(TokenKind::At) => self.parse_annotated_block(),
             _ => self.parse_postfix(),
@@ -141,7 +147,8 @@ impl Parser<'_> {
 
         while self.at(|kind| matches!(kind, TokenKind::Dot)) {
             self.advance();
-            let (member, member_span) = self.expect_identifier("expected member name after `.`")?;
+            let (member, member_span) =
+                self.expect_member_name("expected member name after `.`")?;
             let span = self.join(self.node(expression).span, member_span);
             expression = self.alloc(
                 span,
@@ -232,6 +239,12 @@ impl Parser<'_> {
             }
             expressions.push(self.parse_expression()?);
             self.skip_eols();
+            if self.is_special_form(*expressions.last().expect("expression was pushed"))
+                && !self.at(|kind| matches!(kind, TokenKind::RightBracket))
+            {
+                self.report_here("unexpected operand after completed special form");
+                return Err(());
+            }
         }
 
         let end = self.advance().span;
@@ -642,7 +655,7 @@ impl Parser<'_> {
         let value = if self.at_statement_end() {
             None
         } else {
-            Some(self.parse_remaining_line_expression()?)
+            Some(self.parse_expression()?)
         };
         let end = value.map(|id| self.node(id).span).unwrap_or(start);
         let kind = if is_return {
@@ -664,7 +677,7 @@ impl Parser<'_> {
             self.report_here("expected error value after `throw`");
             return Err(());
         }
-        let value = self.parse_remaining_line_expression()?;
+        let value = self.parse_expression()?;
         Ok(self.alloc(
             self.join(start, self.node(value).span),
             NodeKind::Throw(value),
@@ -695,7 +708,10 @@ impl Parser<'_> {
 
         let alias = if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
             self.advance();
-            Some(self.expect_identifier("expected alias name after `as`")?.0)
+            Some(
+                self.expect_symbol("expected literal alias name such as `:standard` after `as`")?
+                    .0,
+            )
         } else {
             None
         };
@@ -718,7 +734,7 @@ impl Parser<'_> {
                 |kind| matches!(kind, TokenKind::Dot),
                 "expected `.` in namespace import",
             )?;
-            let (text, span) = self.expect_identifier("expected member name or `*` after `.`")?;
+            let (text, span) = self.expect_member_name("expected member name or `*` after `.`")?;
             if text.as_ref() == "*" {
                 if self.at(|kind| matches!(kind, TokenKind::Dot)) {
                     self.report_here("`*` must be the final namespace import segment");
@@ -746,7 +762,8 @@ impl Parser<'_> {
 
             let alias = if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
                 self.advance();
-                let (text, span) = self.expect_identifier("expected alias name after `as`")?;
+                let (text, span) =
+                    self.expect_symbol("expected literal alias name such as `:negate` after `as`")?;
                 Some(Name { text, span })
             } else {
                 None
@@ -793,17 +810,22 @@ impl Parser<'_> {
         ))
     }
 
-    fn parse_remaining_line_expression(&mut self) -> ParseResult<NodeId> {
-        let first = self.parse_expression()?;
-        let mut expressions = vec![first];
-        while !self.at_statement_end() {
-            expressions.push(self.parse_expression()?);
-        }
-        if expressions.len() == 1 {
-            Ok(first)
-        } else {
-            self.make_call(expressions, false)
-        }
+    fn parse_remote(&mut self) -> ParseResult<NodeId> {
+        let start = self.advance().span;
+        let expression = self.require_expression("expected expression after `remote`")?;
+        Ok(self.alloc(
+            self.join(start, self.node(expression).span),
+            NodeKind::Remote(expression),
+        ))
+    }
+
+    fn parse_await(&mut self) -> ParseResult<NodeId> {
+        let start = self.advance().span;
+        let operation = self.require_expression("expected future after `await`")?;
+        Ok(self.alloc(
+            self.join(start, self.node(operation).span),
+            NodeKind::Await(operation),
+        ))
     }
 
     fn require_expression(&mut self, message: &str) -> ParseResult<NodeId> {
@@ -845,15 +867,10 @@ impl Parser<'_> {
         }
     }
 
-    /// Every runtime call receives one list argument. Parentheses around the
-    /// complete outer argument list are optional, so one explicit list is used
-    /// directly; otherwise the trailing expressions are packed into a list.
+    /// Every runtime call receives one implicit list argument. Each trailing
+    /// expression contributes one element, including an explicit list.
     fn pack_call_arguments(&mut self, expressions: Vec<NodeId>, span: Span) -> NodeId {
-        if expressions.len() == 1 && matches!(self.node(expressions[0]).kind, NodeKind::List(_)) {
-            expressions[0]
-        } else {
-            self.alloc(span, NodeKind::List(expressions))
-        }
+        self.alloc(span, NodeKind::List(expressions))
     }
 
     fn is_special_form(&self, id: NodeId) -> bool {
@@ -873,6 +890,8 @@ impl Parser<'_> {
                 | NodeKind::NamespaceImport { .. }
                 | NodeKind::New(_)
                 | NodeKind::Do(_)
+                | NodeKind::Remote(_)
+                | NodeKind::Await(_)
                 | NodeKind::Attempt(_)
                 | NodeKind::Match { .. }
         )
@@ -888,6 +907,26 @@ impl Parser<'_> {
         } else {
             self.report_here(message);
             Err(())
+        }
+    }
+
+    fn expect_member_name(&mut self, message: &str) -> ParseResult<(Arc<str>, Span)> {
+        let token = self.peek().cloned().ok_or_else(|| {
+            self.report_eof(message);
+        })?;
+        match token.kind {
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok((name, token.span))
+            }
+            TokenKind::Keyword(keyword) => {
+                self.advance();
+                Ok((Arc::from(keyword.as_str()), token.span))
+            }
+            _ => {
+                self.report_here(message);
+                Err(())
+            }
         }
     }
 

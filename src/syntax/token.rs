@@ -33,6 +33,7 @@ pub enum TokenKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Keyword {
     As,
+    Await,
     Attempt,
     Branch,
     Break,
@@ -44,6 +45,7 @@ pub enum Keyword {
     Let,
     Match,
     New,
+    Remote,
     Pub,
     Return,
     Val,
@@ -51,4 +53,32 @@ pub enum Keyword {
     Until,
     Var,
     While,
+}
+
+impl Keyword {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::As => "as",
+            Self::Await => "await",
+            Self::Attempt => "attempt",
+            Self::Branch => "branch",
+            Self::Break => "break",
+            Self::Continue => "continue",
+            Self::Do => "do",
+            Self::Function => "function",
+            Self::If => "if",
+            Self::Import => "import",
+            Self::Let => "let",
+            Self::Match => "match",
+            Self::New => "new",
+            Self::Remote => "remote",
+            Self::Pub => "pub",
+            Self::Return => "return",
+            Self::Val => "val",
+            Self::Throw => "throw",
+            Self::Until => "until",
+            Self::Var => "var",
+            Self::While => "while",
+        }
+    }
 }

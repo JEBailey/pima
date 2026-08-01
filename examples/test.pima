@@ -1,17 +1,17 @@
 import "/pima/library/standard"
 
 function :<= (value1 value2) {
-	if [< (value1 value2)] { true } {
-		= (value1 value2)
+	if [< value1 value2] { true } {
+		= value1 value2
 	}
 }
 
 function :fibonacci(x) {
-	if [<= (x 2)] {
+	if [<= x 2] {
 		1
 	 } {
-		+ ([fibonacci ([- (x 1)])] [fibonacci ([- (x 2)])])
+		+ [fibonacci [- x 1]] [fibonacci [- x 2]]
 	}
 }
 
-Console.println ("fiboncacci results of the number 12" [Math.int ([fibonacci (12)])])
+Console.println "fiboncacci results of the number 12" [Math.int [fibonacci 12]]

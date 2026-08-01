@@ -54,6 +54,20 @@ pub fn compile_module_with_globals(
     )
 }
 
+pub(crate) fn compile_module_with_globals_and_source(
+    module: &Module,
+    module_index: usize,
+    globals: impl IntoIterator<Item = (Arc<str>, Value)>,
+    source: Arc<str>,
+) -> Result<Program, Vec<Diagnostic>> {
+    let mut compiler = Compiler::new(module, module_index);
+    compiler.source = Some(source);
+    compiler.install_globals(globals);
+    let mut program = compiler.compile()?;
+    PassPipeline::standard().run(&mut program)?;
+    Ok(program)
+}
+
 pub fn compile_module_with_globals_and_pipeline(
     module: &Module,
     module_index: usize,
@@ -95,6 +109,7 @@ fn empty_function() -> Function {
 
 struct Compiler<'a> {
     module: &'a Module,
+    source: Option<Arc<str>>,
     constants: Vec<Value>,
     instructions: Vec<Instruction>,
     instruction_spans: HashMap<usize, crate::source::Span>,
@@ -149,6 +164,7 @@ impl<'a> Compiler<'a> {
             initial_bindings: Vec::new(),
             imported_bindings: std::collections::HashSet::new(),
             module_index,
+            source: None,
         }
     }
 
@@ -238,6 +254,114 @@ impl<'a> Compiler<'a> {
         } else {
             Err(self.diagnostics)
         }
+    }
+
+    fn compile_remote(&mut self, operand: NodeId, span: crate::source::Span) -> Option<Register> {
+        let Some(templates) = self.resolve_static_blocks(operand) else {
+            self.diagnostics.push(Diagnostic::at_error(
+                "`remote` requires statically known namespace templates",
+                span,
+            ));
+            return None;
+        };
+        let Some(source) = &self.source else {
+            self.diagnostics.push(Diagnostic::at_error(
+                "remote namespace source is unavailable",
+                span,
+            ));
+            return None;
+        };
+        let mut template_sources = Vec::new();
+        let mut public_functions = std::collections::HashMap::new();
+        let mut declared = std::collections::HashSet::new();
+        for (_, block) in &templates {
+            let block_span = self.module.block(*block).span;
+            let Some(block_source) = source.get(block_span.start..block_span.end) else {
+                self.diagnostics.push(Diagnostic::at_error(
+                    "remote namespace source span is invalid",
+                    block_span,
+                ));
+                return None;
+            };
+            template_sources.push(block_source.to_owned());
+            for statement in &self.module.block(*block).statements {
+                match &self.module.node(*statement).kind {
+                    NodeKind::Function {
+                        visibility, name, ..
+                    } if declared.insert(name.text.clone()) => {
+                        public_functions
+                            .insert(name.text.clone(), *visibility == Visibility::Public);
+                    }
+                    NodeKind::Binding { pattern, .. } => {
+                        collect_pattern_names(pattern, &mut declared);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut context = Vec::new();
+        let mut captured = std::collections::HashSet::new();
+        for (_, block) in &templates {
+            for requirement in &self.module.block(*block).requirements {
+                if declared.contains(&requirement.text)
+                    || !captured.insert(requirement.text.clone())
+                {
+                    continue;
+                }
+                let Some(local) = self.locals.get(&requirement.text).copied() else {
+                    self.instructions.push(Instruction::RaiseTyped {
+                        types: vec![
+                            Arc::from("error"),
+                            Arc::from("name_error"),
+                            Arc::from("missing_context"),
+                        ],
+                        message: Arc::from(format!(
+                            "cannot execute block: required context binding `{}` is unavailable",
+                            requirement.text
+                        )),
+                    });
+                    continue;
+                };
+                let value = if local.binding {
+                    let value = self.allocate_register();
+                    self.instructions.push(Instruction::LoadBinding {
+                        destination: value,
+                        binding: local.register,
+                        name: requirement.text.clone(),
+                    });
+                    value
+                } else {
+                    local.register
+                };
+                context.push((requirement.text.clone(), value));
+            }
+        }
+        let blueprint_source: Arc<str> = if template_sources.len() == 1 {
+            Arc::from(template_sources.pop().unwrap())
+        } else {
+            Arc::from(format!("({})", template_sources.join(" ")))
+        };
+        let destination = self.allocate_register();
+        self.instructions.push(Instruction::MakeRemoteNamespace {
+            destination,
+            blueprint: crate::runtime::RemoteBlueprint {
+                source: blueprint_source,
+                public_functions: public_functions
+                    .into_iter()
+                    .filter_map(|(name, public)| public.then_some(name))
+                    .collect(),
+            },
+            context,
+        });
+        Some(destination)
+    }
+
+    fn compile_await(&mut self, future: NodeId) -> Option<Register> {
+        let task = self.compile_node(future)?;
+        let destination = self.allocate_register();
+        self.instructions
+            .push(Instruction::AwaitTask { destination, task });
+        Some(destination)
     }
 
     fn install_globals(&mut self, globals: impl IntoIterator<Item = (Arc<str>, Value)>) {
@@ -429,6 +553,8 @@ impl<'a> Compiler<'a> {
             NodeKind::Attempt(body) => Some(self.compile_attempt(*body)),
             NodeKind::New(operand) => self.compile_new(*operand, node.span),
             NodeKind::Do(operand) => self.compile_do(*operand, node.span),
+            NodeKind::Remote(expression) => self.compile_remote(*expression, node.span),
+            NodeKind::Await(future) => self.compile_await(*future),
             NodeKind::Match { value, arms } => self.compile_match(*value, arms),
             NodeKind::Function { name, .. }
                 if !self.in_function && self.module.statements.contains(&id) =>
@@ -1169,9 +1295,11 @@ fn collect_node_context(
         }
         NodeKind::Block(block) => collect_block_context(module, *block, names, visited),
         NodeKind::Attempt(body) => collect_node_context(module, *body, names, visited),
-        NodeKind::Member { object, .. } | NodeKind::New(object) | NodeKind::Do(object) => {
-            collect_node_context(module, *object, names, visited)
-        }
+        NodeKind::Member { object, .. }
+        | NodeKind::New(object)
+        | NodeKind::Do(object)
+        | NodeKind::Remote(object)
+        | NodeKind::Await(object) => collect_node_context(module, *object, names, visited),
         NodeKind::Call {
             callee, argument, ..
         } => {

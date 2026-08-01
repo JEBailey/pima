@@ -6,34 +6,34 @@ import "/pima/library/standard"
 // then call a function :which will execute said block
 
 
-Console.println ("##DO TEST")
-Console.println ("following test prints \"hello world my name is jason\" ")
+Console.println "##DO TEST"
+Console.println "following test prints \"hello world my name is jason\" "
 
 val :hello @(:name) {
 	//note that at this point name is undefined
-	Console.println ("hello world my name is " name)
+	Console.println "hello world my name is " name
 }
 
 function :saysomething (codeblock name) {
 	do codeblock
 }
 
-saysomething (hello "jason")
+saysomething hello "jason"
 
 
 //Euclidean
 
 function :euclid_algorithm_recursive (u v) {
-    if [= (v 0)] {
+    if [= v 0] {
     	u
     } {
-        euclid_algorithm_recursive (v [Math.mod (u v)])
+        euclid_algorithm_recursive v [Math.mod u v]
     }
 }
 
-Console.println ("EUCLIDEAN GCD RECURSIVE")
-Console.println ("GCD of 40902 and 24140 is " [euclid_algorithm_recursive (40902 24140)])
-Console.println ("GCD of 12 and 8 is " [euclid_algorithm_recursive (12 8)])
-Console.println ("GCD of 8 and 12 is " [euclid_algorithm_recursive (8 12)])
-Console.println ("GCD of 3 and 7 is " [euclid_algorithm_recursive (3 7)])
+Console.println "EUCLIDEAN GCD RECURSIVE"
+Console.println "GCD of 40902 and 24140 is " [euclid_algorithm_recursive 40902 24140]
+Console.println "GCD of 12 and 8 is " [euclid_algorithm_recursive 12 8]
+Console.println "GCD of 8 and 12 is " [euclid_algorithm_recursive 8 12]
+Console.println "GCD of 3 and 7 is " [euclid_algorithm_recursive 3 7]
 

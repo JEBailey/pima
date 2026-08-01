@@ -467,7 +467,7 @@ mod tests {
         .expect("library");
         std::fs::write(
             &main,
-            "import \"library.pima\"\nimport \"library.pima\" as Library\ndouble answer\nLibrary.double 2\n",
+            "import \"library.pima\"\nimport \"library.pima\" as :Library\ndouble answer\nLibrary.double 2\n",
         )
         .expect("main");
 

@@ -37,17 +37,17 @@ fn every_supported_example_executes_successfully() {
 #[test]
 fn representative_programs_have_exact_results() {
     let cases = [
-        ("[+ (20 22)]\n", Value::Integer(42)),
+        ("[+ 20 22]\n", Value::Integer(42)),
         (
-            "function :add (x) {\n    function :inner (y) { + (x y) }\n}\nval :add_two [add (2)]\n[add_two (5)]\n",
+            "function :add (x) {\n    function :inner (y) { + x y }\n}\nval :add_two [add 2]\n[add_two 5]\n",
             Value::Integer(7),
         ),
         (
-            "val :Counter {\n    var :value 0\n    pub function :next () { let :value [+ (value 1)] }\n}\nval :counter [new Counter]\n[counter.next ()]\n[counter.next ()]\n",
+            "val :Counter {\n    var :value 0\n    pub function :next () { let :value [+ value 1] }\n}\nval :counter [new Counter]\n[counter.next ]\n[counter.next ]\n",
             Value::Integer(2),
         ),
         (
-            "import \"/pima/library/standard\"\nval :source (1 2)\nval :changed [List.push (source 0)]\n[= (source (1 2))]\n",
+            "import \"/pima/library/standard\"\nval :source (1 2)\nval :changed [List.push source 0]\n[= source (1 2)]\n",
             Value::Boolean(true),
         ),
     ];
@@ -62,7 +62,7 @@ fn representative_programs_have_exact_results() {
 
 #[test]
 fn representative_failures_preserve_portable_error_types() {
-    let source = "import \"/pima/library/standard\"\nval :result [attempt {\n    List.head (())\n}]\n[Types.is? (result :index_error)]\n";
+    let source = "import \"/pima/library/standard\"\nval :result [attempt {\n    List.head ()\n}]\n[Types.is? result :index_error]\n";
     let mut interpreter = Interpreter::new(Config::default());
     let outcome = interpreter.run_source("<conformance>", source);
 

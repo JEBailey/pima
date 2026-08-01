@@ -1,5 +1,12 @@
 # Threading Proposal for Pima
 
+Status: superseded as a decision document by
+[`remote-namespaces.md`](remote-namespaces.md). The options below remain useful
+background, but Pima's selected primary concurrency abstraction is a namespace
+instantiated in an isolated worker VM and accessed through an opaque remote
+handle. Tasks and channels support remote namespaces; general shared-memory
+mutex namespaces are deferred.
+
 Generated as a design review after evaluating the current Pima architecture, specification, and runtime.
 
 ---
@@ -63,13 +70,13 @@ Pima blocks are already inert, unexecuted code that don't capture environments. 
 **Why it fits Pima:** Blocks are already first-class, uninstantiated code. A `spawn` operation takes a block (already inert) and executes it on a separate thread's VM. No new syntax needed — it's a native function operating on existing `:block` values.
 
 ```pima
-import "/pima/thread" as thread
+import "/pima/thread" as :thread
 
 val handle [thread.spawn {
     Math.sum (1 2 3 4 5)
 }]
 
-val result [thread.join (handle)]
+val result [thread.join handle]
 ```
 
 ### Implementation Shape
@@ -98,18 +105,18 @@ It lets Pima programs parallelize CPU-bound work (map-reduce, batch processing) 
 **Why it fits Pima:** Pima already has `attempt` for error handling and `branch` for ordered conditionals. A `channel` fits naturally as a namespace value with `send`, `receive`, and `closed?` operations. Enables worker-pool patterns that `spawn` + `join` alone can't express.
 
 ```pima
-import "/pima/thread" as thread
-import "/pima/channel" as channel
+import "/pima/thread" as :thread
+import "/pima/channel" as :channel
 
-val (sender receiver) [channel.make ()]
+val (sender receiver) [channel.make]
 
 val worker [thread.spawn @(:sender) {
     sender.send ("result from worker")
 }]
 
-val message [receiver.receive ()]
+val message [receiver.receive]
 Console.println message
-[thread.join (worker)]
+[thread.join worker]
 ```
 
 ### Implementation Shape
@@ -136,26 +143,26 @@ Values sent across channels must handle the GC boundary. Two approaches:
 **Why it fits Pima:** Pima already has `var` for mutation and namespaces for encapsulation. A `Mutex` is just a namespace with atomic guard acquisition.
 
 ```pima
-import "/pima/thread" as thread
-import "/pima/mutex" as mutex
+import "/pima/thread" as :thread
+import "/pima/mutex" as :mutex
 
 val counter [mutex.make 0]
 
 val handles (
     [thread.spawn @(:counter) {
-        until [>= ([counter.get ()] 50000)] {
-            let counter [[counter.increment ()]]
+        until [>= [counter.get] 50000] {
+            let counter [[counter.increment]]
         }
     }]
     [thread.spawn @(:counter) {
-        until [>= ([counter.get ()] 50000)] {
-            let counter [[counter.increment ()]]
+        until [>= [counter.get] 50000] {
+            let counter [[counter.increment]]
         }
     }]
 )
 
 List.foreach (handles thread.join)
-Console.println [counter.get ()]  // 100000
+Console.println [counter.get]  // 100000
 ```
 
 ### Implementation Shape

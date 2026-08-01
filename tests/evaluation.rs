@@ -38,7 +38,7 @@ fn run_ok(source: &str) -> pima::Value {
 #[test]
 fn user_scope_contains_only_primitive_operators_by_default() {
     let mut interpreter = Interpreter::default();
-    let operators = interpreter.run_source("<operators>", "[+ (20 22)]\n");
+    let operators = interpreter.run_source("<operators>", "[+ 20 22]\n");
     assert!(operators.is_success(), "{:?}", operators.diagnostics);
     assert_eq!(operators.value, Some(pima::Value::Integer(42)));
 
@@ -56,7 +56,7 @@ fn user_scope_contains_only_primitive_operators_by_default() {
 fn standard_library_exposes_core_functions_through_namespaces() {
     let value = run_ok(
         "import \"/pima/library/standard\"\n\
-         ([String.concat (\"pi\" \"ma\")] [Math.int 2.9] [Logic.not false] [Types.is? (1 :integer)])",
+         ([String.concat \"pi\" \"ma\"] [Math.int 2.9] [Logic.not false] [Types.is? 1 :integer])",
     );
     assert_eq!(
         value,
@@ -71,6 +71,276 @@ fn standard_library_exposes_core_functions_through_namespaces() {
             .collect(),
         )
     );
+}
+
+#[test]
+fn remote_futures_transport_values() {
+    let value = run_ok(
+        "val :Worker { pub function :echo (value) value }\n\
+         val :worker [remote Worker]\n\
+         val :pending [worker.echo (1 42)]\n\
+         val :result [await pending]\n\
+         ([Types.is? pending :future] result)",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::List(
+                    [pima::Value::Integer(1), pima::Value::Integer(42),]
+                        .into_iter()
+                        .collect(),
+                ),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn awaiting_a_future_is_repeatable() {
+    let awaited_twice = run_ok(
+        "val :Worker { pub val :value 42 }\n\
+         val :worker [remote Worker]\n\
+         val :pending worker.value\n\
+         val :first [await pending]\n\
+         val :second [await pending]\n\
+         [= first second]",
+    );
+    assert_eq!(awaited_twice, pima::Value::Boolean(true));
+}
+
+#[test]
+fn remote_constructs_a_namespace_in_an_isolated_vm() {
+    let value = run_ok(
+        "val :Template {\n\
+             pub val :value 41\n\
+             pub function :add (x) { + value x }\n\
+         }\n\
+         val :worker [remote Template]\n\
+         ([await worker.value] [await [worker.add 1]] [Types.is? worker :namespace])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Integer(41),
+                pima::Value::Integer(42),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn new_composes_templates_with_leftmost_precedence() {
+    let value = run_ok(
+        "val :Base {\n\
+             pub val :value 1\n\
+             pub val :base_only 2\n\
+             pub function :get () value\n\
+         }\n\
+         val :Specific { pub val :value 10 }\n\
+         val :composed [new (Specific Base)]\n\
+         (composed.value composed.base_only [composed.get])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Integer(10),
+                pima::Value::Integer(2),
+                pima::Value::Integer(10),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn composition_runs_only_surviving_initializers_from_right_to_left() {
+    let value = run_ok(
+        "var :events ()\n\
+         function :record (event) {\n\
+             let :events [List.append events event]\n\
+             event\n\
+         }\n\
+         val :Base {\n\
+             pub val :value [record :discarded]\n\
+             pub val :base_only [record :base]\n\
+         }\n\
+         val :Specific { pub val :value [record :specific] }\n\
+         [new (Specific Base)]\n\
+         [String.from events]",
+    );
+    assert_eq!(value, pima::Value::String("(:base :specific)".into()));
+}
+
+#[test]
+fn composition_merges_namespace_types_in_template_order() {
+    let value = run_ok(
+        "val :Base { pub val :types (:base :shared) }\n\
+         val :Specific { pub val :types (:specific :shared) }\n\
+         val :composed [new (Specific Base)]\n\
+         [String.from [Types.of composed]]",
+    );
+    assert_eq!(
+        value,
+        pima::Value::String("(:namespace :specific :shared :base)".into())
+    );
+}
+
+#[test]
+fn composition_can_assign_an_inherited_mutable_binding() {
+    let value = run_ok(
+        "val :Base {\n\
+             var :count 0\n\
+             pub function :get () count\n\
+         }\n\
+         val :StartAtTen { let :count 10 }\n\
+         val :composed [new (StartAtTen Base)]\n\
+         [composed.get]",
+    );
+    assert_eq!(value, pima::Value::Integer(10));
+}
+
+#[test]
+fn remote_uses_the_same_template_composition_as_new() {
+    let value = run_ok(
+        "val :Base {\n\
+             pub val :value 1\n\
+             pub val :base_only 2\n\
+             pub function :get () value\n\
+         }\n\
+         val :Specific { pub val :value 10 }\n\
+         val :worker [remote (Specific Base)]\n\
+         ([await worker.value] [await worker.base_only] [await [worker.get]])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Integer(10),
+                pima::Value::Integer(2),
+                pima::Value::Integer(10),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn remote_transports_required_context_as_an_immutable_snapshot() {
+    let value = run_ok(
+        "var :seed 10\n\
+         val :Worker @(:seed) {\n\
+             var :local seed\n\
+             pub function :read () (seed local)\n\
+             pub function :increment () { let :local [+ local 1] }\n\
+         }\n\
+         val :worker [remote Worker]\n\
+         let :seed 20\n\
+         [await [worker.increment]]\n\
+         [await [worker.read]]",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Integer(10), pima::Value::Integer(11)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn remote_composition_transports_the_union_of_required_context() {
+    let value = run_ok(
+        "val :left 3\n\
+         val :right 4\n\
+         val :Base @(:right) { pub function :sum () [+ left right] }\n\
+         val :Specific @(:left) { pub val :marker left }\n\
+         val :worker [remote (Specific Base)]\n\
+         ([await worker.marker] [await [worker.sum]])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Integer(3), pima::Value::Integer(7)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn remote_rejects_unsendable_required_context() {
+    let value = run_ok(
+        "val :local [new { pub val :value 1 }]\n\
+         val :Worker @(:local) { pub function :read () local }\n\
+         val :error [attempt { remote Worker }]\n\
+         [Types.is? error :unsendable_value]",
+    );
+    assert_eq!(value, pima::Value::Boolean(true));
+}
+
+#[test]
+fn remote_reports_missing_required_context_before_starting_a_worker() {
+    let value = run_ok(
+        "val :Worker @(:missing) { pub val :value missing }\n\
+         val :error [attempt { remote Worker }]\n\
+         [Types.is? error :missing_context]",
+    );
+    assert_eq!(value, pima::Value::Boolean(true));
+}
+
+#[test]
+fn remote_reads_and_calls_return_futures() {
+    let value = run_ok(
+        "val :Worker {\n\
+             pub val :value 41\n\
+             pub function :add (amount) [+ value amount]\n\
+         }\n\
+         val :worker [remote Worker]\n\
+         val :read worker.value\n\
+         val :call [worker.add 1]\n\
+         ([Types.is? read :future] [Types.is? [read.complete?] :boolean] [await read] [await call])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Integer(41),
+                pima::Value::Integer(42),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn await_requires_a_future_and_remote_calls_require_transportable_arguments() {
+    let local = run("val :value 1\nawait value\n");
+    assert!(!local.is_success());
+    assert!(local.diagnostics[0].message.contains("requires a future"));
+
+    let value = run_ok(
+        "val :Worker { pub function :accept (value) value }\n\
+         val :worker [remote Worker]\n\
+         val :local [new { pub val :value 1 }]\n\
+         val :error [attempt { [worker.accept local] }]\n\
+         [Types.is? error :unsendable_value]",
+    );
+    assert_eq!(value, pima::Value::Boolean(true));
 }
 
 #[test]
@@ -104,7 +374,7 @@ fn let_destructuring_updates_mutable_bindings_atomically() {
         "import \"/pima/library/standard\"\n\
          var :x 1\nval :y 2\n\
          val :failure [attempt { let (:x :y) (3 4) }]\n\
-         (x [Types.is? (failure :mutation_error)])",
+         (x [Types.is? failure :mutation_error])",
     );
     assert_eq!(
         value,
@@ -121,7 +391,7 @@ fn match_selects_by_literal_and_exposes_captures_to_its_arm() {
     let value = run_ok(
         "val :result (:ok 42)\n\
          match result (\n\
-             (:ok value) { + (value 1) }\n\
+             (:ok value) { + value 1 }\n\
              (:error error) { error }\n\
          )",
     );
@@ -156,7 +426,7 @@ fn failed_pattern_throws_match_error() {
     let value = run_ok(
         "import \"/pima/library/standard\"\n\
          val :failure [attempt { val (:x :y) (1) }]\n\
-         [Types.is? (failure :match_error)]",
+         [Types.is? failure :match_error]",
     );
     assert_eq!(value, pima::Value::Boolean(true));
 }
@@ -305,13 +575,13 @@ fn var_duplicate_is_error() {
 
 #[test]
 fn shadowing_in_function_scope() {
-    let value = run_ok("val :x 1\nfunction :f () {\n  val :x 2\n  x\n}\n[f ()]");
+    let value = run_ok("val :x 1\nfunction :f () {\n  val :x 2\n  x\n}\n[f ]");
     assert_eq!(value, pima::Value::Integer(2));
 }
 
 #[test]
 fn outer_binding_still_visible_after_function() {
-    let value = run_ok("val :x 1\nfunction :f () {\n  val :x 2\n  x\n}\n[f ()]\nx");
+    let value = run_ok("val :x 1\nfunction :f () {\n  val :x 2\n  x\n}\n[f ]\nx");
     assert_eq!(value, pima::Value::Integer(1));
 }
 
@@ -325,95 +595,95 @@ fn unbound_identifier_is_error() {
 
 #[test]
 fn integer_addition() {
-    assert_eq!(run_ok("[+ (2 3)]"), pima::Value::Integer(5));
+    assert_eq!(run_ok("[+ 2 3]"), pima::Value::Integer(5));
 }
 
 #[test]
 fn integer_subtraction() {
-    assert_eq!(run_ok("[- (10 3)]"), pima::Value::Integer(7));
+    assert_eq!(run_ok("[- 10 3]"), pima::Value::Integer(7));
 }
 
 #[test]
 fn integer_multiplication() {
-    assert_eq!(run_ok("[* (4 5)]"), pima::Value::Integer(20));
+    assert_eq!(run_ok("[* 4 5]"), pima::Value::Integer(20));
 }
 
 #[test]
 fn division_returns_float() {
-    assert_eq!(run_ok("[/ (10 4)]"), pima::Value::Float(2.5));
+    assert_eq!(run_ok("[/ 10 4]"), pima::Value::Float(2.5));
 }
 
 #[test]
 fn integer_division() {
-    assert_eq!(run_ok("[div (10 3)]"), pima::Value::Integer(3));
+    assert_eq!(run_ok("[div 10 3]"), pima::Value::Integer(3));
 }
 
 #[test]
 fn integer_modulo() {
-    assert_eq!(run_ok("[mod (10 3)]"), pima::Value::Integer(1));
+    assert_eq!(run_ok("[mod 10 3]"), pima::Value::Integer(1));
 }
 
 #[test]
 fn euclidean_mod_with_negative() {
     // mod always returns >= 0
-    assert_eq!(run_ok("[mod (-10 3)]"), pima::Value::Integer(2));
+    assert_eq!(run_ok("[mod -10 3]"), pima::Value::Integer(2));
 }
 
 #[test]
 fn mixed_int_float_promotes_to_float() {
-    assert_eq!(run_ok("[+ (2 3.5)]"), pima::Value::Float(5.5));
+    assert_eq!(run_ok("[+ 2 3.5]"), pima::Value::Float(5.5));
 }
 
 #[test]
 fn division_by_zero_is_error() {
-    assert!(!run("[/ (1 0)]").is_success());
+    assert!(!run("[/ 1 0]").is_success());
 }
 
 #[test]
 fn div_by_zero_is_error() {
-    assert!(!run("[div (1 0)]").is_success());
+    assert!(!run("[div 1 0]").is_success());
 }
 
 #[test]
 fn integer_overflow_is_error() {
-    assert!(!run("[* (9223372036854775807 2)]").is_success());
+    assert!(!run("[* 9223372036854775807 2]").is_success());
 }
 
 #[test]
 fn chained_arithmetic() {
     // + 2 3 4 = 9 (left-to-right: + (+ 2 3) 4)
-    assert_eq!(run_ok("[+ (2 3 4)]"), pima::Value::Integer(9));
+    assert_eq!(run_ok("[+ 2 3 4]"), pima::Value::Integer(9));
 }
 
 // ── Comparison ──
 
 #[test]
 fn less_than() {
-    assert_eq!(run_ok("[< (1 2)]"), pima::Value::Boolean(true));
-    assert_eq!(run_ok("[< (2 1)]"), pima::Value::Boolean(false));
+    assert_eq!(run_ok("[< 1 2]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[< 2 1]"), pima::Value::Boolean(false));
 }
 
 #[test]
 fn greater_than() {
-    assert_eq!(run_ok("[> (2 1)]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[> 2 1]"), pima::Value::Boolean(true));
 }
 
 #[test]
 fn equality_same_value() {
-    assert_eq!(run_ok("[= (5 5)]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[= 5 5]"), pima::Value::Boolean(true));
 }
 
 #[test]
 fn native_functions_compare_by_identity() {
-    assert_eq!(run_ok("[= (+ +)]"), pima::Value::Boolean(true));
-    assert_eq!(run_ok("[= (+ -)]"), pima::Value::Boolean(false));
+    assert_eq!(run_ok("[= + +]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[= + -]"), pima::Value::Boolean(false));
 }
 
 #[test]
 fn mixed_numeric_equality_requires_the_same_mathematical_integer() {
-    assert_eq!(run_ok("[= (42 42.0)]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[= 42 42.0]"), pima::Value::Boolean(true));
     assert_eq!(
-        run_ok("[= (9223372036854775807 9223372036854775808.0)]"),
+        run_ok("[= 9223372036854775807 9223372036854775808.0]"),
         pima::Value::Boolean(false)
     );
     assert_ne!(
@@ -424,38 +694,38 @@ fn mixed_numeric_equality_requires_the_same_mathematical_integer() {
 
 #[test]
 fn equality_different_types() {
-    assert_eq!(run_ok("[= (5 \"hello\" )]"), pima::Value::Boolean(false));
+    assert_eq!(run_ok("[= 5 \"hello\" ]"), pima::Value::Boolean(false));
 }
 
 #[test]
 fn equality_int_float_same_math_value() {
-    assert_eq!(run_ok("[= (5 5.0)]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[= 5 5.0]"), pima::Value::Boolean(true));
 }
 
 #[test]
 fn equality_lists_structural() {
-    assert_eq!(run_ok("[= ((1 2) (1 2))]"), pima::Value::Boolean(true));
-    assert_eq!(run_ok("[= ((1 2) (1 3))]"), pima::Value::Boolean(false));
+    assert_eq!(run_ok("[= (1 2) (1 2)]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[= (1 2) (1 3)]"), pima::Value::Boolean(false));
 }
 
 #[test]
 fn not_boolean() {
-    assert_eq!(run_ok("[not (true)]"), pima::Value::Boolean(false));
-    assert_eq!(run_ok("[not (false)]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[not true]"), pima::Value::Boolean(false));
+    assert_eq!(run_ok("[not false]"), pima::Value::Boolean(true));
 }
 
 // ── Types ──
 
 #[test]
 fn types_returns_list_of_symbols() {
-    let value = run_ok("[types (42)]");
+    let value = run_ok("[types 42]");
     assert!(matches!(value, pima::Value::List(_)));
 }
 
 #[test]
 fn is_predicate() {
-    assert_eq!(run_ok("[is? (42 :integer)]"), pima::Value::Boolean(true));
-    assert_eq!(run_ok("[is? (42 :string)]"), pima::Value::Boolean(false));
+    assert_eq!(run_ok("[is? 42 :integer]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[is? 42 :string]"), pima::Value::Boolean(false));
 }
 
 // ── Conditionals ──
@@ -464,7 +734,7 @@ fn is_predicate() {
 fn branch_selects_the_first_true_arm() {
     assert_eq!(
         run_ok(
-            "var :visited 0\nbranch (\n false { let :visited 1 }\n true { let :visited 2\n 20 }\n true { let :visited 3\n 30 }\n)\n+ (visited 22)"
+            "var :visited 0\nbranch (\n false { let :visited 1 }\n true { let :visited 2\n 20 }\n true { let :visited 3\n 30 }\n)\n+ visited 22"
         ),
         pima::Value::Integer(24),
     );
@@ -479,7 +749,7 @@ fn branch_returns_unit_when_no_condition_matches() {
 #[test]
 fn branch_conditions_share_the_current_scope() {
     assert_eq!(
-        run_ok("val :threshold 10\nval :value 12\nbranch ([> (value threshold)] value true 0)"),
+        run_ok("val :threshold 10\nval :value 12\nbranch ([> value threshold] value true 0)"),
         pima::Value::Integer(12),
     );
 }
@@ -490,8 +760,8 @@ fn branch_results_can_be_unwrapped_expressions() {
         run_ok(
             "val :score 75\n\
              val :response branch (\n\
-                 [< (score 60)] \"fail\"\n\
-                 [< (score 90)] \"pass\"\n\
+                 [< score 60] \"fail\"\n\
+                 [< score 90] \"pass\"\n\
                  true \"excellent\"\n\
              )\n\
              response",
@@ -531,7 +801,7 @@ fn if_without_alternative_returns_consequent_or_unit() {
 
 #[test]
 fn if_without_alternative_accepts_a_block_consequent() {
-    assert_eq!(run_ok("if true { + (20 22) }"), pima::Value::Integer(42));
+    assert_eq!(run_ok("if true { + 20 22 }"), pima::Value::Integer(42));
     assert_eq!(run_ok("if false { missing }"), pima::Value::Unit);
 }
 
@@ -544,8 +814,8 @@ fn if_with_blocks() {
 #[test]
 fn single_expression_and_block_if_branches_are_equivalent() {
     assert_eq!(
-        run_ok("if true [+ (20 22)] 0"),
-        run_ok("if true { + (20 22) } { 0 }")
+        run_ok("if true [+ 20 22] 0"),
+        run_ok("if true { + 20 22 } { 0 }")
     );
 }
 
@@ -556,7 +826,7 @@ fn immediate_and_block_branches_propagate_return_equally() {
             "function :direct () {\n\
                  if true [return \"this\"] \"other\"\n\
              }\n\
-             [direct ()]\n"
+             [direct ]\n"
         ),
         run_ok(
             "function :blocked () {\n\
@@ -566,7 +836,7 @@ fn immediate_and_block_branches_propagate_return_equally() {
                      \"other\"\n\
                  }\n\
              }\n\
-             [blocked ()]\n"
+             [blocked ]\n"
         )
     );
 }
@@ -610,13 +880,13 @@ fn println_prints_and_returns_unit() {
 
 #[test]
 fn function_declaration_and_call() {
-    let value = run_ok("function :add (x y) {\n  + (x y)\n}\n[add (3 4)]");
+    let value = run_ok("function :add (x y) {\n  + x y\n}\n[add 3 4]");
     assert_eq!(value, pima::Value::Integer(7));
 }
 
 #[test]
 fn function_pattern_can_capture_the_complete_argument_value() {
-    let value = run_ok("function :identity value value\n[identity (1 2 3)]");
+    let value = run_ok("function :identity value value\n[identity 1 2 3]");
     assert_eq!(
         value,
         pima::Value::List(
@@ -634,14 +904,14 @@ fn function_pattern_can_capture_the_complete_argument_value() {
 #[test]
 fn function_body_can_be_a_single_non_block_expression() {
     assert_eq!(
-        run_ok("function :add_one (value) [+ (value 1)]\n[add_one (41)]"),
+        run_ok("function :add_one (value) [+ value 1]\n[add_one 41]"),
         pima::Value::Integer(42)
     );
 }
 
 #[test]
 fn function_argument_pattern_mismatch_is_typed() {
-    let outcome = run("function :pair (left right) left\n[pair (1)]");
+    let outcome = run("function :pair (left right) left\n[pair 1]");
     assert!(!outcome.is_success());
     assert!(
         outcome.diagnostics[0]
@@ -652,26 +922,26 @@ fn function_argument_pattern_mismatch_is_typed() {
 
 #[test]
 fn function_return_last_expression() {
-    let value = run_ok("function :greet (name) {\n  name\n}\n[greet (\"world\")]");
+    let value = run_ok("function :greet (name) {\n  name\n}\n[greet \"world\"]");
     assert_eq!(value, pima::Value::String(std::sync::Arc::from("world")));
 }
 
 #[test]
 fn explicit_return() {
-    let value = run_ok("function :f (x) {\n  return x\n  999\n}\n[f (5)]");
+    let value = run_ok("function :f (x) {\n  return x\n  999\n}\n[f 5]");
     assert_eq!(value, pima::Value::Integer(5));
 }
 
 #[test]
 fn bare_return_returns_unit() {
-    let value = run_ok("function :f () {\n  return\n  999\n}\n[f ()]");
+    let value = run_ok("function :f () {\n  return\n  999\n}\n[f ]");
     assert_eq!(value, pima::Value::Unit);
 }
 
 #[test]
 fn simple_recursion() {
     let value = run_ok(
-        "function :countdown (n) {\n  if [= (n 0)] 0 [+ (1 [countdown ([- (n 1)])])]\n}\n[countdown (3)]",
+        "function :countdown (n) {\n  if [= n 0] 0 [+ 1 [countdown [- n 1]]]\n}\n[countdown 3]",
     );
     assert_eq!(value, pima::Value::Integer(3));
 }
@@ -684,7 +954,7 @@ fn wrong_arity_is_error() {
 
 #[test]
 fn zero_arg_call_with_brackets() {
-    let value = run_ok("function :f () { 42 }\n[f ()]");
+    let value = run_ok("function :f () { 42 }\n[f ]");
     assert_eq!(value, pima::Value::Integer(42));
 }
 
@@ -693,7 +963,7 @@ fn zero_arg_call_with_brackets() {
 #[test]
 fn closure_captures_environment() {
     let value = run_ok(
-        "function :make_adder (n) {\n  function :inner (x) {\n    + (x n)\n  }\n}\nval :add5 [make_adder (5)]\n[add5 (3)]",
+        "function :make_adder (n) {\n  function :inner (x) {\n    + x n\n  }\n}\nval :add5 [make_adder 5]\n[add5 3]",
     );
     assert_eq!(value, pima::Value::Integer(8));
 }
@@ -702,7 +972,7 @@ fn closure_captures_environment() {
 
 #[test]
 fn partial_application_with_underscore() {
-    let value = run_ok("function :add (x y) {\n  + (x y)\n}\nval :add5 [add (5 _)]\n[add5 (10)]");
+    let value = run_ok("function :add (x y) {\n  + x y\n}\nval :add5 [add 5 _]\n[add5 10]");
     assert_eq!(value, pima::Value::Integer(15));
 }
 
@@ -710,20 +980,20 @@ fn partial_application_with_underscore() {
 
 #[test]
 fn while_loop() {
-    let value = run_ok("var :x 0\nwhile [< (x 5)] {\n  let :x [+ (x 1)]\n}\nx");
+    let value = run_ok("var :x 0\nwhile [< x 5] {\n  let :x [+ x 1]\n}\nx");
     assert_eq!(value, pima::Value::Integer(5));
 }
 
 #[test]
 fn until_loop() {
-    let value = run_ok("var :x 0\nuntil [= (x 5)] {\n  let :x [+ (x 1)]\n}\nx");
+    let value = run_ok("var :x 0\nuntil [= x 5] {\n  let :x [+ x 1]\n}\nx");
     assert_eq!(value, pima::Value::Integer(5));
 }
 
 #[test]
 fn break_exits_loop() {
     let value =
-        run_ok("var :x 0\nwhile true {\n  let :x [+ (x 1)]\n  if [= (x 3)] { break x } { }\n}\nx");
+        run_ok("var :x 0\nwhile true {\n  let :x [+ x 1]\n  if [= x 3] { break x } { }\n}\nx");
     assert_eq!(value, pima::Value::Integer(3));
 }
 
@@ -731,7 +1001,7 @@ fn break_exits_loop() {
 fn bare_break_exits_with_unit() {
     // After loop, x should be the value of break (unit)
     // but we check the loop itself terminates
-    let value = run_ok("var :x 0\nwhile true {\n  let :x [+ (x 1)]\n  break\n}\nx");
+    let value = run_ok("var :x 0\nwhile true {\n  let :x [+ x 1]\n  break\n}\nx");
     // x retains last assigned value since break doesn't reassign
     assert_eq!(value, pima::Value::Integer(1));
 }
@@ -741,7 +1011,7 @@ fn continue_skips_iteration() {
     // This test uses >= indirectly — skip until stdlib is ready
     // Actually, it only uses < and = which are native
     let value = run_ok(
-        "var :x 0\nvar :s 0\nwhile [< (x 5)] {\n  let :x [+ (x 1)]\n  if [= (x 3)] { continue } { }\n  let :s [+ (s x)]\n}\ns",
+        "var :x 0\nvar :s 0\nwhile [< x 5] {\n  let :x [+ x 1]\n  if [= x 3] { continue } { }\n  let :s [+ s x]\n}\ns",
     );
     // s = 1 + 2 + 4 + 5 = 12
     assert_eq!(value, pima::Value::Integer(12));
@@ -749,7 +1019,7 @@ fn continue_skips_iteration() {
 
 #[test]
 fn loop_returns_last_value() {
-    let value = run_ok("var :x 10\nwhile [< (x 13)] {\n  let :x [+ (x 1)]\n}\nx");
+    let value = run_ok("var :x 10\nwhile [< x 13] {\n  let :x [+ x 1]\n}\nx");
     assert_eq!(value, pima::Value::Integer(13));
 }
 
@@ -778,7 +1048,7 @@ fn annotated_blocks_require_visible_context_bindings() {
     let value = run_ok(
         "val :report @(:name :score) { score }\n\
          function :render (report name score) { do report }\n\
-         render (report \"Ada\" 96)\n",
+         render report \"Ada\" 96\n",
     );
     assert_eq!(value, pima::Value::Integer(96));
 }
@@ -788,7 +1058,7 @@ fn annotated_blocks_fail_before_execution_when_context_is_missing() {
     let outcome = run("var :changed false\n\
          val :report @(:name :score) { let :changed true }\n\
          function :render (report name) { do report }\n\
-         render (report \"Ada\")\n");
+         render report \"Ada\"\n");
     assert!(!outcome.is_success());
     assert!(
         outcome.diagnostics[0]
@@ -803,7 +1073,7 @@ fn annotated_block_requirements_use_the_lexical_lookup_chain() {
         "val :prefix \"Result: \"\n\
          val :report @(:prefix :name) { name }\n\
          function :render (report name) { do report }\n\
-         render (report \"Ada\")\n",
+         render report \"Ada\"\n",
     );
     assert_eq!(value, pima::Value::String("Ada".into()));
 }
@@ -870,7 +1140,7 @@ fn member_access() {
 #[test]
 fn member_function_call() {
     let value = run_ok(
-        "val :Counter {\n  var :v 0\n  pub function :inc () {\n    let :v [+ (v 1)]\n    v\n  }\n}\nval :c [new Counter]\n[c.inc ()]",
+        "val :Counter {\n  var :v 0\n  pub function :inc () {\n    let :v [+ v 1]\n    v\n  }\n}\nval :c [new Counter]\n[c.inc ]",
     );
     assert_eq!(value, pima::Value::Integer(1));
 }
@@ -885,7 +1155,7 @@ fn private_member_access_is_error() {
 fn namespace_independence() {
     // Two instances have independent state
     let value = run_ok(
-        "val :Counter {\n  var :v 0\n  pub function :inc () {\n    let :v [+ (v 1)]\n  }\n  pub function :get () { v }\n}\nval :a [new Counter]\nval :b [new Counter]\n[a.inc ()]\n[a.get ()]",
+        "val :Counter {\n  var :v 0\n  pub function :inc () {\n    let :v [+ v 1]\n  }\n  pub function :get () { v }\n}\nval :a [new Counter]\nval :b [new Counter]\n[a.inc ]\n[a.get ]",
     );
     assert_eq!(value, pima::Value::Integer(1));
 }
@@ -895,27 +1165,27 @@ fn namespace_independence() {
 #[test]
 fn concat_strings() {
     assert_eq!(
-        run_ok(r#"[concat ("hello" " " "world")]"#),
+        run_ok(r#"[concat "hello" " " "world"]"#),
         pima::Value::String(std::sync::Arc::from("hello world"))
     );
 }
 
 #[test]
 fn string_length() {
-    assert_eq!(run_ok(r#"[length ("hello")]"#), pima::Value::Integer(5));
+    assert_eq!(run_ok(r#"[length "hello"]"#), pima::Value::Integer(5));
 }
 
 #[test]
 fn string_slice() {
     assert_eq!(
-        run_ok(r#"[slice ("hello" 1 4)]"#),
+        run_ok(r#"[slice "hello" 1 4]"#),
         pima::Value::String(std::sync::Arc::from("ell"))
     );
 }
 
 #[test]
 fn string_chars() {
-    let value = run_ok(r#"[chars ("abc")]"#);
+    let value = run_ok(r#"[chars "abc"]"#);
     assert!(matches!(value, pima::Value::List(_)));
 }
 
@@ -926,8 +1196,8 @@ fn string_code_point_conversions_use_unicode_scalars() {
          (\
              [String.code_point \"A\"]\
              [String.code_point \"😀\"]\
-             [String.from_code_point (65)]\
-             [String.from_code_point (128512)]\
+             [String.from_code_point 65]\
+             [String.from_code_point 128512]\
          )\n",
     );
     assert_eq!(
@@ -954,10 +1224,10 @@ fn string_code_point_conversions_reject_invalid_values() {
          val :surrogate [attempt { String.from_code_point 55296 }]\n\
          val :too_large [attempt { String.from_code_point 1114112 }]\n\
          (\
-             [Types.is? (empty :value_error)]\
-             [Types.is? (multiple :value_error)]\
-             [Types.is? (surrogate :value_error)]\
-             [Types.is? (too_large :value_error)]\
+             [Types.is? empty :value_error]\
+             [Types.is? multiple :value_error]\
+             [Types.is? surrogate :value_error]\
+             [Types.is? too_large :value_error]\
          )\n",
     );
     assert_eq!(
@@ -977,14 +1247,14 @@ fn string_code_point_conversions_reject_invalid_values() {
 
 #[test]
 fn string_value_conversion() {
-    let value = run_ok(r#"[string (42)]"#);
+    let value = run_ok(r#"[string 42]"#);
     assert_eq!(value, pima::Value::String(std::sync::Arc::from("42")));
 }
 
 #[test]
 fn string_conversion_preserves_symbol_names() {
     assert_eq!(
-        run_ok("[string (:foo)]"),
+        run_ok("[string :foo]"),
         pima::Value::String(std::sync::Arc::from(":foo"))
     );
 }
@@ -992,7 +1262,7 @@ fn string_conversion_preserves_symbol_names() {
 #[test]
 fn string_conversion_uses_the_shared_recursive_display() {
     assert_eq!(
-        run_ok(r#"[string (("hello" :world 2.0))]"#),
+        run_ok(r#"[string ("hello" :world 2.0)]"#),
         pima::Value::String(std::sync::Arc::from("(hello :world 2.0)"))
     );
 }
@@ -1001,7 +1271,7 @@ fn string_conversion_uses_the_shared_recursive_display() {
 
 #[test]
 fn push_prepends() {
-    let value = run_ok("[push ((2 3) 1)]");
+    let value = run_ok("[push (2 3) 1]");
     if let pima::Value::List(l) = value {
         let e = l.to_vec();
         assert_eq!(e.len(), 3);
@@ -1013,7 +1283,7 @@ fn push_prepends() {
 
 #[test]
 fn append_appends() {
-    let value = run_ok("[append ((1 2) 3)]");
+    let value = run_ok("[append (1 2) 3]");
     if let pima::Value::List(l) = value {
         let e = l.to_vec();
         assert_eq!(e.len(), 3);
@@ -1025,12 +1295,12 @@ fn append_appends() {
 
 #[test]
 fn head_returns_first() {
-    assert_eq!(run_ok("[head ((1 2 3))]"), pima::Value::Integer(1));
+    assert_eq!(run_ok("[head (1 2 3)]"), pima::Value::Integer(1));
 }
 
 #[test]
 fn rest_returns_tail() {
-    let value = run_ok("[rest ((1 2 3))]");
+    let value = run_ok("[rest (1 2 3)]");
     if let pima::Value::List(l) = value {
         let e = l.to_vec();
         assert_eq!(e.len(), 2);
@@ -1042,8 +1312,8 @@ fn rest_returns_tail() {
 
 #[test]
 fn empty_list_predicate() {
-    assert_eq!(run_ok("[empty? (())]"), pima::Value::Boolean(true));
-    assert_eq!(run_ok("[empty? ((1))]"), pima::Value::Boolean(false));
+    assert_eq!(run_ok("[empty? ()]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[empty? (1)]"), pima::Value::Boolean(false));
 }
 
 #[test]
@@ -1060,12 +1330,12 @@ fn rest_empty_list_is_error() {
 
 #[test]
 fn int_from_integer() {
-    assert_eq!(run_ok("[int (42)]"), pima::Value::Integer(42));
+    assert_eq!(run_ok("[int 42]"), pima::Value::Integer(42));
 }
 
 #[test]
 fn int_from_float_truncates() {
-    assert_eq!(run_ok("[int (3.7)]"), pima::Value::Integer(3));
+    assert_eq!(run_ok("[int 3.7]"), pima::Value::Integer(3));
 }
 
 // int(0.0) is valid — converts to 0
@@ -1084,11 +1354,11 @@ fn throw_and_attempt() {
 #[test]
 fn import_standard_library() {
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\n[Math.pow (2 8)]\n"),
+        run_ok("import \"/pima/library/standard\"\n[Math.pow 2 8]\n"),
         pima::Value::Integer(256)
     );
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\n[String.concat (\"Pi\" \"ma\")]\n"),
+        run_ok("import \"/pima/library/standard\"\n[String.concat \"Pi\" \"ma\"]\n"),
         pima::Value::String(std::sync::Arc::from("Pima"))
     );
 }
@@ -1097,18 +1367,16 @@ fn import_standard_library() {
 fn standard_library_provides_baseline_collection_and_string_utilities() {
     assert_eq!(
         run_ok(
-            "import \"/pima/library/standard\"\nfunction :above_two (value) { > (value 2) }\nval :selected [List.filter (above_two (1 2 3 4))]\n[String.join ([List.map (String.from selected)] \",\")]\n"
+            "import \"/pima/library/standard\"\nfunction :above_two (value) { > value 2 }\nval :selected [List.filter above_two (1 2 3 4)]\n[String.join [List.map String.from selected] \",\"]\n"
         ),
         pima::Value::String(std::sync::Arc::from("3,4"))
     );
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\n[Math.sum ((1 2 3 4))]\n"),
+        run_ok("import \"/pima/library/standard\"\n[Math.sum (1 2 3 4)]\n"),
         pima::Value::Integer(10)
     );
     assert_eq!(
-        run_ok(
-            "import \"/pima/library/standard\"\n[String.upper ([String.trim (\"  Pima  \")])]\n"
-        ),
+        run_ok("import \"/pima/library/standard\"\n[String.upper [String.trim \"  Pima  \"]]\n"),
         pima::Value::String(std::sync::Arc::from("PIMA"))
     );
 }
@@ -1116,7 +1384,7 @@ fn standard_library_provides_baseline_collection_and_string_utilities() {
 #[test]
 fn wildcard_namespace_import_exposes_public_members() {
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\nimport Math.*\n[pow (2 10)]\n"),
+        run_ok("import \"/pima/library/standard\"\nimport Math.*\n[pow 2 10]\n"),
         pima::Value::Integer(1024)
     );
 }
@@ -1131,12 +1399,12 @@ fn wildcard_namespace_import_rejects_collisions_without_partial_binding() {
 #[test]
 fn selected_namespace_import_supports_existing_and_aliased_names() {
     assert_eq!(
-        run_ok("import \"/pima/library/standard\"\nimport Logic.not\n[not (false)]\n"),
+        run_ok("import \"/pima/library/standard\"\nimport Logic.not\n[not false]\n"),
         pima::Value::Boolean(true)
     );
     assert_eq!(
         run_ok(
-            "import \"/pima/library/standard\" as standard\nimport standard.Logic.not as negate\n[negate true]\n"
+            "import \"/pima/library/standard\" as :standard\nimport standard.Logic.not as :negate\n[negate true]\n"
         ),
         pima::Value::Boolean(false)
     );
@@ -1145,7 +1413,7 @@ fn selected_namespace_import_supports_existing_and_aliased_names() {
 #[test]
 fn selected_namespace_imports_are_live_read_only_views() {
     let outcome = run(
-        "val :Template {\n    pub var :count 0\n    pub function :bump () { let :count [+ (count 1)] }\n}\nval :counter [new Template]\nimport counter.count\n[counter.bump ()]\ncount\n",
+        "val :Template {\n    pub var :count 0\n    pub function :bump () { let :count [+ count 1] }\n}\nval :counter [new Template]\nimport counter.count\n[counter.bump ]\ncount\n",
     );
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(1)));
@@ -1166,7 +1434,7 @@ fn selected_namespace_import_enforces_visibility_and_collisions() {
     assert!(private.diagnostics[0].message.contains("private"));
 
     let collision =
-        run("import \"/pima/library/standard\"\nval :negate 1\nimport Logic.not as negate\n");
+        run("import \"/pima/library/standard\"\nval :negate 1\nimport Logic.not as :negate\n");
     assert!(!collision.is_success());
     assert!(collision.diagnostics[0].message.contains("collision"));
 }
@@ -1221,13 +1489,13 @@ fn namespace_test_example_runs() {
 
 #[test]
 fn immediate_call_basic() {
-    assert_eq!(run_ok("[+ (6 7)]"), pima::Value::Integer(13));
+    assert_eq!(run_ok("[+ 6 7]"), pima::Value::Integer(13));
 }
 
 #[test]
 fn immediate_call_nested() {
     // + [+ (1 2)] 3 = 6
-    let value = run_ok("[+ ([+ (1 2)] 3)]");
+    let value = run_ok("[+ [+ 1 2] 3]");
     assert_eq!(value, pima::Value::Integer(6));
 }
 
@@ -1248,7 +1516,7 @@ fn calls_pack_one_trailing_expression_into_a_singleton_list() {
 
 #[test]
 fn zero_arg_invocation() {
-    let value = run_ok("function :f () { 99 }\n[f ()]");
+    let value = run_ok("function :f () { 99 }\n[f ]");
     assert_eq!(value, pima::Value::Integer(99));
 }
 
@@ -1278,13 +1546,13 @@ fn pub_val_in_namespace() {
 
 #[test]
 fn do_can_return_from_enclosing_function() {
-    let value = run_ok("function :f () {\n  do { return 99 }\n  1\n}\n[f ()]");
+    let value = run_ok("function :f () {\n  do { return 99 }\n  1\n}\n[f ]");
     assert_eq!(value, pima::Value::Integer(99));
 }
 
 #[test]
 fn list_elements_evaluate_left_to_right() {
-    let value = run_ok("var :x 0\nval :values ([let :x [+ (x 1)]] [let :x [+ (x 1)]])\nvalues");
+    let value = run_ok("var :x 0\nval :values ([let :x [+ x 1]] [let :x [+ x 1]])\nvalues");
     let pima::Value::List(values) = value else {
         panic!("expected list");
     };
@@ -1296,21 +1564,21 @@ fn list_elements_evaluate_left_to_right() {
 
 #[test]
 fn float_division_checks_the_denominator() {
-    assert_eq!(run_ok("[/ (0.0 2)]"), pima::Value::Float(0.0));
-    assert!(!run("[/ (2 0.0)]").is_success());
+    assert_eq!(run_ok("[/ 0.0 2]"), pima::Value::Float(0.0));
+    assert!(!run("[/ 2 0.0]").is_success());
 }
 
 #[test]
 fn integer_division_truncates_toward_zero() {
-    assert_eq!(run_ok("[div (-5 2)]"), pima::Value::Integer(-2));
-    assert_eq!(run_ok("[div (5 -2)]"), pima::Value::Integer(-2));
+    assert_eq!(run_ok("[div -5 2]"), pima::Value::Integer(-2));
+    assert_eq!(run_ok("[div 5 -2]"), pima::Value::Integer(-2));
 }
 
 #[test]
 fn integer_division_overflow_is_a_pima_error() {
-    assert!(!run("[div (-9223372036854775808 -1)]").is_success());
+    assert!(!run("[div -9223372036854775808 -1]").is_success());
     assert_eq!(
-        run_ok("[mod (-9223372036854775808 -1)]"),
+        run_ok("[mod -9223372036854775808 -1]"),
         pima::Value::Integer(0)
     );
 }
@@ -1343,7 +1611,7 @@ fn caught_loop_condition_error_does_not_leave_a_loop_frame() {
 
 #[test]
 fn partial_application_rejects_excess_arguments() {
-    let outcome = run("function :add (x y) { + (x y) }\nval :partial [add 1 _ 3]\n");
+    let outcome = run("function :add (x y) { + x y }\nval :partial [add 1 _ 3]\n");
     assert!(!outcome.is_success());
 }
 
@@ -1355,7 +1623,7 @@ fn repeated_method_access_preserves_function_identity() {
     pub function :method () { 1 }
 }
 val :instance [new Template]
-[= (instance.method instance.method)]
+[= instance.method instance.method]
 "#,
         ),
         pima::Value::Boolean(true)
@@ -1407,7 +1675,7 @@ fn module_aliases_share_the_cached_module() {
 
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"identity.pima\" as first\nimport \"identity.pima\" as second\n[= (first.identity second.identity)]\n",
+        "import \"identity.pima\" as :first\nimport \"identity.pima\" as :second\n[= first.identity second.identity]\n",
     );
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Boolean(true)));
@@ -1418,14 +1686,14 @@ fn unaliased_imports_are_live_read_only_views() {
     let directory = module_test_directory("live-import");
     std::fs::write(
         directory.join("counter.pima"),
-        "pub var :count 0\npub function :bump () { let :count [+ (count 1)] }\n",
+        "pub var :count 0\npub function :bump () { let :count [+ count 1] }\n",
     )
     .unwrap();
     let mut interpreter = Interpreter::new(Config {
         working_directory: Some(directory),
     });
 
-    let outcome = interpreter.run_source("<test>", "import \"counter.pima\"\n[bump ()]\ncount\n");
+    let outcome = interpreter.run_source("<test>", "import \"counter.pima\"\n[bump ]\ncount\n");
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(1)));
 }
@@ -1461,7 +1729,8 @@ fn import_cycles_are_reported_as_pima_errors() {
 
 #[test]
 fn runtime_diagnostics_include_origin_and_function_stack() {
-    let source = "function :inner () {\n    missing\n}\nfunction :outer () {\n    [inner ()]\n}\n[outer ()]\n";
+    let source =
+        "function :inner () {\n    missing\n}\nfunction :outer () {\n    [inner ]\n}\n[outer ]\n";
     let mut interpreter = Interpreter::default();
     let outcome = interpreter.run_source("<test>", source);
     assert!(!outcome.is_success());
@@ -1489,7 +1758,7 @@ fn io_module_reads_and_writes_relative_to_working_directory() {
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"/pima/io\" as io\n[io.write_text (\"message.txt\" \"hello\")]\n[io.read_text (\"message.txt\")]\n",
+        "import \"/pima/io\" as :io\n[io.write_text \"message.txt\" \"hello\"]\n[io.read_text \"message.txt\"]\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -1512,7 +1781,7 @@ fn io_module_classifies_invalid_utf8() {
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"/pima/library/standard\"\nimport \"/pima/io\" as io\nval :error [attempt {\n    [io.read_text (\"invalid.txt\")]\n}]\n[Types.is? (error :invalid_encoding)]\n",
+        "import \"/pima/library/standard\"\nimport \"/pima/io\" as :io\nval :error [attempt {\n    [io.read_text \"invalid.txt\"]\n}]\n[Types.is? error :invalid_encoding]\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -1527,18 +1796,18 @@ fn io_module_supports_a_complete_text_file_workflow() {
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"/pima/io\" as io\n\
-         io.create_directory (\"data\")\n\
-         io.write_text (\"data/notes.txt\" \"one\\n\")\n\
-         io.append_text (\"data/notes.txt\" \"two\\n\")\n\
-         val :lines [io.read_lines (\"data/notes.txt\")]\n\
-         io.copy_file (\"data/notes.txt\" \"data/copy.txt\")\n\
-         io.move (\"data/copy.txt\" \"data/moved.txt\")\n\
-         val :entries [io.list_directory (\"data\")]\n\
+        "import \"/pima/io\" as :io\n\
+         io.create_directory \"data\"\n\
+         io.write_text \"data/notes.txt\" \"one\\n\"\n\
+         io.append_text \"data/notes.txt\" \"two\\n\"\n\
+         val :lines [io.read_lines \"data/notes.txt\"]\n\
+         io.copy_file \"data/notes.txt\" \"data/copy.txt\"\n\
+         io.move \"data/copy.txt\" \"data/moved.txt\"\n\
+         val :entries [io.list_directory \"data\"]\n\
          val :file [io.file? \"data/moved.txt\"]\n\
          val :folder [io.directory? \"data\"]\n\
          val :missing [io.exists? \"data/missing.txt\"]\n\
-         io.remove_file (\"data/moved.txt\")\n\
+         io.remove_file \"data/moved.txt\"\n\
          (lines entries file folder missing)\n",
     );
 
@@ -1590,9 +1859,9 @@ fn io_path_helpers_are_platform_aware() {
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "import \"/pima/io\" as io\n\
-         val :path [io.join (\"folder\" \"report.txt\")]\n\
-         (path [io.parent (path)] [io.file_name (path)] [io.extension (path)] [io.canonicalize (path)])\n",
+        "import \"/pima/io\" as :io\n\
+         val :path [io.join \"folder\" \"report.txt\"]\n\
+         (path [io.parent path] [io.file_name path] [io.extension path] [io.canonicalize path])\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -1616,9 +1885,9 @@ fn io_module_classifies_missing_files() {
     let outcome = interpreter.run_source(
         "<test>",
         "import \"/pima/library/standard\"\n\
-         import \"/pima/io\" as io\n\
+         import \"/pima/io\" as :io\n\
          val :failure [attempt { io.read_text \"missing.txt\" }]\n\
-         [Types.is? (failure :file_not_found)]\n",
+         [Types.is? failure :file_not_found]\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -1634,12 +1903,12 @@ fn io_module_round_trips_binary_data_and_validates_bytes() {
     let outcome = interpreter.run_source(
         "<test>",
         "import \"/pima/library/standard\"\n\
-         import \"/pima/io\" as io\n\
-         io.write_bytes (\"data.bin\" (0 127 255))\n\
-         io.append_bytes (\"data.bin\" (42))\n\
-         val :bytes [io.read_bytes (\"data.bin\")]\n\
-         val :failure [attempt { io.write_bytes (\"bad.bin\" (256)) }]\n\
-         (bytes [Types.is? (failure :value_error)])\n",
+         import \"/pima/io\" as :io\n\
+         io.write_bytes \"data.bin\" (0 127 255)\n\
+         io.append_bytes \"data.bin\" (42)\n\
+         val :bytes [io.read_bytes \"data.bin\"]\n\
+         val :failure [attempt { io.write_bytes \"bad.bin\" (256) }]\n\
+         (bytes [Types.is? failure :value_error])\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -1676,7 +1945,7 @@ fn imports_are_rejected_outside_module_scope() {
     });
     let outcome = interpreter.run_source(
         "<test>",
-        "function :load () {\n    import \"dependency.pima\"\n}\n[load ()]\n",
+        "function :load () {\n    import \"dependency.pima\"\n}\n[load ]\n",
     );
 
     assert!(!outcome.is_success());
@@ -1690,7 +1959,7 @@ fn imports_are_rejected_outside_module_scope() {
 #[test]
 fn throw_requires_a_public_immutable_string_message() {
     let outcome = run(
-        "val :InvalidError {\n    pub val :types (:error :invalid)\n}\nval :caught [attempt {\n    throw [new InvalidError]\n}]\n[is? (caught :type_error)]\n",
+        "val :InvalidError {\n    pub val :types (:error :invalid)\n}\nval :caught [attempt {\n    throw [new InvalidError]\n}]\n[is? caught :type_error]\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -1700,7 +1969,7 @@ fn throw_requires_a_public_immutable_string_message() {
 #[test]
 fn continue_outside_a_loop_is_a_typed_control_flow_error() {
     let outcome =
-        run("val :caught [attempt {\n    continue\n}]\n[is? (caught :control_flow_error)]\n");
+        run("val :caught [attempt {\n    continue\n}]\n[is? caught :control_flow_error]\n");
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Boolean(true)));
@@ -1723,7 +1992,7 @@ fn top_level_return_inside_new_is_rejected() {
 #[test]
 fn return_inside_new_can_exit_an_enclosing_function() {
     let outcome =
-        run("function :construct () {\n    new {\n        return 7\n    }\n}\n[construct ()]\n");
+        run("function :construct () {\n    new {\n        return 7\n    }\n}\n[construct ]\n");
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(7)));
@@ -1732,7 +2001,7 @@ fn return_inside_new_can_exit_an_enclosing_function() {
 #[test]
 fn failed_new_preserves_closures_published_as_external_side_effects() {
     let outcome = run(
-        "val :Failure {\n    pub val :types (:error :failure)\n    pub val :message \"failed\"\n}\nvar :escaped ()\nval :caught [attempt {\n    new {\n        function :survivor () { 42 }\n        let :escaped survivor\n        throw [new Failure]\n    }\n}]\n[escaped ()]\n",
+        "val :Failure {\n    pub val :types (:error :failure)\n    pub val :message \"failed\"\n}\nvar :escaped ()\nval :caught [attempt {\n    new {\n        function :survivor () { 42 }\n        let :escaped survivor\n        throw [new Failure]\n    }\n}]\n[escaped ]\n",
     );
 
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
@@ -1744,7 +2013,7 @@ fn failed_new_preserves_closures_published_as_external_side_effects() {
 #[test]
 fn namespace_custom_types() {
     let value = run_ok(
-        "val :Square {\n  pub val :types (:square :shape)\n}\nval :s [new Square]\n[types (s)]",
+        "val :Square {\n  pub val :types (:square :shape)\n}\nval :s [new Square]\n[types s]",
     );
     // Should be a list containing :namespace, :square, :shape
     assert!(matches!(value, pima::Value::List(_)));
@@ -1753,7 +2022,7 @@ fn namespace_custom_types() {
 #[test]
 fn is_type_on_namespace() {
     assert_eq!(
-        run_ok("val :T {\n  pub val :types (:my_type)\n}\nval :o [new T]\n[is? (o :my_type)]"),
+        run_ok("val :T {\n  pub val :types (:my_type)\n}\nval :o [new T]\n[is? o :my_type]"),
         pima::Value::Boolean(true)
     );
 }
@@ -1764,7 +2033,7 @@ fn is_type_on_namespace() {
 fn member_access_returns_bound_function() {
     // square.area should return the function :with namespace env captured
     let value = run_ok(
-        "val :Square {\n  val :w 10\n  pub function :area () { w }\n}\nval :s [new Square]\n[s.area ()]",
+        "val :Square {\n  val :w 10\n  pub function :area () { w }\n}\nval :s [new Square]\n[s.area ]",
     );
     assert_eq!(value, pima::Value::Integer(10));
 }
@@ -1773,7 +2042,7 @@ fn member_access_returns_bound_function() {
 
 #[test]
 fn not_non_boolean_is_error() {
-    assert!(!run("[not (42)]").is_success());
+    assert!(!run("[not 42]").is_success());
 }
 
 // ── Comparison with multiple operands ──
@@ -1781,7 +2050,7 @@ fn not_non_boolean_is_error() {
 #[test]
 fn comparison_accepts_two_operands() {
     // = compares two values
-    assert_eq!(run_ok("[= (1 1)]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[= 1 1]"), pima::Value::Boolean(true));
 }
 
 // ── if condition must be boolean ──

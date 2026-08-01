@@ -14,106 +14,206 @@ impl Compiler<'_> {
         operand: NodeId,
         span: crate::source::Span,
     ) -> Option<Register> {
-        let Some(block) = self.resolve_static_block(operand) else {
+        let Some(templates) = self.resolve_static_blocks(operand) else {
             self.diagnostics.push(Diagnostic::at_error(
-                "register VM currently requires a statically known block after `new`",
+                "register VM currently requires statically known templates after `new`",
                 span,
             ));
             return None;
         };
-        if matches!(self.module.node(operand).kind, NodeKind::Identifier(_)) {
-            self.compile_node(operand)?;
+        for (template, _) in &templates {
+            if matches!(self.module.node(*template).kind, NodeKind::Identifier(_)) {
+                self.compile_node(*template)?;
+            }
         }
-        self.check_block_requirements(block);
         let outer_locals = self.locals.clone();
-        let inherited_blocks = self
+        let inherited_blocks: std::collections::HashMap<Arc<str>, BlockId> = self
             .locals
             .iter()
             .filter_map(|(name, local)| local.block.map(|block| (name.clone(), block)))
             .collect();
-        let analysis =
-            crate::vm::analysis::ScopeAnalysis::block(self.module, block, inherited_blocks);
-        for name in analysis.declarations() {
+
+        let mut winners = std::collections::HashMap::new();
+        let mut winner_order = Vec::new();
+        for (_, block) in &templates {
+            for statement in &self.module.block(*block).statements {
+                let mut names = Vec::new();
+                match &self.module.node(*statement).kind {
+                    NodeKind::Binding { pattern, .. } => pattern_names(pattern, &mut names),
+                    NodeKind::Function { name, .. } => names.push(name.text.clone()),
+                    _ => {}
+                }
+                for name in names {
+                    if name.as_ref() == "types" || winners.contains_key(&name) {
+                        continue;
+                    }
+                    winners.insert(name.clone(), (*block, *statement));
+                    winner_order.push(name);
+                }
+            }
+        }
+        let has_types =
+            templates.iter().any(|(_, block)| {
+                self.module.block(*block).statements.iter().any(|statement| {
+                matches!(
+                    &self.module.node(*statement).kind,
+                    NodeKind::Binding { pattern, .. } if pattern_contains_name(pattern, "types")
+                )
+            })
+            });
+        if has_types {
+            winner_order.push(Arc::from("types"));
+        }
+
+        for name in winner_order {
+            let known_block = winners.get(&name).and_then(|(_, statement)| {
+                match &self.module.node(*statement).kind {
+                    NodeKind::Binding {
+                        mutability: BindingKind::Immutable,
+                        value,
+                        ..
+                    } => self.resolve_static_block(*value),
+                    _ => None,
+                }
+            });
             let register = self.allocate_register();
             self.binding_registers.push(register);
             self.locals.insert(
-                name.text.clone(),
+                name,
                 Local {
                     register,
-                    block: analysis.static_block(&name.text),
+                    block: known_block,
                     binding: true,
                 },
             );
         }
-        self.apply_scope_analysis(&analysis);
+        for (_, block) in &templates {
+            let analysis = crate::vm::analysis::ScopeAnalysis::block(
+                self.module,
+                *block,
+                inherited_blocks.clone(),
+            );
+            self.apply_scope_analysis(&analysis);
+            self.check_block_requirements(*block);
+        }
 
-        for statement in self.module.block(block).statements.clone() {
-            if let NodeKind::Binding {
-                mutability,
-                pattern,
-                value,
-                ..
-            } = self.module.node(statement).kind.clone()
-            {
-                let mut names = Vec::new();
-                pattern_names(&pattern, &mut names);
-                let targets = names
-                    .iter()
-                    .filter_map(|name| {
-                        self.locals
-                            .get(name)
-                            .copied()
-                            .map(|local| (name.clone(), local))
-                    })
-                    .collect::<Vec<_>>();
-                for name in &names {
-                    if let Some(outer) = outer_locals.get(name).copied() {
-                        self.locals.insert(name.clone(), outer);
+        let mut type_sources = Vec::new();
+        for (_, block) in templates.iter().rev() {
+            for statement in self.module.block(*block).statements.clone() {
+                match self.module.node(statement).kind.clone() {
+                    NodeKind::Binding {
+                        visibility,
+                        mutability,
+                        pattern,
+                        value,
+                    } => {
+                        let mut names = Vec::new();
+                        pattern_names(&pattern, &mut names);
+                        let winning_names = names
+                            .iter()
+                            .filter(|name| {
+                                name.as_ref() == "types"
+                                    || winners.get(*name) == Some(&(*block, statement))
+                            })
+                            .cloned()
+                            .collect::<std::collections::HashSet<_>>();
+                        if winning_names.is_empty() {
+                            continue;
+                        }
+                        if winning_names.contains("types")
+                            && (visibility != Visibility::Public
+                                || mutability != BindingKind::Immutable)
+                        {
+                            self.instructions.push(Instruction::RaiseTyped {
+                                types: vec![Arc::from("error"), Arc::from("type_error")],
+                                message: Arc::from(
+                                    "namespace `types` must be declared with `pub val`",
+                                ),
+                            });
+                        }
+                        let targets = winning_names
+                            .iter()
+                            .filter_map(|name| {
+                                self.locals
+                                    .get(name)
+                                    .copied()
+                                    .map(|local| (name.clone(), local))
+                            })
+                            .collect::<Vec<_>>();
+                        for name in &winning_names {
+                            if let Some(outer) = outer_locals.get(name).copied() {
+                                self.locals.insert(name.clone(), outer);
+                            }
+                        }
+                        let known_block = (mutability == BindingKind::Immutable)
+                            .then(|| self.resolve_static_block(value))
+                            .flatten();
+                        let source = self.compile_node(value)?;
+                        for (name, target) in targets {
+                            self.locals.insert(name, target);
+                        }
+                        let mut captures = Vec::new();
+                        self.compile_capture_pattern(
+                            &pattern,
+                            source,
+                            Arc::from("binding pattern does not match its value"),
+                            &mut captures,
+                        );
+                        captures.retain(|(name, _)| winning_names.contains(&name.text));
+                        if let Some((_, source)) = captures
+                            .iter()
+                            .find(|(name, _)| name.text.as_ref() == "types")
+                        {
+                            type_sources.push((*block, *source));
+                        }
+                        captures.retain(|(name, _)| name.text.as_ref() != "types");
+                        self.commit_binding_captures(
+                            captures,
+                            mutability == BindingKind::Mutable,
+                            known_block,
+                        );
+                    }
+                    NodeKind::Function { name, .. }
+                        if winners.get(&name.text) == Some(&(*block, statement)) =>
+                    {
+                        self.compile_node(statement)?;
+                    }
+                    NodeKind::Function { .. } => {}
+                    _ => {
+                        self.compile_node(statement)?;
                     }
                 }
-                let known_block = (mutability == BindingKind::Immutable)
-                    .then(|| self.resolve_static_block(value))
-                    .flatten();
-                let source = self.compile_node(value)?;
-                for (name, target) in targets {
-                    self.locals.insert(name, target);
-                }
-                let mut captures = Vec::new();
-                self.compile_capture_pattern(
-                    &pattern,
-                    source,
-                    Arc::from("binding pattern does not match its value"),
-                    &mut captures,
-                );
-                self.commit_binding_captures(
-                    captures,
-                    mutability == BindingKind::Mutable,
-                    known_block,
-                );
-            } else {
-                self.compile_node(statement)?;
             }
         }
+        if has_types {
+            type_sources.sort_by_key(|(block, _)| {
+                templates
+                    .iter()
+                    .position(|(_, candidate)| candidate == block)
+                    .unwrap_or(usize::MAX)
+            });
+            let merged = self.allocate_register();
+            self.instructions.push(Instruction::MergeNamespaceTypes {
+                destination: merged,
+                sources: type_sources.into_iter().map(|(_, source)| source).collect(),
+            });
+            let local = self.locals["types"];
+            self.instructions.push(Instruction::Bind {
+                binding: local.register,
+                source: merged,
+                mutable: false,
+                name: Arc::from("types"),
+            });
+        }
+
         let mut bindings = Vec::new();
-        for statement in self.module.block(block).statements.clone() {
-            match &self.module.node(statement).kind {
-                NodeKind::Binding {
-                    visibility,
-                    pattern,
-                    ..
-                } => collect_namespace_pattern(
-                    pattern,
-                    self,
-                    *visibility == Visibility::Public,
-                    &mut bindings,
-                ),
-                NodeKind::Function {
-                    visibility, name, ..
-                } => {
-                    if let Some(local) = self.locals.get(&name.text).copied() {
-                        let source = namespace_value_register(self, local, &name.text);
+        for (name, (_, statement)) in &winners {
+            match &self.module.node(*statement).kind {
+                NodeKind::Binding { visibility, .. } | NodeKind::Function { visibility, .. } => {
+                    if let Some(local) = self.locals.get(name).copied() {
+                        let source = namespace_value_register(self, local, name);
                         bindings.push(NamespaceBinding {
-                            name: name.text.clone(),
+                            name: name.clone(),
                             source,
                             public: *visibility == Visibility::Public,
                         });
@@ -121,6 +221,14 @@ impl Compiler<'_> {
                 }
                 _ => {}
             }
+        }
+        if has_types {
+            let local = self.locals["types"];
+            bindings.push(NamespaceBinding {
+                name: Arc::from("types"),
+                source: local.register,
+                public: true,
+            });
         }
         self.locals = outer_locals;
         let destination = self.allocate_register();
@@ -237,6 +345,23 @@ impl Compiler<'_> {
         }
     }
 
+    pub(super) fn resolve_static_blocks(&self, operand: NodeId) -> Option<Vec<(NodeId, BlockId)>> {
+        let operands = match &self.module.node(operand).kind {
+            NodeKind::List(operands) => operands.clone(),
+            _ => vec![operand],
+        };
+        if operands.is_empty() {
+            return None;
+        }
+        operands
+            .into_iter()
+            .map(|operand| {
+                self.resolve_static_block(operand)
+                    .map(|block| (operand, block))
+            })
+            .collect()
+    }
+
     pub(super) fn check_block_requirements(&mut self, block: BlockId) {
         for requirement in &self.module.block(block).requirements {
             if !self.locals.contains_key(&requirement.text) {
@@ -268,29 +393,13 @@ fn pattern_names(pattern: &Pattern, names: &mut Vec<std::sync::Arc<str>>) {
     }
 }
 
-fn collect_namespace_pattern(
-    pattern: &Pattern,
-    compiler: &mut Compiler<'_>,
-    public: bool,
-    bindings: &mut Vec<NamespaceBinding>,
-) {
+fn pattern_contains_name(pattern: &Pattern, expected: &str) -> bool {
     match pattern {
-        Pattern::Capture(name) => {
-            if let Some(local) = compiler.locals.get(&name.text).copied() {
-                let source = namespace_value_register(compiler, local, &name.text);
-                bindings.push(NamespaceBinding {
-                    name: name.text.clone(),
-                    source,
-                    public,
-                });
-            }
-        }
-        Pattern::List(patterns) => {
-            for pattern in patterns {
-                collect_namespace_pattern(pattern, compiler, public, bindings);
-            }
-        }
-        Pattern::Wildcard | Pattern::Literal(_) => {}
+        Pattern::Capture(name) => name.text.as_ref() == expected,
+        Pattern::List(patterns) => patterns
+            .iter()
+            .any(|pattern| pattern_contains_name(pattern, expected)),
+        Pattern::Wildcard | Pattern::Literal(_) => false,
     }
 }
 

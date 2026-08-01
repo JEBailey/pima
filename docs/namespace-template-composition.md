@@ -1,7 +1,7 @@
 # Namespace Template Composition
 
-Status: design proposal for reference. This document is not yet part of the
-implemented language specification.
+Status: implemented language contract for local and remote namespace
+construction.
 
 ## Motivation
 
@@ -64,7 +64,9 @@ implicitly from the remaining expressions in the bracket:
 val counter [new MyCounter Counter]
 ```
 
-The explicit-list spelling remains equivalent:
+The explicit-list spelling remains equivalent because `new` is a special form
+whose operand is a template collection, not a runtime call whose arguments are
+being flattened:
 
 ```pima
 val counter [new (MyCounter Counter)]
@@ -106,13 +108,14 @@ Conceptually, `new (A B C)` performs the following steps:
 1. Create a fresh namespace environment linked to the surrounding scope.
 2. Combine declarations from `C`, `B`, and `A`, with later overlays replacing
    earlier declarations of the same name.
-3. Evaluate initializers in composition order, from the rightmost template to
-   the leftmost template.
-4. Permit a template being evaluated to read members supplied by templates to
+3. Discard overridden declarations without evaluating their initializers.
+4. Evaluate surviving initializers in composition order, from the rightmost
+   template to the leftmost template.
+5. Permit a template being evaluated to read members supplied by templates to
    its right.
-5. Complete all functions against the final composed namespace environment.
-6. Validate and combine the declared namespace type symbols.
-7. Return one completed namespace value.
+6. Complete all functions against the final composed namespace environment.
+7. Validate and combine the declared namespace type symbols.
+8. Return one completed namespace value.
 
 If construction throws, the incomplete composed namespace is discarded under
 the same rules as existing single-template construction.
@@ -195,17 +198,17 @@ existing language errors:
 
 ## Compiler Direction
 
-The compiler can implement composition by extending `new` lowering to recognize
-a list of statically known blocks. It can analyze all participating declarations,
-resolve precedence, and emit one `MakeNamespace` for the final set of bindings.
+The compiler implements composition by extending `new` lowering to recognize a
+list of statically known blocks. It analyzes all participating declarations,
+resolves precedence, and emits one `MakeNamespace` for the final set of
+bindings. `remote` packages those same blocks as a worker blueprint, where the
+ordinary `new` lowering applies the identical rules.
 No contract table, `CheckContract` instruction, runtime reflection API, or new
 runtime value category is required.
 
-The lowering must preserve initializer side effects and right-to-left visibility;
-it cannot merely discard overridden declarations before determining whether
-their initializers execute. The exact lowering strategy should be verified with
-tests covering initializer order, inherited reads, mutable assignment, function
-dispatch through overridden bindings, visibility changes, and merged type lists.
+The lowering preserves initializer side effects for surviving declarations and
+right-to-left visibility. Overridden declarations are definitions that do not
+belong to the merged namespace, so their initializers do not execute.
 
 ## Non-goals
 

@@ -189,6 +189,9 @@ impl ScopeWalker<'_> {
                 NodeKind::Identifier(name) => self.named_do.push(name),
                 _ => {}
             },
+            NodeKind::Remote(expression) | NodeKind::Await(expression) => {
+                self.visit_node(expression)
+            }
             NodeKind::Match { value, .. } => self.visit_node(value),
             NodeKind::Unit
             | NodeKind::Boolean(_)

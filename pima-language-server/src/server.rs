@@ -371,7 +371,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let analysis = self.analysis(&document.uri, &text);
-        if let Some((member, span)) = catalog_member_at(&text, &analysis.tokens, offset) {
+        if let Some((member, span)) = catalog_member_at(&text, &analysis, offset) {
             return Ok(Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(member.signature.into())),
                 range: Some(span_to_range(&text, span)),
@@ -422,8 +422,9 @@ impl LanguageServer for Backend {
         let Some(offset) = position_to_offset(&text, position) else {
             return Ok(None);
         };
+        let analysis = self.analysis(&uri, &text);
         if let Some(namespace) = member_receiver(&text, offset)
-            && let Some(members) = catalog::namespace_members(namespace)
+            && let Some(members) = receiver_members(namespace, offset, &analysis)
         {
             return Ok(Some(CompletionResponse::Array(
                 members
@@ -461,7 +462,6 @@ impl LanguageServer for Backend {
             }
         }
 
-        let analysis = self.analysis(&uri, &text);
         let mut items = keyword_completions();
         if let Some(model) = analysis.semantic.as_ref() {
             items.extend(
@@ -917,12 +917,13 @@ fn analyze(text: &str) -> Analysis {
     }
 }
 
+const KEYWORDS: &[&str] = &[
+    "as", "attempt", "await", "branch", "break", "continue", "do", "function", "if", "import",
+    "let", "match", "new", "pub", "remote", "return", "throw", "until", "val", "var", "while",
+];
+
 fn valid_identifier(name: &str) -> bool {
-    const RESERVED: &[&str] = &[
-        "as", "attempt", "break", "continue", "do", "function", "if", "import", "let", "match",
-        "new", "pub", "return", "val", "throw", "until", "var", "while",
-    ];
-    if RESERVED.contains(&name) {
+    if KEYWORDS.contains(&name) {
         return false;
     }
     let mut characters = name.chars();
@@ -1085,7 +1086,11 @@ fn describe_token(kind: &TokenKind) -> Option<String> {
     Some(match kind {
         TokenKind::Identifier(name) => format!("Pima identifier `{name}`"),
         TokenKind::Symbol(name) => format!("Pima symbol `:{name}`"),
-        TokenKind::Keyword(keyword) => format!("Pima keyword `{keyword:?}`").to_lowercase(),
+        TokenKind::Keyword(keyword) => match keyword.as_str() {
+            "remote" => "`remote`: construct a namespace in an isolated worker VM; member requests return futures.".into(),
+            "await" => "`await`: wait for a future and produce its value or throw its error.".into(),
+            name => format!("Pima keyword `{name}`"),
+        },
         TokenKind::Boolean(_) => "Pima boolean".into(),
         TokenKind::Integer(_) => "Pima integer".into(),
         TokenKind::Float(_) => "Pima float".into(),
@@ -1098,10 +1103,6 @@ fn describe_token(kind: &TokenKind) -> Option<String> {
 }
 
 fn keyword_completions() -> Vec<CompletionItem> {
-    const KEYWORDS: &[&str] = &[
-        "attempt", "branch", "break", "continue", "do", "function", "if", "import", "let", "match",
-        "new", "pub", "return", "val", "throw", "until", "var", "while",
-    ];
     KEYWORDS
         .iter()
         .map(|label| CompletionItem {
@@ -1154,12 +1155,27 @@ fn member_receiver(text: &str, offset: usize) -> Option<&str> {
     (!receiver.is_empty()).then_some(receiver)
 }
 
+fn receiver_members(
+    receiver: &str,
+    offset: usize,
+    analysis: &Analysis,
+) -> Option<&'static [catalog::Member]> {
+    catalog::namespace_members(receiver).or_else(|| {
+        let model = analysis.semantic.as_ref()?;
+        let symbol = model
+            .visible_symbols_at(offset)
+            .into_iter()
+            .find(|symbol| model.symbols[*symbol].name == receiver)?;
+        catalog::namespace_members(model.symbols[symbol].inferred_type?)
+    })
+}
+
 fn catalog_member_at(
     text: &str,
-    tokens: &[Token],
+    analysis: &Analysis,
     offset: usize,
 ) -> Option<(&'static catalog::Member, Span)> {
-    let token = tokens.iter().find(|token| {
+    let token = analysis.tokens.iter().find(|token| {
         token.span.start <= offset
             && offset < token.span.end
             && matches!(token.kind, TokenKind::Identifier(_))
@@ -1168,7 +1184,7 @@ fn catalog_member_at(
         return None;
     };
     let namespace = member_receiver(text, token.span.start)?;
-    let member = catalog::namespace_members(namespace)?
+    let member = receiver_members(namespace, token.span.start, analysis)?
         .iter()
         .find(|member| member.name == member_name.as_ref())?;
     Some((member, token.span))
@@ -1209,7 +1225,17 @@ fn signature_at(
             let TokenKind::Identifier(member_name) = &member.kind else {
                 return None;
             };
-            let catalog_member = catalog::namespace_members(callee_name)?
+            let members = catalog::namespace_members(callee_name).or_else(|| {
+                let model = analysis.semantic.as_ref()?;
+                let symbol = model.symbol_at(first.span.start).or_else(|| {
+                    model
+                        .visible_symbols_at(first.span.start)
+                        .into_iter()
+                        .find(|symbol| model.symbols[*symbol].name == callee_name.as_ref())
+                })?;
+                catalog::namespace_members(model.symbols[symbol].inferred_type?)
+            })?;
+            let catalog_member = members
                 .iter()
                 .find(|candidate| candidate.name == member_name.as_ref())?;
             (
@@ -1338,7 +1364,7 @@ fn semantic_tokens(text: &str, analysis: &Analysis) -> Vec<SemanticToken> {
         };
         if let Some(token_type) = token_type {
             entries.push((token.span, token_type, 0));
-        } else if catalog_member_at(text, &analysis.tokens, token.span.start).is_some() {
+        } else if catalog_member_at(text, analysis, token.span.start).is_some() {
             entries.push((token.span, 4, 0));
         }
     }
@@ -1647,6 +1673,37 @@ mod tests {
     }
 
     #[test]
+    fn completes_and_describes_inferred_future_members() {
+        let text = "val :Worker { pub val :value 1 }\nval :worker [remote Worker]\nval :pending worker.value\npending.";
+        let analysis = analyze(text);
+        let members = receiver_members("pending", text.len(), &analysis).expect("future members");
+        assert_eq!(
+            members.iter().map(|member| member.name).collect::<Vec<_>>(),
+            ["complete?"]
+        );
+
+        let call = "val :Worker { pub val :value 1 }\nval :worker [remote Worker]\nval :pending worker.value\n[pending.complete?]";
+        let analysis = analyze(call);
+        let offset = call.find("complete?").expect("complete token");
+        let (member, _) = catalog_member_at(call, &analysis, offset).expect("future member hover");
+        assert_eq!(member.signature, "future.complete?()");
+        let signature = signature_at(call, &analysis, call.len() - 1).expect("future signature");
+        assert_eq!(signature.0, "future.complete?()");
+    }
+
+    #[test]
+    fn current_keywords_are_completed_and_reserved_for_rename() {
+        let labels = keyword_completions()
+            .into_iter()
+            .map(|item| item.label)
+            .collect::<Vec<_>>();
+        for keyword in ["await", "branch", "remote"] {
+            assert!(labels.iter().any(|label| label == keyword));
+            assert!(!valid_identifier(keyword));
+        }
+    }
+
+    #[test]
     fn document_symbols_include_namespace_members() {
         let text = "val :Point {\n    pub val :x 0\n    pub function :move (amount) {\n        x\n    }\n}\n";
         let result = analyze(text);
@@ -1678,7 +1735,7 @@ mod tests {
 
     #[test]
     fn user_function_signature_help_uses_declared_parameters() {
-        let text = "function :add (left right) {\n    + (left right)\n}\n[add (1 ";
+        let text = "function :add (left right) {\n    + left right\n}\n[add 1 ";
         let analysis = analyze(text);
         let (label, parameters, active) =
             signature_at(text, &analysis, text.len()).expect("signature");
@@ -1737,7 +1794,7 @@ mod tests {
 
     #[test]
     fn inlay_hints_use_known_parameter_names() {
-        let text = "function :add (left right) {\n    + (left right)\n}\n[add (1 2)]\n";
+        let text = "function :add (left right) {\n    + left right\n}\n[add 1 2]\n";
         let analysis = analyze(text);
         let hints = inlay_hints(
             text,
@@ -1761,7 +1818,7 @@ mod tests {
         let mut text = String::new();
         for index in 0..1_500 {
             text.push_str(&format!(
-                "function :function_{index} (value) {{\n    + (value {index})\n}}\n"
+                "function :function_{index} (value) {{\n    + value {index}\n}}\n"
             ));
         }
         let started = std::time::Instant::now();

@@ -12,4 +12,4 @@ function :birthday_paradox (probability num_of_people) {
 	}
 }
 
-birthday_paradox (1 1)
+birthday_paradox 1 1

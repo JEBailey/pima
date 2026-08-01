@@ -28,6 +28,7 @@ impl Machine {
         crate::native::register_core(&mut natives);
         crate::native::io::register(&mut natives);
         crate::native::tcp::register(&mut natives);
+        crate::native::remote::register(&mut natives);
         let primitive_natives = PRIMITIVES
             .iter()
             .map(|(_, name)| {
@@ -104,6 +105,20 @@ impl Machine {
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Option<&str> {
         self.context.resolve(symbol)
+    }
+
+    pub(crate) fn import_transport(&mut self, value: crate::runtime::TransportValue) -> Value {
+        let symbols = &mut self.context.symbols;
+        value.into_value(|name| symbols.intern(name))
+    }
+
+    pub(crate) fn export_transport(
+        &self,
+        value: &Value,
+    ) -> Result<crate::runtime::TransportValue, &'static str> {
+        crate::runtime::TransportValue::from_value(value, |symbol| {
+            self.context.resolve(symbol).map(std::sync::Arc::from)
+        })
     }
 
     pub fn exported_globals(
@@ -414,6 +429,49 @@ impl Machine {
                     frame.registers[destination.0 as usize] =
                         Slot::Value(Value::List(values.into_iter().collect()));
                 }
+                Instruction::MergeNamespaceTypes {
+                    destination,
+                    sources,
+                } => {
+                    let mut merged = Vec::new();
+                    let mut merged_symbols = std::collections::HashSet::new();
+                    for source in sources {
+                        let Value::List(values) =
+                            language_value(&frame.registers[source.0 as usize])?
+                        else {
+                            let error = self.context.typed_error(
+                                &["error", "type_error"],
+                                "namespace `types` must be a list".to_owned(),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        };
+                        let mut contribution = std::collections::HashSet::new();
+                        for value in values.iter() {
+                            let Value::Symbol(symbol) = value else {
+                                let error = self.context.typed_error(
+                                    &["error", "type_error"],
+                                    "namespace `types` must contain only symbols".to_owned(),
+                                );
+                                catch_typed_error(&mut frames, &mut handlers, error)?;
+                                continue 'dispatch;
+                            };
+                            if !contribution.insert(*symbol) {
+                                let error = self.context.typed_error(
+                                    &["error", "type_error"],
+                                    "namespace `types` cannot contain duplicates".to_owned(),
+                                );
+                                catch_typed_error(&mut frames, &mut handlers, error)?;
+                                continue 'dispatch;
+                            }
+                            if merged_symbols.insert(*symbol) {
+                                merged.push(value.clone());
+                            }
+                        }
+                    }
+                    frame.registers[destination.0 as usize] =
+                        Slot::Value(Value::List(merged.into_iter().collect()));
+                }
                 Instruction::MakeNamespace {
                     destination,
                     bindings,
@@ -432,6 +490,51 @@ impl Machine {
                         Ok(namespace) => {
                             frame.registers[destination.0 as usize] = Slot::Value(namespace);
                         }
+                        Err(error) => {
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
+                    }
+                }
+                Instruction::MakeRemoteNamespace {
+                    destination,
+                    blueprint,
+                    context,
+                } => {
+                    let context = context
+                        .iter()
+                        .map(|(name, register)| {
+                            Ok((
+                                name.clone(),
+                                language_value(&frame.registers[register.0 as usize])?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, Diagnostic>>()?;
+                    match self
+                        .context
+                        .make_remote_namespace(blueprint.clone(), context)
+                    {
+                        Ok(namespace) => {
+                            frame.registers[destination.0 as usize] = Slot::Value(namespace);
+                        }
+                        Err(error) => {
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
+                    }
+                }
+                Instruction::AwaitTask { destination, task } => {
+                    let task = language_value(&frame.registers[task.0 as usize])?;
+                    let Value::Task(handle) = task else {
+                        let error = self.context.typed_error(
+                            &["error", "type_error"],
+                            format!("`await` requires a future, got {}", task.type_symbol()),
+                        );
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    };
+                    match self.context.task_await(handle) {
+                        Ok(value) => frame.registers[destination.0 as usize] = Slot::Value(value),
                         Err(error) => {
                             catch_typed_error(&mut frames, &mut handlers, error)?;
                             continue 'dispatch;
@@ -706,6 +809,59 @@ impl Machine {
                             continue 'dispatch;
                         }
                         match (definition.call)(&mut self.context, &arguments) {
+                            Ok(value) => {
+                                frame.registers[destination.0 as usize] = Slot::Value(value)
+                            }
+                            Err(error) => {
+                                catch_typed_error(&mut frames, &mut handlers, error)?;
+                                continue 'dispatch;
+                            }
+                        }
+                        continue 'dispatch;
+                    }
+                    if let Value::RemoteFunction(handle, member) = callee {
+                        match self
+                            .context
+                            .call_remote_function(handle, &member, &argument)
+                        {
+                            Ok(value) => {
+                                frame.registers[destination.0 as usize] = Slot::Value(value)
+                            }
+                            Err(error) => {
+                                catch_typed_error(&mut frames, &mut handlers, error)?;
+                                continue 'dispatch;
+                            }
+                        }
+                        continue 'dispatch;
+                    }
+                    if let Value::TaskFunction(handle, member) = callee {
+                        let Value::List(arguments) = argument else {
+                            let error = self.context.typed_error(
+                                &["error", "arity_error"],
+                                format!("task function `{member}` expects an empty argument list"),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        };
+                        if !arguments.is_empty() {
+                            let error = self.context.typed_error(
+                                &["error", "arity_error"],
+                                format!("task function `{member}` expects an empty argument list"),
+                            );
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
+                        let result = match member.as_ref() {
+                            "complete?" => self
+                                .context
+                                .task_complete(handle)
+                                .map(Value::Boolean)
+                                .map_err(|message| {
+                                    self.context.typed_error(&["error", "task_error"], message)
+                                }),
+                            _ => unreachable!("task member names are validated during lookup"),
+                        };
+                        match result {
                             Ok(value) => {
                                 frame.registers[destination.0 as usize] = Slot::Value(value)
                             }
