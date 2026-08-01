@@ -259,14 +259,14 @@ impl<'a> Compiler<'a> {
     fn compile_remote(&mut self, operand: NodeId, span: crate::source::Span) -> Option<Register> {
         let Some(templates) = self.resolve_static_blocks(operand) else {
             self.diagnostics.push(Diagnostic::at_error(
-                "`remote` requires statically known namespace templates",
+                "`remote` requires statically known object templates",
                 span,
             ));
             return None;
         };
         let Some(source) = &self.source else {
             self.diagnostics.push(Diagnostic::at_error(
-                "remote namespace source is unavailable",
+                "remote object source is unavailable",
                 span,
             ));
             return None;
@@ -278,7 +278,7 @@ impl<'a> Compiler<'a> {
             let block_span = self.module.block(*block).span;
             let Some(block_source) = source.get(block_span.start..block_span.end) else {
                 self.diagnostics.push(Diagnostic::at_error(
-                    "remote namespace source span is invalid",
+                    "remote object source span is invalid",
                     block_span,
                 ));
                 return None;

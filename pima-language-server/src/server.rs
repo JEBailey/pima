@@ -1087,7 +1087,7 @@ fn describe_token(kind: &TokenKind) -> Option<String> {
         TokenKind::Identifier(name) => format!("Pima identifier `{name}`"),
         TokenKind::Symbol(name) => format!("Pima symbol `:{name}`"),
         TokenKind::Keyword(keyword) => match keyword.as_str() {
-            "remote" => "`remote`: construct a namespace in an isolated worker VM; member requests return futures.".into(),
+            "remote" => "`remote`: construct an object in an isolated worker VM; member requests return futures.".into(),
             "await" => "`await`: wait for a future and produce its value or throw its error.".into(),
             name => format!("Pima keyword `{name}`"),
         },

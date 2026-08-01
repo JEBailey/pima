@@ -486,7 +486,7 @@ fn infer_node_type(module: &Module, node: NodeId) -> Option<&'static str> {
         NodeKind::List(_) => Some("list"),
         NodeKind::Block(_) => Some("block"),
         NodeKind::Function { .. } => Some("function"),
-        NodeKind::New(_) => Some("namespace"),
+        NodeKind::New(_) => Some("object"),
         NodeKind::Remote(_) => Some("remote"),
         NodeKind::Await(_) => None,
         NodeKind::Conditional {

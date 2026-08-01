@@ -69,7 +69,7 @@ fn execute_module(
                         continue;
                     }
                     return Err(vec![Diagnostic::at_error(
-                        format!("unbound import namespace `{}`", path[0].text),
+                        format!("unbound import object `{}`", path[0].text),
                         path[0].span,
                     )]);
                 };
@@ -81,7 +81,7 @@ fn execute_module(
                         .cloned()
                         .ok_or_else(|| {
                             vec![Diagnostic::at_error(
-                                format!("namespace has no member `{name}`"),
+                                format!("object has no member `{name}`"),
                                 name.span,
                             )]
                         })?;
@@ -106,7 +106,7 @@ fn execute_module(
                             .cloned()
                             .ok_or_else(|| {
                                 vec![Diagnostic::at_error(
-                                    format!("namespace has no member `{member}`"),
+                                    format!("object has no member `{member}`"),
                                     member.span,
                                 )]
                             })?;

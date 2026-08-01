@@ -11,9 +11,9 @@ register-based virtual machine in Rust. Its central ideas are:
 - `@(:name...) { ... }` declares a block's required execution context;
 - `do` executes a block in the current environment;
 - bindings are immutable unless declared with `var`;
-- namespaces are private by default and expose members with `pub`;
+- objects are private by default and expose members with `pub`;
 - lists are immutable persistent values; and
-- errors are typed namespace values handled with `throw` and `attempt`.
+- errors are typed object values handled with `throw` and `attempt`.
 
 The language is under active design. The normative description lives in
 [docs/language-reference.md](docs/language-reference.md); implementation
@@ -106,7 +106,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 The current implementation includes lexing, parsing, evaluation, closures,
-immutable lists, namespaces, typed errors, source-aware stack diagnostics, the
+immutable lists, objects, typed errors, source-aware stack diagnostics, the
 embedded standard library, `/pima/io`, low-level `/pima/tcp` sockets, and
 cached file imports with complete cycle reporting. The remaining
 standard-library and host-embedding surfaces are still evolving.

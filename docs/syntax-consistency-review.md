@@ -358,7 +358,7 @@ declarative syntax, and a prefix alternative would be less readable. `as`
 should remain specific to imports rather than becoming a general composition or
 conversion operator.
 
-Namespace-template composition should use prefix argument order:
+Object-template composition should use prefix argument order:
 
 ```pima
 [new Specialized Base]
@@ -383,7 +383,7 @@ rather than an infix form such as:
    than being ordinary functions.
 7. **Completed:** Update examples so every explicit pair of parentheses adds a
    list layer, retaining parentheses only when a list value is an operand.
-8. Implement namespace-template composition after the parsing rules settle.
+8. Implement object-template composition after the parsing rules settle.
 
 ## Target Syntax Summary
 

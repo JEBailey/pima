@@ -111,7 +111,7 @@ impl HostResources {
             Ok(Ok(())) => Ok(handle),
             Ok(Err(message)) => {
                 let _ = self.concurrency.stop_remote(handle);
-                Err(format!("remote namespace initialization failed: {message}"))
+                Err(format!("remote object initialization failed: {message}"))
             }
             Err(_) => {
                 let _ = self.concurrency.stop_remote(handle);

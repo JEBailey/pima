@@ -16,10 +16,10 @@ pub fn namespace_types(
     if binding.visibility != BindingVisibility::Public
         || !matches!(binding.mutability, BindingMutability::Immutable)
     {
-        return Err("namespace `types` must be declared with `pub val`".into());
+        return Err("object `types` must be declared with `pub val`".into());
     }
     let Value::List(list) = binding.value.resolved() else {
-        return Err("namespace `types` must be a list".into());
+        return Err("object `types` must be a list".into());
     };
     let fundamental = [
         "unit",
@@ -31,7 +31,7 @@ pub fn namespace_types(
         "list",
         "function",
         "block",
-        "namespace",
+        "object",
     ]
     .into_iter()
     .map(|name| symbols.intern(name))
@@ -40,13 +40,13 @@ pub fn namespace_types(
     let mut seen = HashSet::new();
     for value in list.iter() {
         let Value::Symbol(symbol) = value else {
-            return Err("namespace `types` must contain only symbols".into());
+            return Err("object `types` must contain only symbols".into());
         };
         if fundamental.contains(symbol) {
-            return Err("namespace `types` cannot contain a fundamental runtime type".into());
+            return Err("object `types` cannot contain a fundamental runtime type".into());
         }
         if !seen.insert(*symbol) {
-            return Err("namespace `types` cannot contain duplicates".into());
+            return Err("object `types` cannot contain duplicates".into());
         }
         result.push(*symbol);
     }
@@ -79,7 +79,7 @@ pub fn throwable_error(symbols: &mut SymbolInterner, value: &Value) -> Result<()
                 && matches!(binding.value.resolved(), Value::String(_))
         });
     if !valid_message {
-        return Err("an error namespace must expose `message` as a public immutable string".into());
+        return Err("an error object must expose `message` as a public immutable string".into());
     }
     Ok(())
 }

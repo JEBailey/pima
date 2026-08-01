@@ -120,7 +120,7 @@ fn remote_constructs_a_namespace_in_an_isolated_vm() {
              pub function :add (x) { + value x }\n\
          }\n\
          val :worker [remote Template]\n\
-         ([await worker.value] [await [worker.add 1]] [Types.is? worker :namespace])",
+         ([await worker.value] [await [worker.add 1]] [Types.is? worker :object])",
     );
     assert_eq!(
         value,
@@ -191,7 +191,7 @@ fn composition_merges_namespace_types_in_template_order() {
     );
     assert_eq!(
         value,
-        pima::Value::String("(:namespace :specific :shared :base)".into())
+        pima::Value::String("(:object :specific :shared :base)".into())
     );
 }
 
@@ -1428,7 +1428,7 @@ fn selected_namespace_imports_are_live_read_only_views() {
 #[test]
 fn selected_namespace_import_enforces_visibility_and_collisions() {
     let private = run(
-        "val :Template { val :hidden 1 }\nval :namespace [new Template]\nimport namespace.hidden\n",
+        "val :Template { val :hidden 1 }\nval :object [new Template]\nimport object.hidden\n",
     );
     assert!(!private.is_success());
     assert!(private.diagnostics[0].message.contains("private"));
@@ -1478,11 +1478,11 @@ fn fibonacci_example_runs() {
 }
 
 #[test]
-fn namespace_test_example_runs() {
+fn object_test_example_runs() {
     // square1.area = 400 (length=5, width=80)
     // square2.area = 400 (independent)
     // After set_width 40: square1.area = 200
-    // Placeholder until namespaces fully work
+    // Placeholder until objects fully work
 }
 
 // ── Immediate call syntax ──
@@ -2015,7 +2015,7 @@ fn namespace_custom_types() {
     let value = run_ok(
         "val :Square {\n  pub val :types (:square :shape)\n}\nval :s [new Square]\n[types s]",
     );
-    // Should be a list containing :namespace, :square, :shape
+    // Should be a list containing :object, :square, :shape
     assert!(matches!(value, pima::Value::List(_)));
 }
 

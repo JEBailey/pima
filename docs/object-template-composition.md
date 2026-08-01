@@ -1,16 +1,16 @@
-# Namespace Template Composition
+# Object Template Composition
 
-Status: implemented language contract for local and remote namespace
+Status: implemented language contract for local and remote object
 construction.
 
 ## Motivation
 
-Pima namespace templates already describe concrete namespace structure. A
+Piman object templates already describe concrete object structure. A
 template that declares a member supplies that member; a separate `require`
 declaration or contract schema would duplicate the structure already expressed
 by the template.
 
-Template composition builds a namespace from multiple templates. A general
+Template composition builds an object from multiple templates. A general
 template supplies a complete baseline, while more-specific templates add or
 override behavior and state.
 
@@ -42,7 +42,7 @@ val MyCounter {
 val counter [new MyCounter Counter]
 ```
 
-The resulting namespace contains `count` and `increment` from `MyCounter` and
+The resulting object contains `count` and `increment` from `MyCounter` and
 `get` from `Counter`.
 
 This is template composition rather than a separate nominal or structural type
@@ -72,7 +72,7 @@ being flattened:
 val counter [new (MyCounter Counter)]
 ```
 
-Every element must resolve to a namespace template. The initial implementation
+Every element must resolve to an object template. The initial implementation
 should require each template to be statically known, matching the current
 restriction on `new`.
 
@@ -102,10 +102,10 @@ the last entry precedence.
 
 ## Construction Semantics
 
-Composition creates one namespace, not a chain of namespace objects.
+Composition creates one object, not a chain of objects.
 Conceptually, `new (A B C)` performs the following steps:
 
-1. Create a fresh namespace environment linked to the surrounding scope.
+1. Create a fresh object environment linked to the surrounding scope.
 2. Combine declarations from `C`, `B`, and `A`, with later overlays replacing
    earlier declarations of the same name.
 3. Discard overridden declarations without evaluating their initializers.
@@ -113,14 +113,14 @@ Conceptually, `new (A B C)` performs the following steps:
    template to the leftmost template.
 5. Permit a template being evaluated to read members supplied by templates to
    its right.
-6. Complete all functions against the final composed namespace environment.
-7. Validate and combine the declared namespace type symbols.
-8. Return one completed namespace value.
+6. Complete all functions against the final composed object environment.
+7. Validate and combine the declared object type symbols.
+8. Return one completed object value.
 
-If construction throws, the incomplete composed namespace is discarded under
+If construction throws, the incomplete composed object is discarded under
 the same rules as existing single-template construction.
 
-Because all functions belong to the completed namespace, a function inherited
+Because all functions belong to the completed object, a function inherited
 from a general template observes the final bindings, including bindings
 overridden by a more-specific template. This provides natural behavioral
 specialization without creating an inheritance hierarchy.
@@ -155,7 +155,7 @@ immutable. Redeclaration, in contrast, replaces all binding metadata.
 
 Private members participate in composition even though they remain inaccessible
 through external member access. A more-specific declaration may replace a
-private member because composition occurs before the namespace is published.
+private member because composition occurs before the object is published.
 
 ## Type Lists
 
@@ -165,7 +165,7 @@ which only the leftmost value survives.
 
 For `new (A B C)`, concatenate type symbols in the source order `A`, `B`, `C`,
 remove duplicates while retaining the first occurrence, and prepend
-`:namespace` as usual.
+`:object` as usual.
 
 ```pima
 val Counter {
@@ -177,7 +177,7 @@ val Audited {
 }
 
 val counter [new (Audited Counter)]
-[Types.of counter] // (:namespace :audited :counter)
+[Types.of counter] // (:object :audited :counter)
 ```
 
 Each contributed `types` declaration must independently obey the existing
@@ -200,7 +200,7 @@ existing language errors:
 
 The compiler implements composition by extending `new` lowering to recognize a
 list of statically known blocks. It analyzes all participating declarations,
-resolves precedence, and emits one `MakeNamespace` for the final set of
+resolves precedence, and emits one `MakeObject` for the final set of
 bindings. `remote` packages those same blocks as a worker blueprint, where the
 ordinary `new` lowering applies the identical rules.
 No contract table, `CheckContract` instruction, runtime reflection API, or new
@@ -208,7 +208,7 @@ runtime value category is required.
 
 The lowering preserves initializer side effects for surviving declarations and
 right-to-left visibility. Overridden declarations are definitions that do not
-belong to the merged namespace, so their initializers do not execute.
+belong to the merged object, so their initializers do not execute.
 
 ## Non-goals
 
@@ -218,7 +218,7 @@ This proposal does not introduce:
 - an `as` conformance operator;
 - static type inference or typed bindings;
 - nominal subtyping or an inheritance hierarchy;
-- runtime merging of already-instantiated namespaces;
+- runtime merging of already-instantiated objects;
 - dynamically selected templates in the initial implementation.
 
 Those features can be considered separately if concrete use cases remain after

@@ -57,7 +57,7 @@ impl Value {
                 .as_ref()
                 .map_or("unit", Value::type_name),
             Self::Block(_) => "block",
-            Self::Namespace(_) => "namespace",
+            Self::Namespace(_) => "object",
             Self::TcpListener(_) => "tcp_listener",
             Self::TcpConnection(_) => "tcp_connection",
             Self::RemoteNamespace(_) => "remote",

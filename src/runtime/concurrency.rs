@@ -235,7 +235,7 @@ impl ConcurrencyHub {
             .remotes
             .get(&handle.object())
             .map(|remote| remote.alive)
-            .ok_or("unknown remote namespace")
+            .ok_or("unknown remote object")
     }
 
     pub(crate) fn stop_remote(&self, handle: RemoteNamespaceHandle) -> Result<(), &'static str> {
@@ -244,7 +244,7 @@ impl ConcurrencyHub {
         let remote = state
             .remotes
             .get_mut(&handle.object())
-            .ok_or("unknown remote namespace")?;
+            .ok_or("unknown remote object")?;
         remote.alive = false;
         if let Some(sender) = &remote.sender {
             let (reply, _) = mpsc::channel();
@@ -273,7 +273,7 @@ impl ConcurrencyHub {
                     .iter()
                     .any(|candidate| candidate.as_ref() == member)
             })
-            .ok_or("unknown remote namespace")
+            .ok_or("unknown remote object")
     }
 
     pub(crate) fn request_remote_async(
@@ -287,9 +287,9 @@ impl ConcurrencyHub {
             let remote = state
                 .remotes
                 .get(&handle.object())
-                .ok_or("unknown remote namespace")?;
+                .ok_or("unknown remote object")?;
             if !remote.alive {
-                return Err("remote namespace is stopped");
+                return Err("remote object is stopped");
             }
             remote
                 .sender

@@ -32,7 +32,7 @@ reliable in that case.
 - naming quick fixes.
 
 Workspace indexing follows relative file imports. It records only public
-top-level declarations and public namespace members. Open buffers replace
+top-level declarations and public object members. Open buffers replace
 their disk snapshots until closed.
 
 ## Dynamic limits
@@ -42,22 +42,22 @@ statically:
 
 - `do` may add bindings to its caller's environment;
 - code blocks may execute in different compatible environments;
-- namespace values can be selected or returned dynamically;
+- object values can be selected or returned dynamically;
 - functions support partial application; and
-- values and namespace types are checked at runtime.
+- values and object types are checked at runtime.
 
 The server reports an error only when the static model can prove it, such as an
 assignment to a resolved immutable binding or excess arguments to a known user
 function. It does not report every unresolved identifier, because the name may
-come from a module import, a namespace import, or a caller-environment block.
+come from a module import, an object import, or a caller-environment block.
 
 Cross-file references and rename follow statically resolved file imports,
-including aliased member access. Dynamic namespace selection and bindings
+including aliased member access. Dynamic object selection and bindings
 introduced by `do` remain intentionally outside project-wide refactoring.
 
 Inference reports only values established directly from syntax (literals,
-lists, blocks, functions, namespaces, and compatible conditional results). It
-does not guess call results or treat runtime namespace types as static types.
+lists, blocks, functions, objects, and compatible conditional results). It
+does not guess call results or treat runtime object types as static types.
 
 ## VS Code
 

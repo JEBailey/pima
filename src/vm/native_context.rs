@@ -134,7 +134,7 @@ impl VmNativeContext {
             return Err(self.typed_error(
                 &["error", "type_error"],
                 format!(
-                    "member access `.` requires a namespace, got {}",
+                    "member access `.` requires an object, got {}",
                     value.type_symbol()
                 ),
             ));
@@ -149,7 +149,7 @@ impl VmNativeContext {
         let Some(binding) = binding else {
             return Err(self.typed_error(
                 &["error", "name_error"],
-                format!("namespace has no member `{name}`"),
+                format!("object has no member `{name}`"),
             ));
         };
         if binding.visibility == crate::runtime::BindingVisibility::Private {

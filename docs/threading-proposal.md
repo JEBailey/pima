@@ -1,11 +1,11 @@
 # Threading Proposal for Pima
 
 Status: superseded as a decision document by
-[`remote-namespaces.md`](remote-namespaces.md). The options below remain useful
-background, but Pima's selected primary concurrency abstraction is a namespace
+[`remote-objects.md`](remote-objects.md). The options below remain useful
+background, but Pima's selected primary concurrency abstraction is an object
 instantiated in an isolated worker VM and accessed through an opaque remote
-handle. Tasks and channels support remote namespaces; general shared-memory
-mutex namespaces are deferred.
+handle. Tasks and channels support remote objects; general shared-memory
+mutex objects are deferred.
 
 Generated as a design review after evaluating the current Pima architecture, specification, and runtime.
 
@@ -13,13 +13,13 @@ Generated as a design review after evaluating the current Pima architecture, spe
 
 ## Pima — Evaluation
 
-**What it is:** An experimental, expression-oriented programming language with a register-based VM in Rust. Prefix notation, physical line endings as statement terminators, immutable data by default, first-class blocks (not functions), typed errors as namespace values, and a module system with lifecycle tracking.
+**What it is:** An experimental, expression-oriented programming language with a register-based VM in Rust. Prefix notation, physical line endings as statement terminators, immutable data by default, first-class blocks (not functions), typed errors as object values, and a module system with lifecycle tracking.
 
 ### Architecture — Strong
 
 The crate layout is clean and well-disciplined. The inward-pointing dependency graph (`source → syntax → runtime → native`, with `engine` and `vm` as coordinators) is exactly right. The separation between VM IR, compiler passes, and the machine itself gives real extensibility. The architecture doc is thorough — it reads like a spec, not aspirational notes.
 
-The 14-stage VM migration is fully implemented: from literals to a complete register VM with closures, namespaces, typed errors, modules, and cross-module block dispatch.
+The 14-stage VM migration is fully implemented: from literals to a complete register VM with closures, objects, typed errors, modules, and cross-module block dispatch.
 
 ### Code Base — ~11.5K LOC
 
@@ -33,7 +33,7 @@ Tight for a full language implementation. The parser at 1K LOC and compiler at 1
 ### What Stands Out
 
 1. **Blocks as first-class uninstantiated code** — Blocks don't capture; they resolve at execution time via `do`. Annotated blocks (`@(:name...)`) declare context contracts. A clean alternative to closures for template-like patterns.
-2. **Typed errors as namespace values** — Errors are ordinary values with type lists, thrown explicitly, caught by `attempt`. No Rust-style `Result` leakage.
+2. **Typed errors as object values** — Errors are ordinary values with type lists, thrown explicitly, caught by `attempt`. No Rust-style `Result` leakage.
 3. **Register VM with compiler passes** — Scope analysis, register allocation, IR, optimization passes (jump threading, no-op removal), and source-span preservation throughout.
 4. **Language server** — Full LSP with completions, signatures, semantic tokens, renaming, folding, inlay hints, and document symbols.
 5. **Module lifecycle** — Four-state machine (`:unloaded → :loading → :loaded/:failed`) with cycle detection and cached failures.
@@ -53,7 +53,7 @@ Tight for a full language implementation. The parser at 1K LOC and compiler at 1
 ### Current Architecture Constraints
 
 - **GC:** Pima uses `dumpster::unsync::Gc` — non-thread-safe. Values traced by the GC cannot safely cross thread boundaries.
-- **Value types:** `Value` contains `Gc` pointers (blocks, closures, namespaces, cells). Only scalar values (integers, floats, strings, booleans, symbols) and arena-indexed handles (TCP) are inherently transportable.
+- **Value types:** `Value` contains `Gc` pointers (blocks, closures, objects, cells). Only scalar values (integers, floats, strings, booleans, symbols) and arena-indexed handles (TCP) are inherently transportable.
 - **Host resources:** TCP listeners/connections use arena indices (`TcpListenerId`, `TcpConnectionId`) into `HostResources` — a pattern that threads should follow.
 - **Native functions:** All host access goes through `NativeContext` → `VmNativeContext` → `HostResources`. No new syntax or VM instructions needed for threading — native modules suffice.
 
@@ -102,7 +102,7 @@ It lets Pima programs parallelize CPU-bound work (map-reduce, batch processing) 
 
 **The idea:** A native `/pima/channel` module providing multi-producer channels that carry Pima values between threads.
 
-**Why it fits Pima:** Pima already has `attempt` for error handling and `branch` for ordered conditionals. A `channel` fits naturally as a namespace value with `send`, `receive`, and `closed?` operations. Enables worker-pool patterns that `spawn` + `join` alone can't express.
+**Why it fits Pima:** Pima already has `attempt` for error handling and `branch` for ordered conditionals. A `channel` fits naturally as an object value with `send`, `receive`, and `closed?` operations. Enables worker-pool patterns that `spawn` + `join` alone can't express.
 
 ```pima
 import "/pima/thread" as :thread
@@ -130,17 +130,17 @@ Console.println message
 
 Values sent across channels must handle the GC boundary. Two approaches:
 
-**Approach A — Reject unsendable values (recommended):** At send-time, check if a value contains closures, blocks, or namespaces. If so, reject with a `:thread_error :unsendable_value`. Matches Go's channel semantics. Only scalars and simple lists of scalars cross.
+**Approach A — Reject unsendable values (recommended):** At send-time, check if a value contains closures, blocks, or objects. If so, reject with a `:thread_error :unsendable_value`. Matches Go's channel semantics. Only scalars and simple lists of scalars cross.
 
 **Approach B — Deep-clone serializer:** Implement a cloning visitor that re-allocates values under the receiving thread's GC heap. More powerful but significantly more complex.
 
 ---
 
-## Suggestion 3: Shared-State Mutex Namespace — `Mutex` Template
+## Suggestion 3: Shared-State Mutex Object — `Mutex` Template
 
-**The idea:** A native-protected mutex that wraps mutable state accessible from multiple threads, exposed as a namespace value in Pima code.
+**The idea:** A native-protected mutex that wraps mutable state accessible from multiple threads, exposed as an object value in Pima code.
 
-**Why it fits Pima:** Pima already has `var` for mutation and namespaces for encapsulation. A `Mutex` is just a namespace with atomic guard acquisition.
+**Why it fits Pima:** Pima already has `var` for mutation and objects for encapsulation. A `Mutex` is just an object with atomic guard acquisition.
 
 ```pima
 import "/pima/thread" as :thread
@@ -168,7 +168,7 @@ Console.println [counter.get]  // 100000
 ### Implementation Shape
 
 - Internal Rust type: `Arc<Mutex<Value>>` stored in the host arena
-- `mutex.make initial-value` creates the mutex, returns a `:mutex` namespace handle
+- `mutex.make initial-value` creates the mutex, returns a `:mutex` object handle
 - `mutex.get` acquires the lock, clones the value, drops the lock, returns the value
 - `mutex.set` acquires, replaces, drops
 - `mutex.with block` — acquires the lock, binds the current value into the block's environment, executes the block, then commits the returned value back under the lock

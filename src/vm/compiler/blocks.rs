@@ -127,7 +127,7 @@ impl Compiler<'_> {
                             self.instructions.push(Instruction::RaiseTyped {
                                 types: vec![Arc::from("error"), Arc::from("type_error")],
                                 message: Arc::from(
-                                    "namespace `types` must be declared with `pub val`",
+                                    "object `types` must be declared with `pub val`",
                                 ),
                             });
                         }

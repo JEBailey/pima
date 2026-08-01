@@ -441,7 +441,7 @@ impl Machine {
                         else {
                             let error = self.context.typed_error(
                                 &["error", "type_error"],
-                                "namespace `types` must be a list".to_owned(),
+                                "object `types` must be a list".to_owned(),
                             );
                             catch_typed_error(&mut frames, &mut handlers, error)?;
                             continue 'dispatch;
@@ -451,7 +451,7 @@ impl Machine {
                             let Value::Symbol(symbol) = value else {
                                 let error = self.context.typed_error(
                                     &["error", "type_error"],
-                                    "namespace `types` must contain only symbols".to_owned(),
+                                    "object `types` must contain only symbols".to_owned(),
                                 );
                                 catch_typed_error(&mut frames, &mut handlers, error)?;
                                 continue 'dispatch;
@@ -459,7 +459,7 @@ impl Machine {
                             if !contribution.insert(*symbol) {
                                 let error = self.context.typed_error(
                                     &["error", "type_error"],
-                                    "namespace `types` cannot contain duplicates".to_owned(),
+                                    "object `types` cannot contain duplicates".to_owned(),
                                 );
                                 catch_typed_error(&mut frames, &mut handlers, error)?;
                                 continue 'dispatch;

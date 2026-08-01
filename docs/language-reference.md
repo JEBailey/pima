@@ -103,7 +103,7 @@ string, delimiter, or reserved word. Examples include:
 fibonacci  good_enough  empty?  <=  ..
 ```
 
-A period directly between identifier tokens is the namespace member operator,
+A period directly between identifier tokens is the object member operator,
 not part of either identifier. Whitespace is not permitted around this
 operator. A punctuation-only operator such as `..` remains an identifier when
 it appears as its own token.
@@ -125,14 +125,14 @@ Pima programs use these naming conventions:
 | --- | --- | --- |
 | Values, functions, and parameters | `snake_case` | `opening_balance`, `parse_value` |
 | Boolean predicates | `snake_case?` | `empty?`, `starts_with?` |
-| Namespaces and namespace templates | `PascalCase` | `String`, `InvalidOrder` |
+| Objects and object templates | `PascalCase` | `String`, `InvalidOrder` |
 | Constants | `UPPER_CASE` | `PI`, `MAX_SIZE` |
 | Symbols and semantic type tags | `:snake_case` | `:good`, `:type_error` |
 | Source files | `snake_case.pima` | `json_parser.pima` |
 
 The `?` suffix communicates that a function answers a boolean question.
 Functions that validate, throw, or return a result value are not predicates
-and do not receive the suffix. PascalCase describes namespace-like values; it
+and do not receive the suffix. PascalCase describes object-like values; it
 does not imply that Pima has classes. Punctuation operators such as `+`, `=`,
 and `<=` retain their symbolic spellings.
 
@@ -304,7 +304,7 @@ Every runtime value belongs to one of these categories:
 - List
 - Function, including closures and partially applied functions
 - Code block (uninstantiated code)
-- Namespace
+- Object
 - Unit
 
 The empty list is written `()` and has type `:list`. Unit is a distinct value
@@ -332,7 +332,7 @@ symbols are:
 
 ```text
 :unit  :boolean  :integer  :float  :string
-:symbol  :list  :function  :block  :namespace
+:symbol  :list  :function  :block  :object
 ```
 
 The native predicate `is? value type-symbol` reports whether `type-symbol`
@@ -355,9 +355,9 @@ promotion in mixed numeric operations.
 Conditions for `if`, `while`, and `until` must evaluate to `:boolean`. Pima does
 not use general truthiness. The `not` function likewise accepts only a Boolean.
 
-### 4.2 Namespace type symbols
+### 4.2 Object type symbols
 
-A namespace template may declare additional semantic types with an immutable,
+An object template may declare additional semantic types with an immutable,
 public `types` member:
 
 ```pima
@@ -366,16 +366,16 @@ val :Square {
 }
 
 val :square [new Square]
-[types square]          // (:namespace :square :shape)
+[types square]          // (:object :square :shape)
 [is? square :shape]     // true
 ```
 
-For a namespace, the runtime prepends `:namespace` to the declared type list.
+For an object, the runtime prepends `:object` to the declared type list.
 The declared list may contain application-defined symbols but cannot contain a
 fundamental runtime type symbol. `new` validates the member when present:
 `types` must be declared with `pub val`, its value must be a list of unique
-symbols, and it cannot be reassigned. A namespace without this member has the
-type list `(:namespace)`.
+symbols, and it cannot be reassigned. An object without this member has the
+type list `(:object)`.
 
 ## 5. Evaluation
 
@@ -451,7 +451,7 @@ Operations fail by throwing typed error values. Error conditions include:
 
 ### 5.1 Errors
 
-Every error is a namespace classified with at least `:error`:
+Every error is an object classified with at least `:error`:
 
 ```pima
 val :InvalidOrder {
@@ -466,21 +466,21 @@ throw [new InvalidOrder]
 Consequently, all errors satisfy both:
 
 ```pima
-[is? error :namespace]
+[is? error :object]
 [is? error :error]
 ```
 
-An error namespace must expose an immutable public `message` string. It may
+An error object must expose an immutable public `message` string. It may
 expose any additional immutable application data and may add progressively
 specific type symbols. Custom error types require no global registration.
 
 `throw value` immediately stops normal evaluation and begins unwinding Pima
 function calls. Its operand must be classified as `:error`; throwing any other
 value produces a `:type_error`. Native failures create and throw error
-namespaces through this same mechanism; a host-language panic must never escape
+objects through this same mechanism; a host-language panic must never escape
 as a Pima error.
 
-Errors remain ordinary values. A function may return an error namespace when an
+Errors remain ordinary values. A function may return an error object when an
 error is an expected alternative that its caller should inspect. Returning an
 error does not automatically propagate it. `throw` is the explicit request for
 automatic propagation.
@@ -526,7 +526,7 @@ if [is? result :error] {
 
 - If the expression completes normally, `attempt` returns its result.
 - If evaluation throws an error, `attempt` stops unwinding and returns that
-  error namespace as an ordinary value.
+  error object as an ordinary value.
 - If the block returns an error normally, `attempt` returns that same value;
   it does not distinguish returned errors from caught errors.
 - `attempt` catches only `throw`. It does not intercept `return`, `break`, or
@@ -541,7 +541,7 @@ this language version.
 
 ## 6. Bindings and scope
 
-Pima uses lexical scope. Each function invocation and namespace instance has a
+Pima uses lexical scope. Each function invocation and object instance has a
 local environment linked to the environment in which it was created.
 
 The three binding forms are defined as follows:
@@ -662,10 +662,10 @@ pub function :calculate (x) {
 Privacy is enforced at an environment boundary:
 
 - At module scope, only `pub` declarations are exported by `import`.
-- In a namespace instance, only `pub` members may be accessed through `.` from
-  outside that namespace.
+- In an object instance, only `pub` members may be accessed through `.` from
+  outside that object.
 - Code executing within an environment may access its private declarations.
-  Functions declared in a namespace therefore retain access to private fields.
+  Functions declared in an object therefore retain access to private fields.
 - Nested lexical scopes may resolve private declarations in their enclosing
   environment.
 
@@ -914,7 +914,7 @@ Context validation is intrinsic to block execution rather than specific to
 `do`. The same check applies when `if`, `while`, `until`, `attempt`, `new`, or
 another block-aware form executes an annotated block. Unselected conditional
 branches are neither validated nor executed. For `new`, requirements resolve
-through the new namespace environment and then its enclosing environment.
+through the new object environment and then its enclosing environment.
 
 `do` does not create a child scope. Declarations in the evaluated block are
 created in the caller's current environment, and `let` assignments update
@@ -929,7 +929,7 @@ required context list is empty.
 
 Only arithmetic and comparison operators are implicitly available to user
 modules. Other core operations are exposed by the standard library's cohesive
-namespaces:
+objects:
 
 | Operation | Meaning |
 |---|---|
@@ -983,7 +983,7 @@ function rather than the `=` operator.
 - Unit values compare equal.
 - Lists compare structurally: they are equal when they have the same length and
   each corresponding element is equal under these same rules.
-- Functions, code blocks, and namespaces compare by identity. Two distinct
+- Functions, code blocks, and objects compare by identity. Two distinct
   instances are unequal even when they contain equivalent code or members.
 - Values of unrelated categories are unequal rather than producing an error.
 
@@ -1057,7 +1057,7 @@ There is no mutating `pop` operation. Traversal uses `head` and `rest`, while
 construction uses `push` or `append`.
 
 The standard library imported as `/pima/library/standard` exports cohesive
-namespace values rather than individual global functions:
+object values rather than individual global functions:
 
 - `Math`: `pow`, `less_or_equal`, `greater_or_equal`, `increment`,
   `decrement`, `range`, `absolute`, `minimum`, `maximum`, `clamp`, `sum`,
@@ -1076,9 +1076,9 @@ Arithmetic and comparison operators remain unqualified language primitives.
 An implementation may provide these definitions as Pima source or equivalent
 built-ins.
 
-## 11. Namespaces and objects
+## 11. Modules, templates, and objects
 
-A block may be used as a namespace template:
+A block may be used as an object template:
 
 ```pima
 val :Counter {
@@ -1092,13 +1092,13 @@ val :Counter {
 val :counter [new Counter]
 ```
 
-`new template` instantiates the template block in a fresh namespace environment
+`new template` instantiates the template block in a fresh object environment
 and executes it there. Each invocation creates independent bindings. The
-original block remains uninstantiated and may be used to create more namespaces.
+original block remains uninstantiated and may be used to create more objects.
 
 `new` accepts exactly one code block and does not accept constructor arguments.
 Pima has no reserved initializer method. A function that accepts values and
-creates a namespace is an ordinary constructor:
+creates an object is an ordinary constructor:
 
 ```pima
 val :InvalidBalance {
@@ -1130,32 +1130,32 @@ function :create_account (opening_balance) {
 val :account [create_account 100]
 ```
 
-The block passed to `new` is instantiated in a fresh namespace whose enclosing
+The block passed to `new` is instantiated in a fresh object whose enclosing
 environment is the scope in which `new` is evaluated. Its declarations may
 therefore initialize fields from constructor parameters. Functions declared
-inside the block close over the completed namespace environment.
+inside the block close over the completed object environment.
 
-Namespace construction proceeds as follows:
+Object construction proceeds as follows:
 
 1. Evaluate the operand and require a code block.
-2. Create a fresh namespace environment linked to the current scope.
-3. Execute the block in that namespace environment.
+2. Create a fresh object environment linked to the current scope.
+3. Execute the block in that object environment.
 4. Validate its optional public `types` declaration.
-5. Return the completed namespace.
+5. Return the completed object.
 
 If block execution, a declaration, or type validation throws, construction
-fails and the incomplete namespace is discarded. External side effects already
+fails and the incomplete object is discarded. External side effects already
 performed by the block are not rolled back. There is no implicit call to
 `init`, `new`, or any other member.
 
-Discarding prevents publication of the incomplete namespace value; it does not
+Discarding prevents publication of the incomplete object value; it does not
 invalidate values deliberately published through earlier external side
 effects. For example, a closure assigned to an outer mutable binding before the
 failure remains callable and retains the construction environment it captured.
 An arena-based implementation may therefore retain unreachable or externally
 reachable construction storage until the interpreter itself is dropped.
 
-A namespace member is accessed with the whitespace-free `.` operator:
+An object member is accessed with the whitespace-free `.` operator:
 
 ```pima
 counter.value
@@ -1171,7 +1171,7 @@ application.window.width
 ```
 
 Accessing a data member returns its value. Accessing a function member returns
-the function with its namespace environment already captured. It can therefore
+the function with its object environment already captured. It can therefore
 be called with ordinary prefix-call syntax:
 
 ```pima
@@ -1179,8 +1179,8 @@ be called with ordinary prefix-call syntax:
 square.set_width 40
 ```
 
-A namespace value is not implicitly callable, and `square set_width 40` does
-not perform member lookup. Accessing a private member from outside its namespace
+An object value is not implicitly callable, and `square set_width 40` does
+not perform member lookup. Accessing a private member from outside its object
 is an error, even if the member's name is known.
 
 ## 12. Imports
@@ -1197,7 +1197,7 @@ import "/pima/library/standard"
 import /pima/library/standard
 ```
 
-An import may be assigned a namespace alias:
+An import may be assigned an object alias:
 
 ```pima
 import "/pima/library/standard" as :standard
@@ -1207,7 +1207,7 @@ standard.List.reverse (1 2 3)
 The alias is a literal binding destination, so the `:` is required just as it
 is for `val`, `var`, `let`, and `function` declarations.
 
-A namespace's public members may be imported into the current module:
+An object's public members may be imported into the current module:
 
 ```pima
 import "/pima/library/standard"
@@ -1226,30 +1226,30 @@ import Math.pow as :exponentiate
 [exponentiate 2 8]
 ```
 
-Namespace paths may be nested:
+Object paths may be nested:
 
 ```pima
 import "/pima/library/standard" as :standard
 import standard.Logic.not as :negate
 ```
 
-The namespace-import forms are:
+The object-import forms are:
 
 ```text
-import namespace-path.*
-import namespace-path.member
-import namespace-path.member as :local-name
+import object-path.*
+import object-path.member
+import object-path.member as :local-name
 ```
 
 They are permitted only at module scope. Every path begins with an ordinary
-identifier and every intermediate segment must be a public namespace member.
+identifier and every intermediate segment must be a public object member.
 `*` adds read-only live views of all public members. A selected import adds one
 read-only live view using either the member name or its `as` name. Private
 members are never imported.
 
-Namespace imports are atomic: if a target name would collide with a binding
+Object imports are atomic: if a target name would collide with a binding
 already declared in the current module, the import fails without introducing
-anything. Wildcard imports cannot use `as`; preserving a namespace under
+anything. Wildcard imports cannot use `as`; preserving an object under
 another local name is ordinary value binding rather than an import:
 
 ```pima
@@ -1257,7 +1257,7 @@ val :arithmetic Math
 ```
 
 With an alias, the module's public declarations are available only as members
-of that alias namespace. Without an alias, public declarations are introduced
+of that alias object. Without an alias, public declarations are introduced
 directly into the importing environment.
 
 An unaliased import that would collide with any existing binding is an error;
@@ -1300,9 +1300,9 @@ Module initialization side effects performed before a failure are not rolled
 back.
 
 Imported names are read-only views of their source bindings. If a module or
-namespace internally changes a `pub var`, importers observe the new value, but
+object internally changes a `pub var`, importers observe the new value, but
 cannot assign to it with `let`. An aliased module import exposes its views
-through an immutable module namespace. Unaliased module and namespace imports
+through an immutable module object. Unaliased module and object imports
 introduce views directly into the importing module.
 
 ### 12.2 Standard I/O module
@@ -1350,7 +1350,7 @@ functions use the host platform's separators. Directory listings are sorted
 lexically to keep scripts deterministic. Binary writes require an immutable
 list containing only integers in the inclusive range `0..255`.
 
-I/O failures throw error namespaces classified with `:io_error` and a more
+I/O failures throw error objects classified with `:io_error` and a more
 specific symbol when one is known:
 
 ```text
@@ -1414,14 +1414,14 @@ HTTP/1.x parsing, handler dispatch, response validation, and serialization in
 Pima. `demos/http_file_server.pima` combines it with the static file-serving
 example.
 
-## 13. Remote namespace construction
+## 13. Remote object construction
 
 `remote Template` is the remote counterpart of `new Template`. It constructs
-the namespace in an isolated worker VM and returns a remote namespace handle.
+the object in an isolated worker VM and returns a remote object handle.
 Every public member request returns a future immediately; `await` is the only
 language operation that waits for its transported result.
 
-The operand denotes namespace templates rather than executable work:
+The operand denotes object templates rather than executable work:
 
 ```pima
 val :worker [remote Worker]
@@ -1455,7 +1455,7 @@ and may be repeated on the same future.
 The following are not required:
 
 - static typing;
-- classes or inheritance beyond namespace templates; and
+- classes or inheritance beyond object templates; and
 - arbitrary closure scheduling through `remote`.
 
 ## 15. Conformance examples
@@ -1473,7 +1473,7 @@ import_test.pima
 json_parser.pima
 lib.pima
 list.pima
-namespace_test.pima
+object_test.pima
 newton.pima
 test.pima
 timing.pima

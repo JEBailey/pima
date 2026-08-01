@@ -5,7 +5,7 @@ Required future typed-pattern constraints are specified separately in
 not optional and should precede broader contract or algebraic-type proposals in
 this document.
 
-Generated as a design review after evaluating the current Pima runtime, compiler, VM IR, and namespace model.
+Generated as a design review after evaluating the current Pima runtime, compiler, VM IR, and object model.
 
 ---
 
@@ -15,43 +15,43 @@ Generated as a design review after evaluating the current Pima runtime, compiler
 
 Pima has a **structural type tag system**, not a type system in the traditional sense. The key facts:
 
-1. **Every value has a type list** — a non-empty list of symbols. The first symbol is the fundamental runtime type (`:integer`, `:string`, `:namespace`, etc.).
-2. **Type tags are declared by namespaces** via a `pub val types` member:
+1. **Every value has a type list** — a non-empty list of symbols. The first symbol is the fundamental runtime type (`:integer`, `:string`, `:object`, etc.).
+2. **Type tags are declared by objects** via a `pub val types` member:
    ```pima
    val :Square {
        pub val :types (:square :shape)
    }
    ```
-   The runtime prepends `:namespace` automatically, so `Square` instances have type list `(:namespace :square :shape)`.
+   The runtime prepends `:object` automatically, so `Square` instances have type list `(:object :square :shape)`.
 3. **Type testing is runtime-only** — `Types.is? (value :symbol)` checks if a symbol appears in a value's type list. No compile-time enforcement exists.
-4. **Namespaces are bags of bindings** — `new Template` executes a block in a fresh namespace environment. The resulting namespace has whatever bindings the block created. There is no schema, no required-field checking, and no invariant enforcement beyond the `types` member validation.
+4. **Objects are bags of bindings** — `new Template` executes a block in a fresh object environment. The resulting object has whatever bindings the block created. There is no schema, no required-field checking, and no invariant enforcement beyond the `types` member validation.
 5. **`new` validates minimally** — it checks that `types` is `pub val`, contains only unique symbols, and contains no fundamental type symbols. That's it.
 
 ### Runtime Data Structures
 
 | Component | Role | Key Constraint |
 |---|---|---|
-| `Value::Namespace(NamespaceRef)` | Runtime value for namespaces | `NamespaceRef = Gc<Namespace>` |
-| `Namespace` | Holds environment + type list + error metadata | `environment: EnvironmentRef`, `types: Vec<SymbolId>` |
+| `Value::Object(ObjectRef)` | Runtime value for objects | `ObjectRef = Gc<Object>` |
+| `Object` | Holds environment + type list + error metadata | `environment: EnvironmentRef`, `types: Vec<SymbolId>` |
 | `Environment` | Map of `SymbolId → Binding` | `IndexMap<SymbolId, Binding>` in `RefCell<Gc>` |
 | `Binding` | Value + mutability + visibility | `value: Value`, `mutability: Immutable\|Mutable`, `visibility: Private\|Public` |
 | `SymbolInterner` | String → `SymbolId` dedup | Per-VM-instance (not global) |
 
-### VM IR for Namespaces
+### VM IR for Objects
 
-- `MakeNamespace { destination, bindings }` — Creates a namespace from a list of `{name, source: Register, public: bool}`. Each source register is read and linked into the namespace.
-- `LoadMember { destination, namespace, name }` — Loads a public member by name. Enforces visibility at runtime.
-- No IR instruction exists for type checking, field validation, or invariant enforcement beyond what `MakeNamespace` does via `context.make_namespace()`.
+- `MakeObject { destination, bindings }` — Creates an object from a list of `{name, source: Register, public: bool}`. Each source register is read and linked into the object.
+- `LoadMember { destination, object, name }` — Loads a public member by name. Enforces visibility at runtime.
+- No IR instruction exists for type checking, field validation, or invariant enforcement beyond what `MakeObject` does via `context.make_object()`.
 
 ### Compiler for `new`
 
-The compiler (`vm/compiler/blocks.rs::compile_new`) walks the template block's statements, extracts bindings and functions, then emits a single `MakeNamespace` instruction. It does not validate that the template satisfies any schema or that instances will have specific members.
+The compiler (`vm/compiler/blocks.rs::compile_new`) walks the template block's statements, extracts bindings and functions, then emits a single `MakeObject` instruction. It does not validate that the template satisfies any schema or that instances will have specific members.
 
 ### What the Spec Says
 
 The language reference section 13 explicitly excludes:
 - Static typing
-- Classes or inheritance beyond namespace templates
+- Classes or inheritance beyond object templates
 
 The spec's type model is deliberately dynamic: "Pima is dynamically and strongly typed: native operations validate their operands and do not implicitly coerce values."
 
@@ -59,7 +59,7 @@ The spec's type model is deliberately dynamic: "Pima is dynamically and strongly
 
 ## Current Limitations
 
-1. **No field contracts** — A namespace template may declare `val width 80`, but nothing enforces that all instances have `width`. If the template block has a bug and skips a binding, the instance silently lacks that field.
+1. **No field contracts** — An object template may declare `val width 80`, but nothing enforces that all instances have `width`. If the template block has a bug and skips a binding, the instance silently lacks that field.
 
 2. **No type-level relationships** — There's no way to express that `:square` is a subtype of `:shape` beyond the type list convention. `Types.is? (value :shape)` works, but there's no compile-time or structural enforcement.
 
@@ -67,7 +67,7 @@ The spec's type model is deliberately dynamic: "Pima is dynamically and strongly
 
 4. **No function signature enforcement** — Functions accept one list argument and pattern-match it. Wrong shapes produce `:match_error` at runtime with no提前 warning.
 
-5. **No way to declare "this namespace must have these members"** — The annotated block `@(:name :score)` checks context bindings for `do`, but there's no equivalent for namespace membership contracts.
+5. **No way to declare "this object must have these members"** — The annotated block `@(:name :score)` checks context bindings for `do`, but there's no equivalent for object membership contracts.
 
 ---
 
@@ -75,7 +75,7 @@ The spec's type model is deliberately dynamic: "Pima is dynamically and strongly
 
 **The idea:** A compile-time `type` declaration that defines a named shape — a required set of fields with optional type tags — enforced at `new` time.
 
-**Why it fits Pima:** Pima already has namespace templates as blocks. A `type` declaration annotates a template with its contract. The compiler validates `MakeNamespace` against the contract, emitting compile-time diagnostics for missing required fields.
+**Why it fits Pima:** Pima already has object templates as blocks. A `type` declaration annotates a template with its contract. The compiler validates `MakeObject` against the contract, emitting compile-time diagnostics for missing required fields.
 
 ```pima
 // Declare a type contract
@@ -129,12 +129,12 @@ pub enum NodeKind {
 
 **New IR instruction:**
 ```rust
-/// Validate that a namespace register satisfies a type contract.
+/// Validate that an object register satisfies a type contract.
 /// Fails with (:error :type_error :contract_violation) if any required
 /// member is missing or has wrong visibility/mutability.
 CheckContract {
-    destination: Register,    // output namespace (same as source if valid)
-    source: Register,         // namespace to check
+    destination: Register,    // output object (same as source if valid)
+    source: Register,         // object to check
     contract: u16,            // index into program's contract table
 }
 
@@ -156,7 +156,7 @@ pub struct ContractMember {
 - `Program` gains `contracts: Vec<TypeContract>`
 - `new Template as Contract` compiles to: compile `new Template` → emit `CheckContract`
 - The compiler statically checks that the template block satisfies the contract (missing fields = compile-time diagnostic). Runtime check remains for dynamic `new` (where the template isn't statically known).
-- `CheckContract` at runtime iterates the namespace's environment bindings and verifies each requirement exists with correct visibility/mutability.
+- `CheckContract` at runtime iterates the object's environment bindings and verifies each requirement exists with correct visibility/mutability.
 
 **Error classification:**
 ```
@@ -168,7 +168,7 @@ pub struct ContractMember {
 
 ### Why This Is the Right First Step
 
-It adds enforceable structure to namespaces without changing Pima's dynamic nature. The type checking happens at `new` time (runtime) but gets compile-time optimization when the template is statically known. It's the minimum viable type system that solves the "bag of bindings" problem.
+It adds enforceable structure to objects without changing Pima's dynamic nature. The type checking happens at `new` time (runtime) but gets compile-time optimization when the template is statically known. It's the minimum viable type system that solves the "bag of bindings" problem.
 
 ---
 
@@ -214,12 +214,12 @@ typecheck.assert (c counter_schema)
 ```
 
 **Runtime validation algorithm:**
-1. If value is not a namespace, fail immediately unless descriptor is empty.
-2. For each `:field` requirement: check the namespace environment for a binding with matching name, mutability, and visibility. Optionally check the value's fundamental type.
+1. If value is not an object, fail immediately unless descriptor is empty.
+2. For each `:field` requirement: check the object environment for a binding with matching name, mutability, and visibility. Optionally check the value's fundamental type.
 3. For each `:method` requirement: check for a public binding whose value is a function.
-4. For type symbol requirements: check the namespace's type list contains the expected symbol.
+4. For type symbol requirements: check the object's type list contains the expected symbol.
 
-**Key insight:** This works with ANY namespace — not just ones created from typed templates. It's duck-typing made explicit. A namespace satisfies a descriptor if it has the right shape, regardless of how it was constructed.
+**Key insight:** This works with ANY object — not just ones created from typed templates. It's duck-typing made explicit. An object satisfies a descriptor if it has the right shape, regardless of how it was constructed.
 
 ### Relationship to Suggestion 1
 
@@ -375,11 +375,11 @@ function :handle_request (req) -> HttpResponse {
 
 **Effort:** Medium. Adds one new AST node type, one IR instruction, and a contract table to `Program`.
 
-**Risk:** Low. Stays within the existing namespace model. Compile-time checks are optimistic (warn on known violations), runtime checks are the source of truth.
+**Risk:** Low. Stays within the existing object model. Compile-time checks are optimistic (warn on known violations), runtime checks are the source of truth.
 
-**Dependency:** None. Builds on existing `MakeNamespace` and `new` compilation.
+**Dependency:** None. Builds on existing `MakeObject` and `new` compilation.
 
-**Impact:** Immediately useful. Every namespace in Pima code can be typed. Catches bugs at `new` time instead of at field access time.
+**Impact:** Immediately useful. Every object in Pima code can be typed. Catches bugs at `new` time instead of at field access time.
 
 ### Phase 2: Runtime Type Checker (Suggestion 2)
 
@@ -424,7 +424,7 @@ Union definitions and type contracts belong in `Program` — they're compile-tim
 ### Backward Compatibility
 
 All three suggestions are additive:
-- Existing untyped namespaces work exactly as before
+- Existing untyped objects work exactly as before
 - `type` declarations are optional — templates without contracts bypass validation
 - `typecheck.matches?` is opt-in
 - Union values are a new `Value` variant — existing code never sees them unless it uses the `type` keyword
@@ -437,13 +437,13 @@ The language reference section 13 currently excludes "static typing." These sugg
 - The language remains dynamically typed — types belong to values, not bindings
 - No type inference or type variables are introduced
 
-The spec would need a new section: **"Type Contracts"** — describing `type` declarations as runtime-enforced namespace schemas, not static types.
+The spec would need a new section: **"Type Contracts"** — describing `type` declarations as runtime-enforced object schemas, not static types.
 
 ---
 
 ## Open Questions
 
-1. **Should `type` declarations be module-scoped or namespace-members?** Module-scoped keeps them simple. Namespace-members would allow `import MyModule.Counter` to bring in the type contract.
+1. **Should `type` declarations be module-scoped or object-members?** Module-scoped keeps them simple. Object-members would allow `import MyModule.Counter` to bring in the type contract.
 
 2. **How strict should compile-time checking be?** Option A: warnings only (current Pima philosophy). Option B: errors for known violations (safer but stricter).
 

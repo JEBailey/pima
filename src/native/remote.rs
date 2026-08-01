@@ -22,7 +22,7 @@ fn alive(context: &mut dyn NativeContext, arguments: &[Value]) -> NativeResult {
     let [Value::RemoteNamespace(handle)] = arguments else {
         return Err(type_error(
             context,
-            "Remote.alive? requires one remote namespace",
+            "Remote.alive? requires one remote object",
         ));
     };
     context
@@ -35,7 +35,7 @@ fn stop(context: &mut dyn NativeContext, arguments: &[Value]) -> NativeResult {
     let [Value::RemoteNamespace(handle)] = arguments else {
         return Err(type_error(
             context,
-            "Remote.stop requires one remote namespace",
+            "Remote.stop requires one remote object",
         ));
     };
     context

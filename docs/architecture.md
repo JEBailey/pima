@@ -1,10 +1,10 @@
 # Pima Interpreter Architecture
 
-Concurrency foundation: the VM has transport-only remote namespace and future
+Concurrency foundation: the VM has transport-only remote object and future
 handles, a synchronized concurrency hub, and `remote`/`await` AST boundaries.
-Remote namespace requests run in isolated worker VMs and always produce
+Remote object requests run in isolated worker VMs and always produce
 futures; only `await` waits for the transported value. See
-[`remote-namespaces.md`](remote-namespaces.md).
+[`remote-objects.md`](remote-objects.md).
 
 Status: register VM implemented as Pima's sole execution engine.
 
@@ -36,7 +36,7 @@ private immutable and mutable bindings, conditional and unconditional jumps,
 calls, compiled capture/list patterns, and function return.
 It also supports `throw` and `attempt` through explicit handler records that
 unwind VM call frames without using Rust stack unwinding.
-Namespace construction supports immutable and mutable state, functions,
+Object construction supports immutable and mutable state, functions,
 lexical initializer reads, validated custom type lists, and visibility-checked
 member access. Block literals produce inert linked block values. `do` dispatches
 both local and cross-module blocks in the caller's current environment, including
@@ -71,14 +71,14 @@ partial mutation behind. Shape failures and invalid runtime binding operations,
 including unknown or immutable `let` targets, become typed Pima errors and can
 be caught by `attempt`.
 
-VM cells participate in the tracing collector used by runtime namespace values.
+VM cells participate in the tracing collector used by runtime object values.
 Slots trace language values, closure capture arrays, and nested cells. Closure
 and cell values may therefore be stored in captured cells without leaking
 unreachable cycles.
 
 The traceable VM representation lives in `runtime::vm_value`, separate from the
 instruction dispatcher. Closures are also ordinary `Value` variants, so they
-can cross lists, namespace members, results, registers, and captures without
+can cross lists, object members, results, registers, and captures without
 construct-specific conversion code. VM binding cells remain an internal slot
 detail and participate in the same tracing collector.
 
@@ -93,22 +93,22 @@ usable across source submissions.
 VM module initialization resolves file and virtual imports recursively before
 lowering the importing module. Compiled modules publish bindings with their
 declared visibility; unaliased imports expose public members, aliases retain a
-namespace value, and selected namespace imports are resolved from the linked
+object value, and selected object imports are resolved from the linked
 globals. Imported closures retain their owning program id and dispatch through
 that program's constants and function table. `/pima/io`, `/pima/tcp`, and the
 Pima standard library use this same path.
 
 Primitive VM instructions resolve through the native registry. Native failures remain
-typed Pima namespace values in `VmError::Typed`; internal bytecode faults remain
+typed Piman object values in `VmError::Typed`; internal bytecode faults remain
 separate host diagnostics. The VM currently lowers numeric primitives and
 symbol/error services. Shared filesystem and TCP host operations are available
-to native functions as their namespaces and imports gain VM lowering.
+to native functions as their objects and imports gain VM lowering.
 
 `attempt` records its frame depth, catch instruction, and destination register.
 A typed native failure or explicit `throw` unwinds to the nearest record and
 places the error in that register. Normal completion removes the record, while
 `return`, `break`, and `continue` emit cleanup for any handlers they cross.
-Thrown values and namespace type lists use shared runtime validation. Compiled
+Thrown values and object type lists use shared runtime validation. Compiled
 instructions carry AST source spans, functions retain their
 declared names, and VM errors attach their origin and cross-program call stack
 before they are caught or returned as host diagnostics.
@@ -125,11 +125,11 @@ The migration sequence is:
 4. immutable closures and mutable captured cells (implemented);
 5. shared numeric native dispatch and typed native errors (implemented);
 6. `throw`, `attempt`, and frame-aware typed-error unwinding (implemented);
-7. direct namespace construction, custom types, and member reads (implemented);
+7. direct object construction, custom types, and member reads (implemented);
 8. inert blocks, statically known named templates, and `do` (implemented);
 9. recursive declaration and assignment destructuring (implemented);
 10. `match` expressions, scoped captures, literals, and fallthrough (implemented);
-11. indirect cross-module block dispatch and mutable namespace bindings (implemented);
+11. indirect cross-module block dispatch and mutable object bindings (implemented);
 12. modules and remaining native integration (implemented for file modules,
     standard/native virtual modules, aliases, and selected imports);
 13. source-aware bytecode diagnostics and VM call stacks (implemented);
@@ -145,7 +145,7 @@ The crate is divided by responsibility:
 
 - `source` and `diagnostic` own source text, spans, and rendered errors;
 - `syntax` owns tokens, lexing, AST nodes, and parsing;
-- `runtime` owns language values, binding metadata, namespaces, symbols, VM cells, closures, and linked blocks;
+- `runtime` owns language values, binding metadata, objects, symbols, VM cells, closures, and linked blocks;
 - `native` owns host-callable definitions and shared host resources;
 - `vm` owns analysis, compilation, IR, native context, and execution;
 - `engine` owns the public interpreter, module path resolution, and VM module orchestration;
@@ -174,7 +174,7 @@ The important constraints are:
   it does not depend on engine internals, parse source, or control module
   loading directly.
 - `engine` coordinates source preparation and module loading; `vm` coordinates
-  compilation, calls, namespaces, native functions, and control transfer.
+  compilation, calls, objects, native functions, and control transfer.
 - `cli` depends on the public API from `lib.rs`, not on private engine details.
 
 ## 3. Public API
@@ -277,12 +277,12 @@ Parsing never depends on runtime arity.
 ## 6. Runtime layer
 
 `Value` contains Pima's scalar values, persistent lists, native function IDs,
-compiled closures and partial applications, linked blocks, namespaces, and host
+compiled closures and partial applications, linked blocks, objects, and host
 resource handles. VM closures capture traced binding cells, so immutable and
 mutable lexical captures share one representation and participate in garbage
 collection.
 
-Namespaces use runtime environments to retain visibility and mutability
+Objects use runtime environments to retain visibility and mutability
 metadata. VM-linked binding values provide live read-only import views without
 duplicating mutable state. Symbols are interned by the VM's native context.
 
@@ -343,12 +343,12 @@ and embedded in the executable with `include_str!` for reliable availability.
 
 The virtual modules `/pima/library/standard`, `/pima/io`, and `/pima/tcp` are
 resolved by the module loader. The standard library is Pima source. Native
-modules export functions through ordinary immutable module namespaces so their
+modules export functions through ordinary immutable module objects so their
 behavior at the language level matches other modules.
 
 I/O natives use internally qualified registry names such as `io.join`; the
 module loader maps those to public member names such as `join`. This prevents
-collisions with identically named operations in other namespaces. Filesystem
+collisions with identically named operations in other objects. Filesystem
 operations resolve relative paths against the interpreter's configured working
 directory and translate host failures into portable typed Pima errors.
 
@@ -361,7 +361,7 @@ The evaluator keeps host natives in a private implementation environment used
 to construct the standard library. User modules inherit only arithmetic and
 comparison operators. String, list, type, logic, numeric utility, and console
 operations require an explicit standard-library import and qualified access
-(or a static namespace import).
+(or a static object import).
 
 ## 10. Testing strategy
 
@@ -387,7 +387,7 @@ error values or rendered uncaught-error diagnostics.
 3. Symbols, primitive values, persistent lists, bindings, and environments.
 4. Evaluator for literals, calls, declarations, and core native functions.
 5. Functions, closures, blocks, and control transfer.
-6. Namespaces, visibility, type lists, and `new`.
+6. Objects, visibility, type lists, and `new`.
 7. Typed errors, `throw`, `attempt`, and diagnostics.
 8. Module lifecycle, imports, and bundled modules.
 9. Strings, console output, and native host modules.

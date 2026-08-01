@@ -1,6 +1,6 @@
 import "/pima/library/standard"
 
-// Errors are ordinary typed namespace values.
+// Errors are ordinary typed object values.
 val :InvalidOpeningBalance {
     pub val :types (:error :validation_error :invalid_opening_balance)
     pub val :message "Opening balance must not be negative"

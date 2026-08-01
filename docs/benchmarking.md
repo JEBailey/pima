@@ -48,7 +48,7 @@ The suite separates several costs:
 | `engine_comparison/interpreter_vm/sum_loop_1000` | Interpreter mutation and 1,000 loop iterations |
 | `engine_comparison/register_vm/sum_loop_1000` | Register-VM execution of the same loop |
 | `engine_comparison/*/attempt_caught_error` | Construct, throw, unwind, and catch a numeric error |
-| `engine_comparison/*/namespace_construct` | Construct a namespace with one public immutable member |
+| `engine_comparison/*/object_construct` | Construct an object with one public immutable member |
 | `engine_comparison/*/do_block` | Instantiate and execute a block in the current environment |
 | `engine_comparison/*/match_nested` | Match a tagged list, bind its payload, and execute the selected arm |
 

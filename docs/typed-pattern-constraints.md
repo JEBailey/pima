@@ -81,7 +81,7 @@ second symbol constrains the assigned value:
 [Types.is? value :list]
 ```
 
-The mechanism must work for fundamental types and namespace-defined semantic
+The mechanism must work for fundamental types and object-defined semantic
 types:
 
 ```pima
@@ -91,8 +91,8 @@ error:validation_error
 shape:shape
 ```
 
-It must not introduce a separate registry or hierarchy. A namespace satisfies
-a constraint when the requested symbol occurs in the namespace's normal type
+It must not introduce a separate registry or hierarchy. An object satisfies
+a constraint when the requested symbol occurs in the object's normal type
 list.
 
 ## Pattern Behavior
@@ -119,7 +119,7 @@ value:list
 :value:list
 ```
 
-Repeated constraints such as `value:namespace:account` are deferred. They may
+Repeated constraints such as `value:object:account` are deferred. They may
 later mean that every listed type symbol is required, but that behavior is not
 part of the initial requirement.
 
@@ -141,7 +141,7 @@ Typed pattern constraints do not add:
 - implicit conversion or casting;
 - generic types;
 - subtype declarations; or
-- required namespace fields.
+- required object fields.
 
 They are a minimal constraint layer over Pima's existing dynamic type lists.
 

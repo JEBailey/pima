@@ -723,7 +723,7 @@ impl Parser<'_> {
     fn parse_namespace_import(&mut self, start: Span) -> ParseResult<NodeId> {
         let mut names = Vec::new();
         let (first, first_span) =
-            self.expect_identifier("expected namespace name after `import`")?;
+            self.expect_identifier("expected object name after `import`")?;
         names.push(Name {
             text: first,
             span: first_span,
@@ -732,16 +732,16 @@ impl Parser<'_> {
         loop {
             self.expect_simple(
                 |kind| matches!(kind, TokenKind::Dot),
-                "expected `.` in namespace import",
+                "expected `.` in object import",
             )?;
             let (text, span) = self.expect_member_name("expected member name or `*` after `.`")?;
             if text.as_ref() == "*" {
                 if self.at(|kind| matches!(kind, TokenKind::Dot)) {
-                    self.report_here("`*` must be the final namespace import segment");
+                    self.report_here("`*` must be the final object import segment");
                     return Err(());
                 }
                 if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
-                    self.report_here("wildcard namespace imports cannot use `as`");
+                    self.report_here("wildcard object imports cannot use `as`");
                     return Err(());
                 }
                 return Ok(self.alloc(

@@ -1,19 +1,19 @@
-# Remote Namespaces and Futures
+# Remote Objects and Futures
 
 Status: implemented concurrency model.
 
 ## Decision
 
-Pima concurrency is based on namespaces instantiated in isolated worker VMs.
-The creating VM receives an opaque remote namespace handle. The namespace,
+Pima concurrency is based on objects instantiated in isolated worker VMs.
+The creating VM receives an opaque remote object handle. The object,
 environment, mutable bindings, closures, blocks, and garbage-collected object
 graph remain owned by the worker that instantiated it.
 
 The vocabulary is:
 
 ```text
-new       construct a local namespace
-remote    construct a remotely owned namespace
+new       construct a local object
+remote    construct a remotely owned object
 await     obtain the value of a future
 ```
 
@@ -40,7 +40,7 @@ Template composition has the same ordered, leftmost-wins semantics as `new`:
 val :service [remote (Service Observable Restartable)]
 ```
 
-`remote` accepts a statically known namespace template or template list. It
+`remote` accepts a statically known object template or template list. It
 does not accept a closure or arbitrary operation. Construction waits until the
 worker has either initialized successfully or reported an initialization
 error; requests made after construction are asynchronous.
@@ -112,15 +112,15 @@ Conceptually:
 ```text
 local VM                              worker VM
 --------                              ---------
-remote handle ----------------------> namespace instance
+remote handle ----------------------> object instance
 future handle <---------------------- mailbox request
                                        private mutable state
                                        public functions and values
 ```
 
-Requests for one remote namespace are processed serially through its mailbox.
+Requests for one remote object are processed serially through its mailbox.
 Pima code therefore never observes two public operations executing
-concurrently against the same namespace instance. Different remote namespaces
+concurrently against the same object instance. Different remote objects
 may execute concurrently.
 
 The implementation may currently use one OS thread per worker VM. The language
@@ -140,7 +140,7 @@ TransportValue
     String
     SymbolName
     List<TransportValue>
-    RemoteNamespaceHandle
+    RemoteObjectHandle
     FutureHandle
 ```
 
@@ -154,7 +154,7 @@ The initial model rejects:
 - closures and partial functions;
 - bindings and mutable cells;
 - blocks;
-- local namespaces;
+- local objects;
 - VM-local native resources; and
 - lists containing any rejected value.
 
@@ -167,7 +167,7 @@ state.
 The local runtime never sends a garbage-collected block pointer to another
 thread. It extracts a thread-safe blueprint containing source for the selected
 templates, a public-function manifest, and transportable constructor context.
-The worker independently loads the blueprint and constructs the namespace in
+The worker independently loads the blueprint and constructs the object in
 its own VM and heap.
 
 The public-function manifest lets `service.process` produce a callable proxy
@@ -216,4 +216,4 @@ Likely extensions are:
 - nonblocking host I/O integration.
 
 General shared-memory mutex protection and arbitrary closure scheduling are not
-part of this model. Composite mutable state belongs inside a remote namespace.
+part of this model. Composite mutable state belongs inside a remote object.

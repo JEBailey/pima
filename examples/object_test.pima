@@ -18,7 +18,7 @@ val :Square {
 val :square1 [new Square]
 val :square2 [new Square]
 
-Console.println "\n** CREATE NAMESPACE(OBJECT)**"
+Console.println "\n** CREATE OBJECT **"
 Console.println "square1 area :  " [square1.area ]
 Console.println "square2 area :  " [square2.area ]
 Console.println "changing square1 width to 40"
