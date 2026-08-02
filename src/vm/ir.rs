@@ -51,6 +51,14 @@ pub enum Instruction {
         block: u32,
         function: u16,
         context: Vec<Arc<str>>,
+        construction: Option<Register>,
+    },
+    InitializeConstruction {
+        binding: Register,
+    },
+    RecordConstructionFailure {
+        binding: Register,
+        error: Register,
     },
     Move {
         destination: Register,
@@ -163,6 +171,7 @@ pub enum Instruction {
         destination: Register,
         function: u16,
         captures: Vec<Register>,
+        construction: Option<Register>,
     },
     CallDynamic {
         destination: Register,

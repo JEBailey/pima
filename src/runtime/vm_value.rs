@@ -7,6 +7,7 @@ pub struct VmClosure {
     pub(crate) program: u64,
     pub(crate) function: u16,
     pub(crate) captures: Vec<VmValue>,
+    pub(crate) construction_capture: Option<usize>,
 }
 
 pub type VmClosureRef = Gc<VmClosure>;
@@ -32,6 +33,7 @@ pub struct VmCell {
     pub(crate) value: std::cell::RefCell<VmValue>,
     pub(crate) mutable: std::cell::Cell<Option<bool>>,
     pub(crate) fallback: Option<VmValue>,
+    pub(crate) construction_ready: std::cell::Cell<Option<bool>>,
 }
 
 impl VmCell {
@@ -41,6 +43,7 @@ impl VmCell {
             value: std::cell::RefCell::new(VmValue::Uninitialized),
             mutable: std::cell::Cell::new(None),
             fallback,
+            construction_ready: std::cell::Cell::new(None),
         }
     }
 

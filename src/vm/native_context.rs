@@ -117,6 +117,47 @@ impl VmNativeContext {
         }
         error
     }
+
+    pub(crate) fn invalid_object_error(&mut self, failure: Value) -> Value {
+        let failure_message = match &failure {
+            Value::Namespace(namespace) => namespace
+                .environment
+                .borrow()
+                .bindings
+                .iter()
+                .find(|(symbol, _)| self.symbols.resolve(**symbol) == Some("message"))
+                .and_then(|(_, binding)| match &binding.value {
+                    Value::String(message) => Some(message.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
+        let invalid = self.typed_error(
+            &["error", "object_error", "invalid_object"],
+            failure_message.map_or_else(
+                || "reference belongs to an object whose construction failed".to_owned(),
+                |message| {
+                    format!("reference belongs to an object whose construction failed: {message}")
+                },
+            ),
+        );
+        if let Value::Namespace(namespace) = &invalid {
+            namespace.environment.borrow_mut().bindings.insert(
+                self.symbols.intern("construction_error"),
+                crate::runtime::Binding {
+                    value: failure.clone(),
+                    mutability: crate::runtime::BindingMutability::Immutable,
+                    visibility: crate::runtime::BindingVisibility::Public,
+                },
+            );
+            if let Value::Namespace(failure) = &failure
+                && let Some(metadata) = failure.error_metadata.borrow().clone()
+            {
+                *namespace.error_metadata.borrow_mut() = Some(metadata);
+            }
+        }
+        invalid
+    }
     pub(crate) fn resolve(&self, symbol: SymbolId) -> Option<&str> {
         self.symbols.resolve(symbol)
     }

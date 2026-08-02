@@ -1241,9 +1241,9 @@ val Counter {
 Each `new` expression creates its own `this` binding, so nested objects refer
 to themselves rather than an enclosing object. The binding is private and
 immutable and cannot be redeclared. It is filled when construction completes;
-directly evaluating `this` from an initializer before completion is an
-uninitialized-binding error. Outside object construction, `this` is an unbound
-reserved value.
+before completion it carries the construction's provisional `:invalid_object`
+lifecycle value. Outside object construction, `this` is an unbound reserved
+value.
 
 `new` accepts one or more code-block templates through its containing line or
 bracket boundary. Multiple operands are packed in source order and composed
@@ -1272,12 +1272,14 @@ fails and the incomplete object is discarded. External side effects already
 performed by the block are not rolled back. There is no implicit call to
 `init`, `new`, or any other member.
 
-Discarding prevents publication of the incomplete object value; it does not
-invalidate values deliberately published through earlier external side
-effects. For example, a closure assigned to an outer mutable binding before the
-failure remains callable and retains the construction environment it captured.
-An arena-based implementation may therefore retain unreachable or externally
-reachable construction storage until the interpreter itself is dropped.
+Functions and blocks created within a construction share its lifecycle token.
+Successful completion activates that token. If construction fails or exits
+before completion, every escaped function, bound method, block, and alias tied
+to it evaluates to `(:error :object_error :invalid_object)` when used. Ordinary
+data copied out before failure remains valid. The failed `new` still produces
+its original error; the invalid-object error appears only when an escaped
+reference is later used. Its public `construction_error` member retains the
+original failure, including its diagnostic origin and stack metadata.
 
 An object member is accessed with the whitespace-free `.` operator:
 

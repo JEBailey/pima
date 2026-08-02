@@ -2248,13 +2248,34 @@ fn return_inside_new_can_exit_an_enclosing_function() {
 }
 
 #[test]
-fn failed_new_preserves_closures_published_as_external_side_effects() {
-    let outcome = run(
+fn failed_new_invalidates_closures_published_as_external_side_effects() {
+    let value = run_ok(
         "val Failure {\n    pub val types (:error :failure)\n    pub val message \"failed\"\n}\nvar escaped ()\nval caught [attempt {\n    new {\n        function survivor () { 42 }\n        let escaped survivor\n        throw [new Failure]\n    }\n}]\n[escaped ]\n",
     );
+    assert!(matches!(value, pima::Value::Namespace(_)));
+    let checked = run_ok(
+        "val Failure {\n    pub val types (:error :failure)\n    pub val message \"failed\"\n}\nvar escaped ()\nval caught [attempt {\n    new {\n        function survivor () { 42 }\n        let escaped survivor\n        throw [new Failure]\n    }\n}]\n([Types.is? caught :failure] [Types.is? [escaped] :invalid_object] [Types.is? [escaped].construction_error :failure])\n",
+    );
+    assert_eq!(
+        checked,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
 
-    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
-    assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
+#[test]
+fn failed_new_invalidates_escaped_blocks() {
+    let value = run_ok(
+        "val Failure {\n    pub val types (:error :failure)\n    pub val message \"failed\"\n}\nvar escaped 0\nval caught [attempt {\n    new {\n        let escaped { 42 }\n        throw [new Failure]\n    }\n}]\nval result do escaped\nTypes.is? result :invalid_object\n",
+    );
+    assert_eq!(value, pima::Value::Boolean(true));
 }
 
 // ── Namespace types ──

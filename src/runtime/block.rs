@@ -12,10 +12,11 @@ pub struct StoredBlock {
     pub(crate) vm_program: u64,
     pub(crate) vm_function: u16,
     pub(crate) vm_context: Vec<Arc<str>>,
+    pub(crate) construction: Option<Gc<super::VmCell>>,
 }
 
 unsafe impl<V: Visitor> TraceWith<V> for StoredBlock {
-    fn accept(&self, _visitor: &mut V) -> Result<(), ()> {
-        Ok(())
+    fn accept(&self, visitor: &mut V) -> Result<(), ()> {
+        self.construction.accept(visitor)
     }
 }

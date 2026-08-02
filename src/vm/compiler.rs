@@ -129,6 +129,7 @@ struct Compiler<'a> {
     initial_bindings: Vec<(Register, Value)>,
     imported_bindings: std::collections::HashSet<Arc<str>>,
     module_index: usize,
+    construction: Option<Register>,
 }
 
 #[derive(Clone, Copy)]
@@ -165,6 +166,7 @@ impl<'a> Compiler<'a> {
             binding_registers: Vec::new(),
             initial_bindings: Vec::new(),
             imported_bindings: std::collections::HashSet::new(),
+            construction: None,
             module_index,
             source: None,
         }
@@ -602,6 +604,7 @@ impl<'a> Compiler<'a> {
                     block: block.0,
                     function,
                     context,
+                    construction: self.construction,
                 });
                 Some(destination)
             }
@@ -731,11 +734,18 @@ impl<'a> Compiler<'a> {
         let outer_in_function = self.in_function;
         let outer_capture_count = self.capture_count;
         let outer_binding_registers = std::mem::take(&mut self.binding_registers);
+        let outer_construction = self.construction;
 
         self.next_register = 1 + captures.len() as u16;
         self.attempt_depth = 0;
         self.in_function = true;
         self.capture_count = captures.len() as u16;
+        self.construction = outer_construction.and_then(|owner| {
+            captures
+                .iter()
+                .position(|(_, local)| local.register == owner)
+                .map(|index| Register(1 + index as u16))
+        });
         for (index, (name, local)) in captures.iter().enumerate() {
             self.locals.insert(
                 name.clone(),
@@ -799,6 +809,7 @@ impl<'a> Compiler<'a> {
         self.in_function = outer_in_function;
         self.capture_count = outer_capture_count;
         self.binding_registers = outer_binding_registers;
+        self.construction = outer_construction;
     }
 
     fn compile_block_function(&mut self, block: BlockId) -> (u16, Vec<Arc<str>>) {
@@ -824,11 +835,18 @@ impl<'a> Compiler<'a> {
         let outer_in_function = self.in_function;
         let outer_capture_count = self.capture_count;
         let outer_binding_registers = std::mem::take(&mut self.binding_registers);
+        let outer_construction = self.construction;
 
         self.next_register = 1 + names.len() as u16;
         self.attempt_depth = 0;
         self.in_function = true;
         self.capture_count = names.len() as u16;
+        self.construction = outer_construction.and_then(|_| {
+            names
+                .iter()
+                .position(|name| name.as_ref() == "this")
+                .map(|index| Register(1 + index as u16))
+        });
         for (index, name) in names.iter().enumerate() {
             self.locals.insert(
                 name.clone(),
@@ -863,6 +881,7 @@ impl<'a> Compiler<'a> {
         self.in_function = outer_in_function;
         self.capture_count = outer_capture_count;
         self.binding_registers = outer_binding_registers;
+        self.construction = outer_construction;
         (function, names)
     }
 
@@ -886,6 +905,7 @@ impl<'a> Compiler<'a> {
             destination,
             function,
             captures: captures.iter().map(|(_, local)| local.register).collect(),
+            construction: self.construction,
         });
         let binding = self
             .locals
@@ -933,6 +953,7 @@ impl<'a> Compiler<'a> {
             destination: closure,
             function,
             captures: captures.iter().map(|(_, local)| local.register).collect(),
+            construction: self.construction,
         });
         let binding =
             self.locals.get(&name.text).copied().expect(

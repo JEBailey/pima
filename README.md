@@ -91,6 +91,11 @@ Members are private unless declared with `pub`. A `pub var` is deliberately
 readable and writable from outside the object. Inside a method, the reserved
 value `this` refers to the object that owns the bound method.
 
+If construction fails, functions and blocks created inside it are invalidated,
+including references published through earlier side effects. Using one later
+produces `:invalid_object` and retains the original construction error for
+diagnostics.
+
 Accessing a function member produces a bound function reference:
 
 ```pima

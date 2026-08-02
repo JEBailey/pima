@@ -34,6 +34,17 @@ impl Compiler<'_> {
             .collect();
         let self_binding = self.allocate_register();
         self.binding_registers.push(self_binding);
+        self.instructions.push(Instruction::InitializeConstruction {
+            binding: self_binding,
+        });
+        let construction_error = self.allocate_register();
+        let construction_attempt = self.instructions.len();
+        self.instructions.push(Instruction::BeginAttempt {
+            destination: construction_error,
+            catch_target: usize::MAX,
+        });
+        self.attempt_depth += 1;
+        let outer_construction = self.construction.replace(self_binding);
         self.locals.insert(
             Arc::from("this"),
             Local {
@@ -258,12 +269,35 @@ impl Compiler<'_> {
             });
         }
         self.locals = outer_locals;
+        self.construction = outer_construction;
         let destination = self.allocate_register();
         self.instructions.push(Instruction::MakeNamespace {
             destination,
             bindings,
             self_binding: Some(self_binding),
         });
+        self.attempt_depth -= 1;
+        self.instructions.push(Instruction::EndAttempt);
+        let completed_jump = self.instructions.len();
+        self.instructions
+            .push(Instruction::Jump { target: usize::MAX });
+        let failure_target = self.instructions.len();
+        let Instruction::BeginAttempt { catch_target, .. } =
+            &mut self.instructions[construction_attempt]
+        else {
+            unreachable!("object construction must begin with an attempt handler");
+        };
+        *catch_target = failure_target;
+        self.instructions
+            .push(Instruction::RecordConstructionFailure {
+                binding: self_binding,
+                error: construction_error,
+            });
+        self.instructions.push(Instruction::Throw {
+            source: construction_error,
+        });
+        let completed = self.instructions.len();
+        self.patch_jump(completed_jump, completed);
         Some(destination)
     }
 

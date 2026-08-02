@@ -40,7 +40,12 @@ Object construction supports immutable and mutable state, functions,
 lexical initializer reads, validated custom type lists, and visibility-checked
 member access. Each object scope contains a private immutable `this` cell that
 is populated with the completed namespace after construction; methods capture
-the cell and preserve exact object identity. Block literals produce inert linked block values. `do` dispatches
+the cell and preserve exact object identity. That cell is also the construction
+lifecycle token retained by functions and blocks created during `new`. An
+internal VM handler records the causal error if initialization fails, leaving
+the token invalid. Later use produces `:invalid_object`, whose
+`construction_error` member preserves the original typed error and diagnostic
+metadata. Block literals produce inert linked block values. `do` dispatches
 both local and cross-module blocks in the caller's current environment, including
 blocks passed through function parameters. Placeholder-based partial application
 is compiled as an ordinary VM callable value.

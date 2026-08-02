@@ -308,6 +308,7 @@ impl Machine {
                     block,
                     function,
                     context,
+                    construction,
                 } => {
                     frame.registers[destination.0 as usize] = Slot::Value(Value::Block(
                         dumpster::unsync::Gc::new(crate::runtime::StoredBlock {
@@ -316,8 +317,40 @@ impl Machine {
                             vm_program: program.id,
                             vm_function: *function,
                             vm_context: context.clone(),
+                            construction: construction.and_then(|register| {
+                                match &frame.registers[register.0 as usize] {
+                                    Slot::Cell(cell) => Some(cell.clone()),
+                                    _ => None,
+                                }
+                            }),
                         }),
                     ));
+                }
+                Instruction::InitializeConstruction { binding } => {
+                    let Slot::Cell(cell) = frame.registers[binding.0 as usize].clone() else {
+                        return Err(VmError::internal(
+                            "construction lifecycle binding is not a cell",
+                        ));
+                    };
+                    let invalid = self.context.typed_error(
+                        &["error", "object_error", "invalid_object"],
+                        "reference belongs to an object whose construction did not complete"
+                            .to_owned(),
+                    );
+                    *cell.value.borrow_mut() = Slot::Value(invalid);
+                    cell.mutable.set(Some(false));
+                    cell.construction_ready.set(Some(false));
+                }
+                Instruction::RecordConstructionFailure { binding, error } => {
+                    let Slot::Cell(cell) = frame.registers[binding.0 as usize].clone() else {
+                        return Err(VmError::internal(
+                            "construction lifecycle binding is not a cell",
+                        ));
+                    };
+                    let failure = language_value(&frame.registers[error.0 as usize])?;
+                    *cell.value.borrow_mut() =
+                        Slot::Value(self.context.invalid_object_error(failure));
+                    cell.construction_ready.set(Some(false));
                 }
                 Instruction::Move {
                     destination,
@@ -518,6 +551,7 @@ impl Machine {
                                 };
                                 *cell.value.borrow_mut() = Slot::Value(namespace.clone());
                                 cell.mutable.set(Some(false));
+                                cell.construction_ready.set(Some(true));
                             }
                             frame.registers[destination.0 as usize] = Slot::Value(namespace);
                         }
@@ -766,6 +800,7 @@ impl Machine {
                     destination,
                     function,
                     captures,
+                    construction,
                 } => {
                     frame.registers[destination.0 as usize] =
                         Slot::Value(Value::VmClosure(dumpster::unsync::Gc::new(VmClosure {
@@ -775,6 +810,9 @@ impl Machine {
                                 .iter()
                                 .map(|register| frame.registers[register.0 as usize].clone())
                                 .collect(),
+                            construction_capture: construction.and_then(|construction| {
+                                captures.iter().position(|capture| *capture == construction)
+                            }),
                         })));
                 }
                 Instruction::CallDynamic {
@@ -785,6 +823,15 @@ impl Machine {
                 } => {
                     let mut callee = language_value(&frame.registers[callee.0 as usize])?;
                     let mut argument = language_value(&frame.registers[argument.0 as usize])?;
+                    let invalid_construction = match &callee {
+                        Value::VmClosure(closure) => invalid_closure_construction(closure),
+                        Value::VmPartial(partial) => invalid_closure_construction(&partial.closure),
+                        _ => None,
+                    };
+                    if let Some(invalid) = invalid_construction {
+                        frame.registers[destination.0 as usize] = Slot::Value(invalid);
+                        continue 'dispatch;
+                    }
                     if *command
                         && !matches!(
                             callee,
@@ -1037,6 +1084,10 @@ impl Machine {
                         catch_typed_error(&mut frames, &mut handlers, error)?;
                         continue 'dispatch;
                     };
+                    if let Some(invalid) = invalid_construction(&block.construction) {
+                        frame.registers[destination.0 as usize] = Slot::Value(invalid);
+                        continue 'dispatch;
+                    }
                     let owner_id = block.vm_program;
                     let function = block.vm_function;
                     let Some(owner) = self.programs.get(&owner_id) else {
@@ -1180,6 +1231,23 @@ fn reference_location(value: &Slot) -> Option<dumpster::unsync::Gc<VmCell>> {
     }
 }
 
+fn invalid_construction(construction: &Option<dumpster::unsync::Gc<VmCell>>) -> Option<Value> {
+    let construction = construction.as_ref()?;
+    (construction.construction_ready.get() == Some(false))
+        .then(|| construction.current_value())
+        .flatten()
+}
+
+fn invalid_closure_construction(closure: &crate::runtime::VmClosureRef) -> Option<Value> {
+    let capture = closure.construction_capture?;
+    let construction = match closure.captures.get(capture)? {
+        Slot::Cell(cell) => Some(cell.clone()),
+        Slot::Value(Value::VmBinding(cell)) => Some(cell.clone()),
+        _ => None,
+    };
+    invalid_construction(&construction)
+}
+
 struct Frame {
     program: u64,
     function: Option<u16>,
@@ -1273,6 +1341,7 @@ mod tests {
                     destination: Register(0),
                     function: 0,
                     captures: Vec::new(),
+                    construction: None,
                 },
                 Instruction::Return {
                     source: Register(0),
