@@ -1,0 +1,27 @@
+function view (event) {
+    (:column
+        (:heading "Column layout")
+        (:label "Each child of :columns receives an equal-width egui column.")
+        (:separator)
+        (:columns
+            (:column
+                (:styled_text "First" :strong (:color 90 170 255))
+                (:label "Columns can contain ordinary widget trees.")
+                (:button :first "First action")
+            )
+            (:column
+                (:styled_text "Second" :strong (:color 130 220 150))
+                (:label "Rows and columns can be nested.")
+                (:row
+                    (:button :left "Left")
+                    (:button :right "Right")
+                )
+            )
+            (:column
+                (:styled_text "Third" :strong (:color 255 180 90))
+                (:label "Edit this source and press Reload.")
+                (:text_edit :sample "Editable text")
+            )
+        )
+    )
+}

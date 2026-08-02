@@ -1,7 +1,27 @@
 use eframe::egui;
 use pima::{Config, Interpreter, Value};
 
-const DEFAULT_PROGRAM: &str = include_str!("../examples/counter.pima");
+struct Example {
+    name: &'static str,
+    source: &'static str,
+}
+
+const EXAMPLES: &[Example] = &[
+    Example {
+        name: "Counter",
+        source: include_str!("../examples/counter.pima"),
+    },
+    Example {
+        name: "Columns",
+        source: include_str!("../examples/columns.pima"),
+    },
+    Example {
+        name: "Styling",
+        source: include_str!("../examples/styling.pima"),
+    },
+];
+
+const DEFAULT_PROGRAM: &str = EXAMPLES[0].source;
 
 fn main() -> eframe::Result {
     eframe::run_native(
@@ -12,6 +32,7 @@ fn main() -> eframe::Result {
 }
 
 struct PimaEguiApp {
+    selected_example: usize,
     source: String,
     interpreter: Interpreter,
     view: Option<Value>,
@@ -21,6 +42,7 @@ struct PimaEguiApp {
 impl Default for PimaEguiApp {
     fn default() -> Self {
         let mut app = Self {
+            selected_example: 0,
             source: DEFAULT_PROGRAM.to_owned(),
             interpreter: Interpreter::new(Config::default()),
             view: None,
@@ -32,6 +54,11 @@ impl Default for PimaEguiApp {
 }
 
 impl PimaEguiApp {
+    fn load_selected_example(&mut self) {
+        self.source = EXAMPLES[self.selected_example].source.to_owned();
+        self.reload();
+    }
+
     fn reload(&mut self) {
         self.interpreter = Interpreter::new(Config::default());
         let source = format!("{}\n[view :init]\n", self.source);
@@ -86,6 +113,16 @@ impl PimaEguiApp {
                     }
                 });
             }
+            "columns" => {
+                let children = &values[1..];
+                if !children.is_empty() {
+                    ui.columns(children.len(), |columns| {
+                        for (column, child) in columns.iter_mut().zip(children) {
+                            self.render_value(column, child, events);
+                        }
+                    });
+                }
+            }
             "heading" => {
                 if let Some(Value::String(text)) = values.get(1) {
                     ui.heading(text.as_ref());
@@ -95,6 +132,72 @@ impl PimaEguiApp {
                 if let Some(Value::String(text)) = values.get(1) {
                     ui.label(text.as_ref());
                 }
+            }
+            "styled_text" => {
+                if let Some(Value::String(text)) = values.get(1) {
+                    let mut text = egui::RichText::new(text.as_ref());
+                    for style in &values[2..] {
+                        match style {
+                            Value::Symbol(style) => match self.interpreter.symbol_name(*style) {
+                                Some("heading") => text = text.heading(),
+                                Some("strong") => text = text.strong(),
+                                Some("monospace") => text = text.monospace(),
+                                Some("italics") => text = text.italics(),
+                                Some("underline") => text = text.underline(),
+                                _ => {}
+                            },
+                            Value::List(style) => {
+                                let style = style.to_vec();
+                                if list_tag(&self.interpreter, &style) == Some("color")
+                                    && let Some(color) = color_from(&style[1..])
+                                {
+                                    text = text.color(color);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    ui.label(text);
+                }
+            }
+            "frame" => {
+                let mut frame = egui::Frame::new();
+                let mut first_child = 1;
+                for (index, option) in values[1..].iter().enumerate() {
+                    let Value::List(option) = option else {
+                        break;
+                    };
+                    let option = option.to_vec();
+                    match list_tag(&self.interpreter, &option) {
+                        Some("fill") => {
+                            if let Some(color) = color_from(&option[1..]) {
+                                frame = frame.fill(color);
+                            }
+                        }
+                        Some("stroke") => {
+                            if let Some(color) = color_from(&option[1..]) {
+                                frame = frame.stroke(egui::Stroke::new(1.0_f32, color));
+                            }
+                        }
+                        Some("rounding") => {
+                            if let Some(Value::Integer(radius)) = option.get(1) {
+                                frame = frame.corner_radius((*radius).clamp(0, 255) as u8);
+                            }
+                        }
+                        Some("padding") => {
+                            if let Some(Value::Integer(padding)) = option.get(1) {
+                                frame = frame.inner_margin((*padding).clamp(0, 127) as i8);
+                            }
+                        }
+                        _ => break,
+                    }
+                    first_child = index + 2;
+                }
+                frame.show(ui, |ui| {
+                    for child in &values[first_child..] {
+                        self.render_value(ui, child, events);
+                    }
+                });
             }
             "separator" => {
                 ui.separator();
@@ -147,6 +250,29 @@ fn pima_string_literal(text: &str) -> String {
     literal
 }
 
+fn list_tag<'a>(interpreter: &'a Interpreter, values: &[Value]) -> Option<&'a str> {
+    let Value::Symbol(tag) = values.first()? else {
+        return None;
+    };
+    interpreter.symbol_name(*tag)
+}
+
+fn color_from(values: &[Value]) -> Option<egui::Color32> {
+    let [
+        Value::Integer(red),
+        Value::Integer(green),
+        Value::Integer(blue),
+    ] = values
+    else {
+        return None;
+    };
+    Some(egui::Color32::from_rgb(
+        (*red).clamp(0, 255) as u8,
+        (*green).clamp(0, 255) as u8,
+        (*blue).clamp(0, 255) as u8,
+    ))
+}
+
 impl eframe::App for PimaEguiApp {
     fn update(&mut self, context: &egui::Context, _: &mut eframe::Frame) {
         egui::SidePanel::left("source")
@@ -154,6 +280,22 @@ impl eframe::App for PimaEguiApp {
             .default_width(420.0)
             .show(context, |ui| {
                 ui.heading("PIMA source");
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("example-picker")
+                        .selected_text(EXAMPLES[self.selected_example].name)
+                        .show_ui(ui, |ui| {
+                            for (index, example) in EXAMPLES.iter().enumerate() {
+                                ui.selectable_value(
+                                    &mut self.selected_example,
+                                    index,
+                                    example.name,
+                                );
+                            }
+                        });
+                    if ui.button("Load example").clicked() {
+                        self.load_selected_example();
+                    }
+                });
                 if ui.button("Reload").clicked() {
                     self.reload();
                 }
@@ -194,6 +336,26 @@ mod tests {
         let clicked = interpreter.run_source("<test-event>", "[view (:click :increment)]\n");
         assert!(clicked.is_success(), "{:?}", clicked.diagnostics);
         assert!(matches!(clicked.value, Some(Value::List(_))));
+    }
+
+    #[test]
+    fn every_bundled_example_returns_a_widget_tree() {
+        for example in EXAMPLES {
+            let mut interpreter = Interpreter::default();
+            let outcome = interpreter
+                .run_source(example.name, &format!("{}\n[view :init]\n", example.source));
+            assert!(
+                outcome.is_success(),
+                "{}: {:?}",
+                example.name,
+                outcome.diagnostics
+            );
+            assert!(
+                matches!(outcome.value, Some(Value::List(_))),
+                "{}",
+                example.name
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,27 @@
+function view (event) {
+    (:column
+        (:styled_text "Styled Pima UI" :heading :strong (:color 110 190 255))
+        (:styled_text "Rich text supports color, weight, italics, underline, and monospace."
+            :italics
+            (:color 180 190 205)
+        )
+        (:separator)
+        (:frame
+            (:fill 24 32 46)
+            (:stroke 70 130 210)
+            (:rounding 10)
+            (:padding 16)
+            (:styled_text "A styled frame" :strong (:color 130 205 255))
+            (:label "Frames accept fill, stroke, corner radius, and padding options.")
+            (:styled_text "status: ready" :monospace (:color 130 225 155))
+        )
+        (:frame
+            (:fill 48 31 38)
+            (:stroke 205 95 120)
+            (:rounding 6)
+            (:padding 12)
+            (:styled_text "Important" :strong :underline (:color 255 145 165))
+            (:label "Styles are data returned by the Pima view function.")
+        )
+    )
+}
