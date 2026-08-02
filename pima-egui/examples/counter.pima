@@ -1,0 +1,25 @@
+import "/pima/library/standard"
+
+var count 0
+var name "PIMA"
+
+function view (event) {
+    match event (
+        (:click :increment) { let count [+ count 1] }
+        (:click :decrement) { let count [- count 1] }
+        (:change :name value) { let name value }
+        _ { }
+    )
+
+    (:column
+        (:heading "PIMA creates this egui interface")
+        (:text_edit :name name)
+        (:label [String.concat "Hello, " name "!"])
+        (:label [String.concat "Count: " [String.from count]])
+        (:separator)
+        (:row
+            (:button :decrement "−")
+            (:button :increment "+")
+        )
+    )
+}

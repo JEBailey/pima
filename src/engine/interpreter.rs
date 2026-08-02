@@ -75,6 +75,14 @@ impl Interpreter {
         }
     }
 
+    /// Resolves a symbol returned by this interpreter to its source spelling.
+    ///
+    /// Symbol identifiers are local to an interpreter. Embedders should use
+    /// this method instead of retaining or comparing their numeric IDs.
+    pub fn symbol_name(&self, symbol: crate::runtime::SymbolId) -> Option<&str> {
+        self.vm.resolve_symbol(symbol)
+    }
+
     pub fn prepare_source(
         &mut self,
         name: &str,

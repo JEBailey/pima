@@ -5,7 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace]
-members = ["pima-language-server"]
+members = ["pima-egui", "pima-language-server"]
 resolver = "2"
 
 [dependencies]
