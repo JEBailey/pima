@@ -23,7 +23,7 @@ Pima has a **structural type tag system**, not a type system in the traditional 
    }
    ```
    The runtime prepends `:object` automatically, so `Square` instances have type list `(:object :square :shape)`.
-3. **Type testing is runtime-only** — `Types.is? (value :symbol)` checks if a symbol appears in a value's type list. No compile-time enforcement exists.
+3. **Type testing is runtime-only** — `[Types.is? value :symbol]` checks if a symbol appears in a value's type list. No compile-time enforcement exists.
 4. **Objects are bags of bindings** — `new Template` executes a block in a fresh object environment. The resulting object has whatever bindings the block created. There is no schema, no required-field checking, and no invariant enforcement beyond the `types` member validation.
 5. **`new` validates minimally** — it checks that `types` is `pub val`, contains only unique symbols, and contains no fundamental type symbols. That's it.
 
@@ -32,20 +32,20 @@ Pima has a **structural type tag system**, not a type system in the traditional 
 | Component | Role | Key Constraint |
 |---|---|---|
 | `Value::Namespace(NamespaceRef)` | Internal runtime representation of Pima objects | `NamespaceRef = Gc<Namespace>` |
-| `Object` | Holds environment + type list + error metadata | `environment: EnvironmentRef`, `types: Vec<SymbolId>` |
+| `Namespace` | Holds environment + type list + error metadata | `environment: EnvironmentRef`, `types: Vec<SymbolId>` |
 | `Environment` | Map of `SymbolId → Binding` | `IndexMap<SymbolId, Binding>` in `RefCell<Gc>` |
 | `Binding` | Value + mutability + visibility | `value: Value`, `mutability: Immutable\|Mutable`, `visibility: Private\|Public` |
 | `SymbolInterner` | String → `SymbolId` dedup | Per-VM-instance (not global) |
 
 ### VM IR for Objects
 
-- `MakeNamespace { destination, bindings }` — Creates an object from a list of `{name, source: Register, public: bool}`. Each source register is read and linked into the object.
+- `MakeNamespace { destination, bindings, self_binding }` — Creates an object from bindings that retain name, source register, visibility, and mutability. Each source register is linked into the object, and `self_binding` completes `this` after successful construction.
 - `LoadMember { destination, object, name }` — Loads a public member by name. Enforces visibility at runtime.
 - No IR instruction exists for type checking, field validation, or invariant enforcement beyond what `MakeNamespace` does via `context.make_namespace()`.
 
 ### Compiler for `new`
 
-The compiler (`vm/compiler/blocks.rs::compile_new`) walks the template block's statements, extracts bindings and functions, then emits a single `MakeNamespace` instruction. It does not validate that the template satisfies any schema or that instances will have specific members.
+The compiler (`vm/compiler/blocks.rs::compile_new`) selects complete surviving definitions using ordered namespace composition, emits their initialization code, merges valid `types` contributions, and finally emits `MakeNamespace`. It does not validate that the resulting object satisfies a declared schema because Pima has no schema declarations yet.
 
 ### What the Spec Says
 
@@ -61,7 +61,7 @@ The spec's type model is deliberately dynamic: "Pima is dynamically and strongly
 
 1. **No field contracts** — An object template may declare `val width 80`, but nothing enforces that all instances have `width`. If the template block has a bug and skips a binding, the instance silently lacks that field.
 
-2. **No type-level relationships** — There's no way to express that `:square` is a subtype of `:shape` beyond the type list convention. `Types.is? (value :shape)` works, but there's no compile-time or structural enforcement.
+2. **No type-level relationships** — There's no way to express that `:square` is a subtype of `:shape` beyond the type list convention. `[Types.is? value :shape]` works, but there's no compile-time or structural enforcement.
 
 3. **No constructor validation** — `new Template` runs the block and hopes for the best. If a binding fails or produces the wrong type, you only discover it at the point of use (or not at all).
 
@@ -327,7 +327,7 @@ pub struct UnionVariantDef {
 
 **Match compilation:** When the compiler sees `match` over a binding known to be a union type, it compiles to a `UnionTag` instruction + jump table instead of sequential list-length/equality checks. The compiler can also verify exhaustiveness: if variants are missing, emit a warning diagnostic.
 
-**Type system integration:** A union value has type list `(:union :Result)` where `:Result` is the union's declared name. `Types.is? (value :Result)` works naturally.
+**Type system integration:** A union value has type list `(:union :Result)` where `:Result` is the union's declared name. `[Types.is? value :Result]` works naturally.
 
 ### Why This Is Powerful
 
@@ -431,7 +431,7 @@ All three suggestions are additive:
 
 ### The Spec Question
 
-The language reference section 13 currently excludes "static typing." These suggestions stay within bounds because:
+The language reference section 14 currently excludes "static typing." These suggestions stay within bounds because:
 - Validation happens at runtime (`new` time), not at compile time as a hard gate
 - The compiler emits warnings, not errors, for contract violations on known templates
 - The language remains dynamically typed — types belong to values, not bindings

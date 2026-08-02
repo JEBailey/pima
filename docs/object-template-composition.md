@@ -5,7 +5,7 @@ construction.
 
 ## Motivation
 
-Piman object templates already describe concrete object structure. A
+Pima object templates already describe concrete object structure. A
 template that declares a member supplies that member; a separate `require`
 declaration or contract schema would duplicate the structure already expressed
 by the template.

@@ -1,7 +1,10 @@
 # Syntax Consistency Review
 
-Status: design review for reference. Always-list call packing, bare binding
-destinations, and consistent name/symbol interpretation are implemented.
+Status: historical design review. Always-list call packing, bare binding
+destinations, consistent name/symbol interpretation, delimiter-aware parsing,
+fixed reserved-form syntax, and ordered namespace composition are implemented.
+The language reference is normative; proposal-tense discussion below records
+the reasoning that led to the current rules.
 
 ## Purpose
 
@@ -380,9 +383,10 @@ rather than an infix form such as:
 2. **Completed:** Use bare names for binding and assignment targets.
 3. **Completed:** Use the same literal/capture patterns in functions and
    `match`.
-4. Remove the unused `immediate` field from call AST nodes.
-5. Introduce delimiter-aware expression boundaries in the parser.
-6. Clarify in the specification that reserved forms have fixed syntax rather
+4. Retain the call-boundary marker while it distinguishes bracketed calls from
+   line commands in lowering.
+5. **Completed:** Introduce delimiter-aware expression boundaries in the parser.
+6. **Completed:** Clarify in the specification that reserved forms have fixed syntax rather
    than being ordinary functions.
 7. **Completed:** Update examples so every explicit pair of parentheses adds a
    list layer, retaining parentheses only when a list value is an operand.

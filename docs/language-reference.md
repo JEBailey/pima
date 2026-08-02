@@ -1014,6 +1014,12 @@ replaces the shared source location, and every caller-side alias observes the
 same `:moved_value` error. Scalar and persistent-data assignment retains value
 semantics.
 
+Member access and imports are location-producing operations even when the
+stored value is scalar. For example, `val current_count state.count` resolves
+`state.count` once and retains that member location. Rebinding `state` later
+does not retarget `current_count`. The retained member keeps its complete owning
+object alive until the final external reference disappears.
+
 The moved error records where and how the move occurred. It exposes immutable
 `move_operation`, `move_source`, `move_start`, and `move_end` fields, and its
 runtime metadata retains the move instruction as the diagnostic origin. This
@@ -1176,12 +1182,13 @@ object values rather than individual global functions:
 - `Math`: `pow`, `less_or_equal`, `greater_or_equal`, `increment`,
   `decrement`, `range`, `absolute`, `minimum`, `maximum`, `clamp`, `sum`,
   `product`, `average`, `div`, `mod`, `int`, `E`, and `PI`;
-- `String`: `concat`, `length`, `slice`, `chars`, `from`, `lower`, `upper`,
-  `trim`, `contains?`, `starts_with?`, `ends_with?`, `replace`, `split`, and
-  `join`;
+- `String`: `concat`, `length`, `byte_length`, `slice`, `chars`, `code_point`,
+  `from_code_point`, `from`, `string`, `lower`, `upper`, `trim`, `contains?`,
+  `starts_with?`, `ends_with?`, `replace`, `split`, and `join`;
 - `List`: `push`, `append`, `head`, `rest`, `empty?`, `reverse`, `foreach`,
   `map`, `length`, `contains?`, `fold`, `filter`, `any?`, and `all?`;
 - `Types`: `of` and `is?`;
+- `Reference`: `same?`;
 - `Console`: `println`; and
 - `Logic`: `not` and `select`.
 
@@ -1350,7 +1357,7 @@ val counter new {
     var count 0
 
     pub function increment () {
-        let this.count (+ this.count 1)
+        let this.count [+ this.count 1]
     }
 }
 

@@ -144,7 +144,7 @@ that program's constants and function table. `/pima/io`, `/pima/tcp`, and the
 Pima standard library use this same path.
 
 Primitive VM instructions resolve through the native registry. Native failures remain
-typed Piman object values in `VmError::Typed`; internal bytecode faults remain
+typed Pima object values in `VmError::Typed`; internal bytecode faults remain
 separate host diagnostics. The VM currently lowers numeric primitives and
 symbol/error services. Shared filesystem and TCP host operations are available
 to native functions as their objects and imports gain VM lowering.

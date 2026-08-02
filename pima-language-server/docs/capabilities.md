@@ -26,6 +26,7 @@ reliable in that case.
 - workspace indexing, cross-file definitions, references, and rename;
 - workspace file watching and diagnostics for unopened project files;
 - conservative inferred value kinds in hover and completion details;
+- standard-library catalog support for `Reference.same?` storage-identity calls;
 - `remote` request inference as `:future`, with future-member completion,
   hover, and signature help for `complete?`;
 - document formatting; and

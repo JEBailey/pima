@@ -9,6 +9,7 @@ pub fn namespace_members(namespace: &str) -> Option<&'static [Member]> {
         "String" => Some(&STRING),
         "List" => Some(&LIST),
         "Types" => Some(&TYPES),
+        "Reference" => Some(&REFERENCE),
         "Console" => Some(&CONSOLE),
         "Logic" => Some(&LOGIC),
         "io" => Some(&IO),
@@ -23,7 +24,15 @@ const FUTURE: [Member; 1] = [Member {
     signature: "future.complete?()",
 }];
 
-pub const NAMESPACES: &[&str] = &["Console", "List", "Logic", "Math", "String", "Types"];
+pub const NAMESPACES: &[&str] = &[
+    "Console",
+    "List",
+    "Logic",
+    "Math",
+    "Reference",
+    "String",
+    "Types",
+];
 
 const MATH: [Member; 18] = [
     Member {
@@ -244,6 +253,11 @@ const TYPES: [Member; 2] = [
         signature: "Types.is?(value, type)",
     },
 ];
+
+const REFERENCE: [Member; 1] = [Member {
+    name: "same?",
+    signature: "Reference.same?(left, right)",
+}];
 
 const CONSOLE: [Member; 1] = [Member {
     name: "println",
