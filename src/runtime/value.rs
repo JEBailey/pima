@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
 use dumpster::{TraceWith, Visitor, unsync::Gc};
 
@@ -81,15 +81,9 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Unit, Value::Unit) => true,
         (Value::Boolean(a), Value::Boolean(b)) => a == b,
-        (Value::Integer(a), Value::Integer(b)) => a == b,
-        (Value::Integer(integer), Value::Float(float))
-        | (Value::Float(float), Value::Integer(integer)) => {
-            float.fract() == 0.0
-                && *float >= i64::MIN as f64
-                && *float < -(i64::MIN as f64)
-                && (*float as i64) == *integer
+        (Value::Integer(_) | Value::Float(_), Value::Integer(_) | Value::Float(_)) => {
+            numeric_compare(left, right) == Some(Ordering::Equal)
         }
-        (Value::Float(a), Value::Float(b)) => a == b,
         (Value::String(a), Value::String(b)) => a == b,
         (Value::Symbol(a), Value::Symbol(b)) => a == b,
         (Value::List(a), Value::List(b)) => {
@@ -115,6 +109,55 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
             a_handle == b_handle && a_name == b_name
         }
         _ => false,
+    }
+}
+
+/// Compares numeric values without rounding an integer through `f64`.
+///
+/// Returns `None` for non-numeric values and unordered comparisons involving
+/// NaN, matching IEEE 754 comparison behavior.
+pub(crate) fn numeric_compare(left: &Value, right: &Value) -> Option<Ordering> {
+    match (left, right) {
+        (Value::Integer(left), Value::Integer(right)) => Some(left.cmp(right)),
+        (Value::Float(left), Value::Float(right)) => left.partial_cmp(right),
+        (Value::Integer(integer), Value::Float(float)) => compare_integer_float(*integer, *float),
+        (Value::Float(float), Value::Integer(integer)) => {
+            compare_integer_float(*integer, *float).map(Ordering::reverse)
+        }
+        _ => None,
+    }
+}
+
+fn compare_integer_float(integer: i64, float: f64) -> Option<Ordering> {
+    if float.is_nan() {
+        return None;
+    }
+
+    // These boundaries are exactly representable as f64. `i64::MAX as f64`
+    // rounds to 2^63, which is one greater than the largest integer.
+    const I64_MIN_AS_F64: f64 = -9_223_372_036_854_775_808.0;
+    const I64_UPPER_BOUND_AS_F64: f64 = 9_223_372_036_854_775_808.0;
+    if float < I64_MIN_AS_F64 {
+        return Some(Ordering::Greater);
+    }
+    if float >= I64_UPPER_BOUND_AS_F64 {
+        return Some(Ordering::Less);
+    }
+
+    let truncated = float as i64;
+    match integer.cmp(&truncated) {
+        Ordering::Equal => {
+            // The cast truncates toward zero. When a fractional part remains,
+            // its sign determines which side of the truncated integer it lies.
+            if float > truncated as f64 {
+                Some(Ordering::Less)
+            } else if float < truncated as f64 {
+                Some(Ordering::Greater)
+            } else {
+                Some(Ordering::Equal)
+            }
+        }
+        ordering => Some(ordering),
     }
 }
 
@@ -181,5 +224,56 @@ impl PersistentList {
 impl FromIterator<Value> for PersistentList {
     fn from_iter<T: IntoIterator<Item = Value>>(values: T) -> Self {
         Self(values.into_iter().collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_numeric_ordering_handles_boundaries_and_special_floats() {
+        assert_eq!(
+            numeric_compare(
+                &Value::Integer(i64::MAX),
+                &Value::Float(9_223_372_036_854_775_808.0)
+            ),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            numeric_compare(
+                &Value::Integer(i64::MIN),
+                &Value::Float(-9_223_372_036_854_775_808.0)
+            ),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            numeric_compare(&Value::Integer(0), &Value::Float(f64::INFINITY)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            numeric_compare(&Value::Integer(0), &Value::Float(f64::NEG_INFINITY)),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            numeric_compare(&Value::Integer(0), &Value::Float(f64::NAN)),
+            None
+        );
+    }
+
+    #[test]
+    fn equality_uses_the_same_exact_numeric_ordering() {
+        assert!(language_equal(
+            &Value::Integer(9_007_199_254_740_992),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(!language_equal(
+            &Value::Integer(9_007_199_254_740_993),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(!language_equal(
+            &Value::Float(f64::NAN),
+            &Value::Float(f64::NAN)
+        ));
     }
 }

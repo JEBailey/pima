@@ -965,9 +965,12 @@ Arithmetic follows these rules:
 - Floating-point operations use IEEE 754 behavior and may otherwise produce
   infinities or NaN.
 
-Numeric comparisons promote mixed integer/float operands to floats. Float
-equality is exact IEEE equality; approximate comparison belongs in a library
-function rather than the `=` operator.
+Numeric comparisons compare mixed integer/float operands mathematically without
+first rounding the integer through `f64`. This keeps `=`, `<`, and `>` coherent
+for integers outside the float's exact-integer range. NaN is unordered, so
+equality and both relational comparisons involving NaN are false. Float
+equality is otherwise exact IEEE equality; approximate comparison belongs in a
+library function rather than the `=` operator.
 
 `=` follows these rules:
 

@@ -693,6 +693,29 @@ fn mixed_numeric_equality_requires_the_same_mathematical_integer() {
 }
 
 #[test]
+fn mixed_numeric_comparison_is_exact_above_the_float_integer_range() {
+    assert_eq!(
+        run_ok("[< 9007199254740993 9007199254740994.0]"),
+        pima::Value::Boolean(true)
+    );
+    assert_eq!(
+        run_ok("[> 9007199254740993.0 9007199254740992]"),
+        pima::Value::Boolean(false)
+    );
+    assert_eq!(
+        run_ok("[< 9223372036854775807 9223372036854775808.0]"),
+        pima::Value::Boolean(true)
+    );
+}
+
+#[test]
+fn mixed_numeric_comparison_handles_fractional_values_on_both_sides_of_zero() {
+    assert_eq!(run_ok("[< 1 1.5]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[> -1 -1.5]"), pima::Value::Boolean(true));
+    assert_eq!(run_ok("[< -2 -1.5]"), pima::Value::Boolean(true));
+}
+
+#[test]
 fn equality_different_types() {
     assert_eq!(run_ok("[= 5 \"hello\" ]"), pima::Value::Boolean(false));
 }

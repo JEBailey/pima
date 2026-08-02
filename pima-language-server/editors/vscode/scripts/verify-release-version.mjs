@@ -22,7 +22,8 @@ if (distinct.size !== 1) {
 
 const version = [...distinct][0];
 const tag = process.env.GITHUB_REF_NAME;
-if (tag && tag !== `v${version}` && !tag.startsWith(`v${version}-`)) {
+const isTagBuild = process.env.GITHUB_REF_TYPE === "tag";
+if (isTagBuild && tag !== `v${version}` && !tag?.startsWith(`v${version}-`)) {
     throw new Error(`tag ${tag} does not match package version ${version}`);
 }
-console.log(`release version ${version}${tag ? ` matches ${tag}` : ""}`);
+console.log(`release version ${version}${isTagBuild ? ` matches ${tag}` : " across manifests"}`);

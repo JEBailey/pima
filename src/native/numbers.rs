@@ -62,14 +62,6 @@ pub fn register(registry: &mut NativeRegistry) {
 
 // ── Helper: extract i64 or f64 from a Value, error if not numeric ──
 
-fn to_num(v: &Value) -> Option<f64> {
-    match v {
-        Value::Integer(n) => Some(*n as f64),
-        Value::Float(f) => Some(*f),
-        _ => None,
-    }
-}
-
 // ── Variadic arithmetic: fold left ──
 
 fn native_add(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
@@ -257,33 +249,39 @@ fn native_less_than(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult
     let [a, b] = args else {
         return Err(ctx.typed_error(&["error", "type_error"], "< requires two arguments".into()));
     };
-    cmp_num(ctx, a, b, |x, y| x < y)
+    cmp_num(ctx, a, b, std::cmp::Ordering::is_lt)
 }
 
 fn native_greater_than(ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
     let [a, b] = args else {
         return Err(ctx.typed_error(&["error", "type_error"], "> requires two arguments".into()));
     };
-    cmp_num(ctx, a, b, |x, y| x > y)
+    cmp_num(ctx, a, b, std::cmp::Ordering::is_gt)
 }
 
 fn cmp_num(
     ctx: &mut dyn NativeContext,
     a: &Value,
     b: &Value,
-    cmp: impl FnOnce(f64, f64) -> bool,
+    cmp: impl FnOnce(std::cmp::Ordering) -> bool,
 ) -> NativeResult {
-    match (to_num(a), to_num(b)) {
-        (Some(x), Some(y)) => Ok(Value::Boolean(cmp(x, y))),
-        _ => Err(ctx.typed_error(
+    if !matches!(a, Value::Integer(_) | Value::Float(_))
+        || !matches!(b, Value::Integer(_) | Value::Float(_))
+    {
+        return Err(ctx.typed_error(
             &["error", "type_error"],
             format!(
                 "comparison requires numeric arguments, got {} and {}",
                 a.type_symbol(),
                 b.type_symbol()
             ),
-        )),
+        ));
     }
+
+    // NaN is unordered, so both relational comparisons are false.
+    Ok(Value::Boolean(
+        crate::runtime::numeric_compare(a, b).is_some_and(cmp),
+    ))
 }
 
 fn native_equals(_ctx: &mut dyn NativeContext, args: &[Value]) -> NativeResult {
