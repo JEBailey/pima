@@ -73,6 +73,31 @@ impl Compiler<'_> {
                 }
             }
         }
+        for (_, block) in &templates {
+            for statement in &self.module.block(*block).statements {
+                let NodeKind::Binding { pattern, .. } = &self.module.node(*statement).kind else {
+                    continue;
+                };
+                let mut names = Vec::new();
+                pattern_names(pattern, &mut names);
+                let winning = names
+                    .iter()
+                    .filter(|name| {
+                        name.as_ref() == "types"
+                            || winners.get(*name) == Some(&(*block, *statement))
+                    })
+                    .count();
+                if winning != 0 && winning != names.len() {
+                    self.diagnostics.push(Diagnostic::at_error(
+                        "ordered namespace composition cannot select only part of a destructuring declaration",
+                        self.module.node(*statement).span,
+                    ));
+                    self.locals = outer_locals;
+                    self.construction = outer_construction;
+                    return None;
+                }
+            }
+        }
         let has_types =
             templates.iter().any(|(_, block)| {
                 self.module.block(*block).statements.iter().any(|statement| {

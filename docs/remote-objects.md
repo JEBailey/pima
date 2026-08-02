@@ -34,7 +34,8 @@ val status [await status_request]
 val result [await work_request]
 ```
 
-Template composition has the same ordered, leftmost-wins semantics as `new`:
+Ordered namespace composition has the same complete-definition,
+leftmost-wins semantics as local `new`:
 
 ```pima
 val service [remote (Service Observable Restartable)]
@@ -116,6 +117,15 @@ inside `Worker` remains exclusively owned by that worker.
 
 Missing requirements fail with `:missing_context`. Values that cannot cross the
 transport boundary fail with `:unsendable_value`.
+
+Move does not recursively serialize a local object graph. Local objects,
+closures, bound methods, code blocks, binding cells, and TCP connections remain
+owned by their VM. Encountering any of them—including inside a persistent
+list—fails the complete worker construction transaction and preserves every
+source alias. Worker-local graphs must be constructed inside the worker from
+transported data snapshots. Remote objects, futures, and TCP listeners are
+handle identities rather than serialized local graphs; use `&` where sharing
+is supported.
 
 ## Ownership and Ordering
 

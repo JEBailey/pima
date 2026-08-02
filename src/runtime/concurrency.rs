@@ -158,18 +158,25 @@ impl TransportValue {
                 .map(Self::List),
             Value::RemoteNamespace(handle) => Ok(Self::RemoteNamespace(handle)),
             Value::Task(handle) => Ok(Self::Task(handle)),
+            Value::VmClosure(_) | Value::VmPartial(_) | Value::NativeFunction(_) => {
+                Err("local functions are VM-bound and cannot cross a worker boundary")
+            }
+            Value::Block(_) => {
+                Err("local code blocks are VM-bound and cannot cross a worker boundary")
+            }
+            Value::Namespace(_) => {
+                Err("local objects are VM-bound and must be constructed inside the worker")
+            }
+            Value::VmBinding(_) => {
+                Err("local binding cells are VM-bound and cannot cross a worker boundary")
+            }
+            Value::RemoteFunction(_, _) | Value::BoundRemoteFunction(_, _, _) => {
+                Err("bound remote functions cannot cross a worker boundary")
+            }
             Value::TaskFunction(_, _) => Err("task functions cannot cross worker boundaries"),
-            Value::NativeFunction(_)
-            | Value::VmClosure(_)
-            | Value::VmPartial(_)
-            | Value::VmBinding(_)
-            | Value::Placeholder
-            | Value::Block(_)
-            | Value::Namespace(_)
-            | Value::RemoteFunction(_, _)
-            | Value::BoundRemoteFunction(_, _, _)
-            | Value::TcpListener(_)
-            | Value::TcpConnection(_) => Err("value cannot cross a VM boundary"),
+            Value::TcpListener(_) => Err("TCP listeners require explicit `&` sharing"),
+            Value::TcpConnection(_) => Err("TCP connections cannot cross a worker boundary"),
+            Value::Placeholder => Err("placeholder values cannot cross a worker boundary"),
         }
     }
 

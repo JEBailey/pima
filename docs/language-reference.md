@@ -996,6 +996,16 @@ ordinary scalar, list, local object, closure, or mutable cell fails with
 `:unsendable_value`. For local block execution these markers do not alter
 lexical lookup; they describe only transport across an isolated boundary.
 
+`*` does not imply serialization of a local runtime graph. Local objects,
+functions, bound methods, code blocks, binding cells, and TCP connections are
+VM-bound and cannot be copied or moved into an isolated worker. If any element
+of a persistent list is VM-bound, transport of the whole list fails
+transactionally. No source location or alias is invalidated on failure.
+Construct local objects and closures inside the worker from transported scalar,
+string, symbol, and persistent-list snapshots. Existing remote objects,
+futures, and TCP listeners cross contexts only through the explicitly supported
+handle rules; TCP listeners require `&`.
+
 Assignment preserves identity for reference-like values: objects, functions,
 blocks, remote objects, futures, and native resource handles. A binding made
 from one of these values is another reference to the same VM location, not a
@@ -1077,6 +1087,11 @@ library function rather than the `=` operator.
   each corresponding element is equal under these same rules.
 - Functions, code blocks, and objects compare by identity. Two distinct
   instances are unequal even when they contain equivalent code or members.
+- Error objects are unordered and never equal, including to themselves or to
+  another alias of the same error. This applies to every object whose types
+  include `:error`, not only built-in failures. An error nested in a list makes
+  the corresponding element comparison false. Inspect errors with `Types.is?`
+  and their public metadata rather than equality.
 - Values of unrelated categories are unequal rather than producing an error.
 
 ### 10.2 Strings
@@ -1246,8 +1261,9 @@ lifecycle value. Outside object construction, `this` is an unbound reserved
 value.
 
 `new` accepts one or more code-block templates through its containing line or
-bracket boundary. Multiple operands are packed in source order and composed
-with the same leftmost-wins behavior as an explicit template list:
+bracket boundary. Multiple operands perform **ordered namespace composition**:
+they are packed in source order with the same leftmost-wins behavior as an
+explicit template list:
 
 ```pima
 [new Specialized Base]
@@ -1260,12 +1276,21 @@ syntax error.
 Object construction proceeds as follows:
 
 1. Evaluate the operands and require one or more code-block templates.
-2. Compose multiple templates in source order, with the leftmost surviving
-   declaration taking precedence.
-3. Create a fresh object environment linked to the current scope.
-4. Execute the surviving declarations in that object environment.
+2. Select complete definitions in source order, with the leftmost definition
+   for a member name taking precedence.
+3. Create one fresh object environment linked to the current scope.
+4. Execute only the surviving definitions in that object environment.
 5. Validate its optional public `types` declaration.
 6. Return the completed object.
+
+The contributing templates are code blocks, not constructed parent objects.
+They do not remain as reachable or hidden runtime instances. There is one
+namespace, one object identity, and one `this` shared by every surviving
+method. Losing definitions and their initializers do not execute. A
+destructuring declaration must survive as a whole; composition that would
+select only some of its captures is a compiler error. The public immutable
+`types` definition is the sole composition-specific exception: every valid
+template contribution is merged in source order.
 
 If block execution, a declaration, or type validation throws, construction
 fails and the incomplete object is discarded. External side effects already
@@ -1587,8 +1612,9 @@ An arbitrary call, closure, or value is not a valid `remote` operand. Templates
 must currently be statically known. Names explicitly listed by an annotated
 template are resolved in the caller, transported as values, and installed as
 immutable worker-local bindings. Mutable cells never cross the worker boundary.
-Ordered composition transports the union of external requirements and uses the
-same leftmost-wins merge contract for `new` and `remote`.
+Ordered namespace composition transports the union of external requirements
+and uses the same complete-definition, leftmost-wins contract for `new` and
+`remote`.
 
 Reads and calls both produce futures:
 
@@ -1610,7 +1636,7 @@ and may be repeated on the same future.
 The following are not required:
 
 - static typing;
-- classes or inheritance beyond object templates; and
+- classes, inheritance, parent objects, or `super`; and
 - arbitrary closure scheduling through `remote`.
 
 ## 15. Conformance examples

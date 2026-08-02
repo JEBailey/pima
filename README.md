@@ -87,6 +87,12 @@ counter.increment
 let counter.count 10
 ```
 
+With several templates, `new` performs **ordered namespace composition**. It
+selects complete definitions with leftmost precedence and then executes the
+survivors to create one fresh namespace. Templates are not parent objects:
+there is no hidden object chain, inheritance lookup, or `super`, and every
+surviving method shares the one completed `this`.
+
 Members are private unless declared with `pub`. A `pub var` is deliberately
 readable and writable from outside the object. Inside a method, the reserved
 value `this` refers to the object that owns the bound method.
@@ -109,7 +115,8 @@ value remains `counter`.
 ### Errors and concurrency
 
 Errors are typed object values. `throw` raises one and `attempt` returns a
-raised error as a value so it can be inspected.
+raised error as a value so it can be inspected. Like NaN, an error is never
+equal to anything, including itself; use `Types.is?` to identify its type.
 
 Remote objects execute in isolated workers. An annotated block declares the
 context it needs and how each value crosses the worker boundary:
@@ -133,6 +140,11 @@ val Worker @(
 
 A moved location becomes a typed `:moved_value` error that records the source
 span and operation responsible for the move.
+
+Local objects, functions, and blocks remain VM-bound; `*` does not implicitly
+serialize their reachable graph. Construct worker-local objects inside the
+worker from transported data. If an unsendable value is encountered, worker
+creation fails transactionally and every caller-side alias remains usable.
 
 ## Command line
 

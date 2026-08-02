@@ -29,6 +29,7 @@ pub fn create_typed_error(symbols: &mut SymbolInterner, types: &[&str], message:
     Value::Namespace(dumpster::unsync::Gc::new(Namespace {
         environment: dumpster::unsync::Gc::new(std::cell::RefCell::new(environment)),
         types: type_symbols,
+        is_error: true,
         error_metadata: std::cell::RefCell::new(None),
     }))
 }

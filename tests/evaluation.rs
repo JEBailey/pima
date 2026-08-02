@@ -137,7 +137,7 @@ fn remote_constructs_a_namespace_in_an_isolated_vm() {
 }
 
 #[test]
-fn new_composes_templates_with_leftmost_precedence() {
+fn ordered_namespace_composition_uses_leftmost_precedence() {
     let value = run_ok(
         "val Base {\n\
              pub val value 1\n\
@@ -163,7 +163,7 @@ fn new_composes_templates_with_leftmost_precedence() {
 }
 
 #[test]
-fn composition_runs_only_surviving_initializers_from_right_to_left() {
+fn ordered_namespace_composition_runs_only_surviving_definitions() {
     let value = run_ok(
         "var events ()\n\
          function record (event) {\n\
@@ -182,7 +182,7 @@ fn composition_runs_only_surviving_initializers_from_right_to_left() {
 }
 
 #[test]
-fn composition_merges_namespace_types_in_template_order() {
+fn ordered_namespace_composition_merges_types_in_source_order() {
     let value = run_ok(
         "val Base { pub val types (:base :shared) }\n\
          val Specific { pub val types (:specific :shared) }\n\
@@ -196,7 +196,7 @@ fn composition_merges_namespace_types_in_template_order() {
 }
 
 #[test]
-fn composition_can_assign_an_inherited_mutable_binding() {
+fn ordered_namespace_composition_can_assign_a_surviving_mutable_binding() {
     let value = run_ok(
         "val Base {\n\
              var count 0\n\
@@ -207,6 +207,30 @@ fn composition_can_assign_an_inherited_mutable_binding() {
          [composed.get]",
     );
     assert_eq!(value, pima::Value::Integer(10));
+}
+
+#[test]
+fn ordered_namespace_composition_creates_one_object_for_every_method() {
+    let value = run_ok(
+        "val General { pub function current () this }\n\
+         val Specific { pub val value 42 }\n\
+         val composed [new (Specific General)]\n\
+         [= composed [composed.current]]",
+    );
+    assert_eq!(value, pima::Value::Boolean(true));
+}
+
+#[test]
+fn ordered_namespace_composition_rejects_partial_destructuring_selection() {
+    let outcome = run("val First { pub val left 1 }\n\
+         val Second { pub val (left right) (2 3) }\n\
+         new First Second");
+    assert!(!outcome.is_success());
+    assert!(outcome.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("cannot select only part of a destructuring declaration")
+    }));
 }
 
 #[test]
@@ -346,9 +370,76 @@ fn moved_value_error_records_the_move_operation_and_source_span() {
 fn failed_remote_move_leaves_the_source_binding_unchanged() {
     let value = run_ok(
         "val workload [new { pub val value 42 }]\n\
+         val alias workload\n\
          val Worker @(*workload) { pub val result workload }\n\
          val failure [attempt { remote Worker }]\n\
-         ([Types.is? failure :unsendable_value] workload.value)",
+         ([Types.is? failure :unsendable_value] workload.value alias.value)",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Integer(42),
+                pima::Value::Integer(42),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn failed_remote_move_preserves_vm_bound_function_aliases() {
+    let value = run_ok(
+        "function task () 42\n\
+         val alias task\n\
+         val Worker @(*task) { pub val received task }\n\
+         val failure [attempt { remote Worker }]\n\
+         ([Types.is? failure :unsendable_value] [task] [alias])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Integer(42),
+                pima::Value::Integer(42),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn failed_remote_move_preserves_vm_bound_blocks() {
+    let value = run_ok(
+        "val work { 42 }\n\
+         val Worker @(*work) { pub val received work }\n\
+         val failure [attempt { remote Worker }]\n\
+         val result do work\n\
+         ([Types.is? failure :unsendable_value] result)",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Integer(42)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn unsendable_value_nested_in_a_list_fails_the_whole_move_transaction() {
+    let value = run_ok(
+        "function task () 42\n\
+         val payload (task)\n\
+         val Worker @(*payload) { pub val received payload }\n\
+         val failure [attempt { remote Worker }]\n\
+         val preserved [head payload]\n\
+         ([Types.is? failure :unsendable_value] [preserved])",
     );
     assert_eq!(
         value,
@@ -852,6 +943,51 @@ fn equality_int_float_same_math_value() {
 fn equality_lists_structural() {
     assert_eq!(run_ok("[= (1 2) (1 2)]"), pima::Value::Boolean(true));
     assert_eq!(run_ok("[= (1 2) (1 3)]"), pima::Value::Boolean(false));
+}
+
+#[test]
+fn errors_are_never_equal_even_to_the_same_reference() {
+    let value = run_ok(
+        "val failure [attempt { Math.div 1 0 }]\n\
+         val alias failure\n\
+         ([= failure failure]\n\
+          [= failure alias]\n\
+          [= (failure) (failure)]\n\
+          [Types.is? failure :error])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(false),
+                pima::Value::Boolean(false),
+                pima::Value::Boolean(false),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn user_defined_error_objects_are_never_equal() {
+    let value = run_ok(
+        "val Failure {\n\
+             pub val types (:error :failure)\n\
+             pub val message \"failed\"\n\
+         }\n\
+         val failure [new Failure]\n\
+         ([= failure failure] [Types.is? failure :failure])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(false), pima::Value::Boolean(true)]
+                .into_iter()
+                .collect()
+        )
+    );
 }
 
 #[test]

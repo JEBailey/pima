@@ -50,6 +50,19 @@ both local and cross-module blocks in the caller's current environment, includin
 blocks passed through function parameters. Placeholder-based partial application
 is compiled as an ordinary VM callable value.
 
+Multiple `new` operands use ordered namespace composition. Lowering selects
+complete declarations before emitting initializer code, rejects partial
+selection of destructuring declarations, and emits exactly one namespace.
+Contributing templates never become runtime objects; all surviving closures
+bind to the single completed `this` cell. `types` contributions are merged as
+the explicitly documented metadata exception.
+
+Namespaces cache whether their validated type set includes `:error`.
+Language equality checks this marker before identity or structural comparison,
+making every error object unequal even to itself. Because list equality recurs
+through the same operation, lists containing errors are unequal at those
+positions without requiring special collection logic.
+
 Annotated block requirements are checked when the block is instantiated.
 Missing bindings execute a typed-error instruction and therefore remain
 catchable by `attempt` as `(:error :name_error :missing_context)` rather than
@@ -64,6 +77,13 @@ location, so every alias observes its replacement with
 and source-span provenance. Shared handles remain usable because
 related worker interpreters use the same concurrency hub while keeping
 separate VM heaps.
+Transport deliberately has no local heap-graph serializer. `TransportValue`
+recurses only through persistent lists of transportable data and rejects local
+namespaces, closures, blocks, cells, and connections. Remote/future handles
+have explicit transport representations, while shared TCP listeners are
+admitted only by the `&` path. Conversion completes before source invalidation,
+so discovering an unsendable value at any depth leaves all caller locations
+unchanged.
 Unsupported AST constructs produce compiler diagnostics rather than executing
 through an alternate runtime.
 
@@ -383,7 +403,7 @@ system calls only. Framing and application protocols, including the example
 HTTP server, remain Pima code.
 
 The evaluator keeps host natives in a private implementation environment used
-to construct the standard library. User modules inherit only arithmetic and
+to construct the standard library. User modules receive only arithmetic and
 comparison operators. String, list, type, logic, numeric utility, and console
 operations require an explicit standard-library import and qualified access
 (or a static object import).

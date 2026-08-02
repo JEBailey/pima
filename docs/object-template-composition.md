@@ -1,4 +1,4 @@
-# Object Template Composition
+# Ordered Namespace Composition
 
 Status: implemented language contract for local and remote object
 construction.
@@ -10,9 +10,9 @@ template that declares a member supplies that member; a separate `require`
 declaration or contract schema would duplicate the structure already expressed
 by the template.
 
-Template composition builds an object from multiple templates. A general
-template supplies a complete baseline, while more-specific templates add or
-override behavior and state.
+Ordered namespace composition builds one fresh object namespace from multiple
+code-block templates. Templates contribute definitions; they are not objects
+being linked together and do not remain as hidden runtime instances.
 
 ```pima
 val Counter {
@@ -45,9 +45,9 @@ val counter [new MyCounter Counter]
 The resulting object contains `count` and `increment` from `MyCounter` and
 `get` from `Counter`.
 
-This is template composition rather than a separate nominal or structural type
-system. Composition guarantees the resulting structure by constructing it from
-the declared members of every participating template.
+This is definition selection followed by namespace construction, rather than a
+nominal or structural type system. Pima determines the surviving definitions
+first and then executes only those definitions to create one namespace.
 
 ## Syntax
 
@@ -78,23 +78,20 @@ restriction on `new`.
 
 ## Precedence
 
-Templates are applied from right to left. Entries nearer the beginning of the
-list are more specific and take precedence over entries to their right.
+Definitions are selected with leftmost precedence. Entries nearer the beginning
+of the list take precedence over entries to their right.
 
 ```pima
 new DebugCounter PersistentCounter Counter
 ```
 
-Conceptually, this means:
-
-1. Start with `Counter`.
-2. Overlay `PersistentCounter`.
-3. Overlay `DebugCounter`.
+Conceptually, Pima scans the templates from left to right and retains the first
+complete definition of each member name.
 
 When multiple templates declare the same name, the leftmost declaration wins.
-The winning declaration supplies the member's value, mutability, and
-visibility. No conformance error is needed: an overridden declaration remains
-present through its replacement.
+The winning declaration supplies the member's value, mutability, visibility,
+and declaration kind. No runtime override chain remains: a losing definition
+is absent from the new namespace and is never executed.
 
 This precedence rule intentionally places the most specific template first. It
 must be documented because many general-purpose merge functions instead give
@@ -102,14 +99,14 @@ the last entry precedence.
 
 ## Construction Semantics
 
-Composition creates one object, not a chain of objects.
+Composition creates one object, not a chain, hierarchy, or collection of
+partially hidden objects.
 Conceptually, `new (A B C)` performs the following steps:
 
-1. Create a fresh object environment linked to the surrounding scope.
-2. Combine declarations from `C`, `B`, and `A`, with later overlays replacing
-   earlier declarations of the same name.
-3. Discard overridden declarations without evaluating their initializers.
-4. Evaluate surviving initializers in composition order, from the rightmost
+1. Read the definitions contributed by `A`, `B`, and `C`.
+2. Select complete surviving definitions with leftmost precedence.
+3. Create one fresh object environment linked to the surrounding scope.
+4. Evaluate surviving definitions in execution order, from the rightmost
    template to the leftmost template.
 5. Permit a template being evaluated to read members supplied by templates to
    its right.
@@ -120,10 +117,11 @@ Conceptually, `new (A B C)` performs the following steps:
 If construction throws, the incomplete composed object is discarded under
 the same rules as existing single-template construction.
 
-Because all functions belong to the completed object, a function inherited
-from a general template observes the final bindings, including bindings
-overridden by a more-specific template. This provides natural behavioral
-specialization without creating an inheritance hierarchy.
+Because all functions belong to the one completed object, a function supplied
+by any template observes the final namespace, including definitions supplied
+by other templates. Every method's `this` is the same completed object. There
+are no contributing template instances, parent lookup, runtime override chain,
+or `super` object.
 
 ## Declarations and Assignment
 
@@ -138,7 +136,8 @@ val StartAtTen {
 val counter [new (StartAtTen Counter)]
 ```
 
-Ordinary assignment may also update an inherited mutable binding during
+Ordinary assignment may also update a mutable binding selected from another
+template during
 construction:
 
 ```pima
@@ -149,13 +148,18 @@ val StartAtTen {
 val counter [new (StartAtTen Counter)]
 ```
 
-The second form preserves the inherited binding's visibility and mutability.
-It fails under the ordinary language rules if the inherited name is missing or
+The second form preserves the selected binding's visibility and mutability.
+It fails under the ordinary language rules if the selected name is missing or
 immutable. Redeclaration, in contrast, replaces all binding metadata.
 
 Private members participate in composition even though they remain inaccessible
 through external member access. A more-specific declaration may replace a
 private member because composition occurs before the object is published.
+
+A destructuring binding is one definition operation even though it introduces
+several names. Composition cannot select only some of its captures. If member
+precedence would split a destructuring declaration, compilation fails instead
+of synthesizing a declaration the programmer did not write.
 
 ## Type Lists
 
@@ -191,18 +195,18 @@ existing language errors:
 
 - an unknown or dynamic template is a compiler diagnostic while composition is
   restricted to statically known templates;
-- assignment to an absent or immutable inherited binding uses the existing name
+- assignment to an absent or immutable selected binding uses the existing name
   or mutability error;
 - an invalid `types` declaration uses the existing type error;
 - any initializer or statement that throws aborts construction normally.
 
 ## Compiler Direction
 
-The compiler implements composition by extending `new` lowering to recognize a
+The compiler implements ordered namespace composition in `new` lowering for a
 list of statically known blocks. It analyzes all participating declarations,
-resolves precedence, and emits one internal `MakeNamespace` instruction for the final set of
-bindings. `remote` packages those same blocks as a worker blueprint, where the
-ordinary `new` lowering applies the identical rules.
+selects complete definitions, and emits one internal `MakeNamespace`
+instruction for the final bindings. `remote` packages those same blocks as a
+worker blueprint, where ordinary `new` lowering applies identical rules.
 No contract table, `CheckContract` instruction, runtime reflection API, or new
 runtime value category is required.
 
@@ -217,9 +221,9 @@ This proposal does not introduce:
 - abstract members or `require` declarations;
 - an `as` conformance operator;
 - static type inference or typed bindings;
-- nominal subtyping or an inheritance hierarchy;
+- nominal subtyping, inheritance, parent objects, or `super`;
 - runtime merging of already-instantiated objects;
 - dynamically selected templates in the initial implementation.
 
 Those features can be considered separately if concrete use cases remain after
-template composition is available.
+ordered namespace composition is available.

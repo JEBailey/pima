@@ -8,6 +8,7 @@ pub type NamespaceRef = Gc<Namespace>;
 pub struct Namespace {
     pub environment: EnvironmentRef,
     pub types: Vec<SymbolId>,
+    pub is_error: bool,
     pub error_metadata: std::cell::RefCell<Option<super::ErrorMetadata>>,
 }
 

@@ -112,6 +112,9 @@ impl Value {
 }
 
 pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
+    if is_error_value(left) || is_error_value(right) {
+        return false;
+    }
     match (left, right) {
         (Value::Unit, Value::Unit) => true,
         (Value::Boolean(a), Value::Boolean(b)) => a == b,
@@ -146,6 +149,16 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
         (Value::TaskFunction(a_handle, a_name), Value::TaskFunction(b_handle, b_name)) => {
             a_handle == b_handle && a_name == b_name
         }
+        _ => false,
+    }
+}
+
+fn is_error_value(value: &Value) -> bool {
+    match value {
+        Value::Namespace(namespace) => namespace.is_error,
+        Value::VmBinding(cell) => cell
+            .current_value()
+            .is_some_and(|value| is_error_value(&value)),
         _ => false,
     }
 }

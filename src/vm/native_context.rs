@@ -188,10 +188,12 @@ impl VmNativeContext {
         let environment = dumpster::unsync::Gc::new(std::cell::RefCell::new(environment));
         let types = crate::runtime::namespace_types(&mut self.symbols, &environment)
             .map_err(|message| self.typed_error(&["error", "type_error"], message))?;
+        let is_error = types.contains(&self.symbols.intern("error"));
         Ok(Value::Namespace(dumpster::unsync::Gc::new(
             crate::runtime::Namespace {
                 environment,
                 types,
+                is_error,
                 error_metadata: std::cell::RefCell::new(None),
             },
         )))
@@ -223,6 +225,7 @@ impl VmNativeContext {
         Value::Namespace(dumpster::unsync::Gc::new(crate::runtime::Namespace {
             environment: dumpster::unsync::Gc::new(std::cell::RefCell::new(environment)),
             types: Vec::new(),
+            is_error: false,
             error_metadata: std::cell::RefCell::new(None),
         }))
     }
