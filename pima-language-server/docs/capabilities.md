@@ -38,7 +38,7 @@ their disk snapshots until closed.
 
 ## Dynamic limits
 
-Pima deliberately supports behavior that cannot always be established
+Some Pima behavior cannot always be established
 statically:
 
 - `do` may add bindings to its caller's environment;

@@ -77,7 +77,7 @@ location, so every alias observes its replacement with
 and source-span provenance. Shared handles remain usable because
 related worker interpreters use the same concurrency hub while keeping
 separate VM heaps.
-Transport deliberately has no local heap-graph serializer. `TransportValue`
+Transport has no local heap-graph serializer. `TransportValue`
 recurses only through persistent lists of transportable data and rejects local
 namespaces, closures, blocks, cells, and connections. Remote/future handles
 have explicit transport representations, while shared TCP listeners are
@@ -161,24 +161,6 @@ before they are caught or returned as host diagnostics.
 Registers are numbered function-local value slots. The initial IR is kept
 readable and structurally explicit; compact byte encoding is deferred until the
 instruction set and semantics stabilize.
-
-The migration sequence is:
-
-1. literals, lists, primitive calls, immutable locals (implemented);
-2. branches, mutation, loops, `break`, and `continue` (implemented);
-3. direct user functions and compiled parameter patterns (implemented);
-4. immutable closures and mutable captured cells (implemented);
-5. shared numeric native dispatch and typed native errors (implemented);
-6. `throw`, `attempt`, and frame-aware typed-error unwinding (implemented);
-7. direct object construction, custom types, and member reads (implemented);
-8. inert blocks, statically known named templates, and `do` (implemented);
-9. recursive declaration and assignment destructuring (implemented);
-10. `match` expressions, scoped captures, literals, and fallthrough (implemented);
-11. indirect cross-module block dispatch and mutable object bindings (implemented);
-12. modules and remaining native integration (implemented for file modules,
-    standard/native virtual modules, aliases, and selected imports);
-13. source-aware bytecode diagnostics and VM call stacks (implemented);
-14. optimized call conventions and compact bytecode.
 
 Conformance tests and every shipped example exercise the VM through the public
 `Interpreter` API. Lower-level VM tests cover instruction behavior and direct

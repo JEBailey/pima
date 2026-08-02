@@ -434,7 +434,7 @@ list.
 At statement level, the physical line is a command. After resolving its first
 expression, Pima invokes callable values and returns non-callable values. Thus
 `serve` on its own line calls a zero-parameter function, while `42`, `"text"`,
-or a name bound to either value simply returns that value.
+or a name bound to either value returns that value.
 
 A bracket expression evaluates its callee and implicitly packed argument from
 left to right, immediately invokes the callee, and yields the result:
@@ -712,7 +712,7 @@ Privacy is enforced at an environment boundary:
 `pub` modifies declarations only. It cannot prefix `let`, an expression, or a
 function parameter. Public mutable state is permitted with `pub var`, though
 APIs should generally prefer private state exposed through public functions.
-Deliberately public mutable members are writable through member assignment:
+Public mutable members are writable through member assignment:
 
 ```pima
 let counter.count 10
@@ -784,7 +784,7 @@ val area_function square.area
 
 ## 8. Control flow
 
-Pima has three selection forms with deliberately separate roles:
+Pima has three selection forms with separate roles:
 
 | Form | Selects using | Intended shape | No selection |
 | --- | --- | --- | --- |
@@ -1500,12 +1500,6 @@ location under the ordinary move rules, so every other reference observes the
 same moved error. Unaliased module and object imports introduce these references
 directly into the importing module.
 
-A reference to an object member retains the complete object that owns that
-storage, including its private state and other members. Rebinding the name that
-previously held the object does not destroy it while such a reference remains.
-The object and its member storage become collectible together after the final
-external reference disappears.
-
 ### 12.2 Standard I/O module
 
 Filesystem I/O is provided by the bundled `/pima/io` module rather than by core
@@ -1572,7 +1566,7 @@ throws `:invalid_encoding`. The existence predicates return `false` for a
 missing path but propagate other inspection failures. `write_text` and
 `write_bytes` replace an existing regular file; failure during writing is not
 specified to be atomic in this language version. `remove_directory` is
-deliberately non-recursive.
+non-recursive.
 
 The virtual path `/pima/library/standard` names the implementation's standard
 library. Resolution of other relative paths is based on the importing file's
@@ -1609,7 +1603,7 @@ orderly peer shutdown. Its maximum must be between 1 and 1,048,576 bytes.
 Reads that are not valid UTF-8 and operating-system socket failures throw
 `:tcp_error`. Closed resources cannot be reused.
 
-TCP deliberately does not parse or generate application protocols. The
+TCP does not parse or generate application protocols. The
 repository's `examples/http_server_lib.pima` implements request framing,
 HTTP/1.x parsing, handler dispatch, response validation, and serialization in
 Pima. `demos/http_file_server.pima` combines it with the static file-serving

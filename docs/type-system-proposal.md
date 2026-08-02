@@ -1,456 +1,92 @@
-# Type System Proposal for Pima
+# Type-System Options
 
-Required future typed-pattern constraints are specified separately in
-[`typed-pattern-constraints.md`](typed-pattern-constraints.md). That feature is
-not optional and should precede broader contract or algebraic-type proposals in
-this document.
+Status: exploratory. Typed pattern constraints are the only committed feature
+in this document's subject area; their design is specified in
+[`typed-pattern-constraints.md`](typed-pattern-constraints.md).
 
-Generated as a design review after evaluating the current Pima runtime, compiler, VM IR, and object model.
+## Current model
 
----
+Pima is dynamically typed. Every value exposes runtime type symbols through
+`Types.of`, and `[Types.is? value :type]` tests membership in that list.
 
-## Pima — Current Type Model
-
-### What Exists Today
-
-Pima has a **structural type tag system**, not a type system in the traditional sense. The key facts:
-
-1. **Every value has a type list** — a non-empty list of symbols. The first symbol is the fundamental runtime type (`:integer`, `:string`, `:object`, etc.).
-2. **Type tags are declared by objects** via a `pub val types` member:
-   ```pima
-   val Square {
-       pub val types (:square :shape)
-   }
-   ```
-   The runtime prepends `:object` automatically, so `Square` instances have type list `(:object :square :shape)`.
-3. **Type testing is runtime-only** — `[Types.is? value :symbol]` checks if a symbol appears in a value's type list. No compile-time enforcement exists.
-4. **Objects are bags of bindings** — `new Template` executes a block in a fresh object environment. The resulting object has whatever bindings the block created. There is no schema, no required-field checking, and no invariant enforcement beyond the `types` member validation.
-5. **`new` validates minimally** — it checks that `types` is `pub val`, contains only unique symbols, and contains no fundamental type symbols. That's it.
-
-### Runtime Data Structures
-
-| Component | Role | Key Constraint |
-|---|---|---|
-| `Value::Namespace(NamespaceRef)` | Internal runtime representation of Pima objects | `NamespaceRef = Gc<Namespace>` |
-| `Namespace` | Holds environment + type list + error metadata | `environment: EnvironmentRef`, `types: Vec<SymbolId>` |
-| `Environment` | Map of `SymbolId → Binding` | `IndexMap<SymbolId, Binding>` in `RefCell<Gc>` |
-| `Binding` | Value + mutability + visibility | `value: Value`, `mutability: Immutable\|Mutable`, `visibility: Private\|Public` |
-| `SymbolInterner` | String → `SymbolId` dedup | Per-VM-instance (not global) |
-
-### VM IR for Objects
-
-- `MakeNamespace { destination, bindings, self_binding }` — Creates an object from bindings that retain name, source register, visibility, and mutability. Each source register is linked into the object, and `self_binding` completes `this` after successful construction.
-- `LoadMember { destination, object, name }` — Loads a public member by name. Enforces visibility at runtime.
-- No IR instruction exists for type checking, field validation, or invariant enforcement beyond what `MakeNamespace` does via `context.make_namespace()`.
-
-### Compiler for `new`
-
-The compiler (`vm/compiler/blocks.rs::compile_new`) selects complete surviving definitions using ordered namespace composition, emits their initialization code, merges valid `types` contributions, and finally emits `MakeNamespace`. It does not validate that the resulting object satisfies a declared schema because Pima has no schema declarations yet.
-
-### What the Spec Says
-
-The language reference section 13 explicitly excludes:
-- Static typing
-- Classes or inheritance beyond object templates
-
-The spec's type model is deliberately dynamic: "Pima is dynamically and strongly typed: native operations validate their operands and do not implicitly coerce values."
-
----
-
-## Current Limitations
-
-1. **No field contracts** — An object template may declare `val width 80`, but nothing enforces that all instances have `width`. If the template block has a bug and skips a binding, the instance silently lacks that field.
-
-2. **No type-level relationships** — There's no way to express that `:square` is a subtype of `:shape` beyond the type list convention. `[Types.is? value :shape]` works, but there's no compile-time or structural enforcement.
-
-3. **No constructor validation** — `new Template` runs the block and hopes for the best. If a binding fails or produces the wrong type, you only discover it at the point of use (or not at all).
-
-4. **No function signature enforcement** — Functions accept one list argument and pattern-match it. Wrong shapes produce `:match_error` at runtime with no提前 warning.
-
-5. **No way to declare "this object must have these members"** — The annotated block `@(name score)` checks context bindings for `do`, but there's no equivalent for object membership contracts.
-
----
-
-## Suggestion 1: Structural Type Declarations with `type` Keyword
-
-**The idea:** A compile-time `type` declaration that defines a named shape — a required set of fields with optional type tags — enforced at `new` time.
-
-**Why it fits Pima:** Pima already has object templates as blocks. A `type` declaration annotates a template with its contract. The compiler validates `MakeNamespace` against the contract, emitting compile-time diagnostics for missing required fields.
+Objects may declare additional tags with an immutable public `types` member:
 
 ```pima
-// Declare a type contract
-type Counter {
-    require val count :integer
-    pub require function increment ()
-    pub require function get ()
-}
-
-// Define an implementation
-val MyCounter {
-    pub val types (:counter)
-
-    var count 0
-
-    pub function increment () {
-        let count [+ count 1]
-    }
-
-    pub function get () {
-        count
-    }
-}
-
-// This succeeds — MyCounter satisfies Counter
-val c [new MyCounter as Counter]
-```
-
-### Implementation Shape
-
-**New AST node:**
-```rust
-pub enum NodeKind {
-    // ... existing ...
-    TypeDeclaration {
-        name: Name,
-        body: BlockId,       // contains `require` statements
-    },
-}
-
-pub enum NodeKind {
-    // inside type body:
-    TypeRequirement {
-        visibility: Visibility,
-        mutability: BindingKind,
-        name: Name,
-        type_tag: Option<NodeId>,  // optional :symbol constraint
-    },
+val Square {
+    pub val types (:square :shape)
 }
 ```
 
-**New IR instruction:**
-```rust
-/// Validate that an object register satisfies a type contract.
-/// Fails with (:error :type_error :contract_violation) if any required
-/// member is missing or has wrong visibility/mutability.
-CheckContract {
-    destination: Register,    // output object (same as source if valid)
-    source: Register,         // object to check
-    contract: u16,            // index into program's contract table
-}
+Object construction validates the `types` member, but Pima has no schemas,
+subtype relationships, inferred types, casts, or compile-time field contracts.
+Functions validate argument shapes through runtime patterns.
 
-/// A named contract: list of required members with metadata.
-pub struct TypeContract {
-    pub name: Arc<str>,
-    pub requirements: Vec<ContractMember>,
-}
+Relevant runtime structures are `Value::Namespace`, `Namespace`, `Environment`,
+and `Binding`. `MakeNamespace` retains each member's source location,
+visibility, and mutability, and completes the object's `this` binding after
+successful construction. Ordered namespace composition selects complete
+definitions before that instruction is emitted.
 
-pub struct ContractMember {
-    pub name: Arc<str>,
-    pub public: bool,
-    pub mutability: BindingMutability,
-    pub type_tag: Option<Arc<str>>,  // e.g. "integer" for :integer check
-}
-```
+## Committed next step: typed patterns
 
-**Compiler changes:**
-- `Program` gains `contracts: Vec<TypeContract>`
-- `new Template as Contract` compiles to: compile `new Template` → emit `CheckContract`
-- The compiler statically checks that the template block satisfies the contract (missing fields = compile-time diagnostic). Runtime check remains for dynamic `new` (where the template isn't statically known).
-- `CheckContract` at runtime iterates the object's environment bindings and verifies each requirement exists with correct visibility/mutability.
-
-**Error classification:**
-```
-(:error :type_error :contract_violation)
-  — member `count` required but missing
-  — member `increment` required as public function but is private
-  — member `count` required as integer but is :string
-```
-
-### Why This Is the Right First Step
-
-It adds enforceable structure to objects without changing Pima's dynamic nature. The type checking happens at `new` time (runtime) but gets compile-time optimization when the template is statically known. It's the minimum viable type system that solves the "bag of bindings" problem.
-
----
-
-## Suggestion 2: Runtime Type Checker with Structural Subtyping
-
-**The idea:** A native `/pima/typecheck` module that validates values against type descriptors at runtime, enabling pattern-based type assertions and guard functions.
-
-**Why it fits Pima:** Pima already has `Types.is?` for single-symbol tests and `Types.of` for full type lists. A structural checker goes further: it can validate that a value has specific members with specific types, without requiring a compile-time `type` declaration.
+A capture suffix will require a runtime type symbol:
 
 ```pima
-import "/pima/typecheck" as typecheck
-
-// Define a type descriptor (a list of requirements)
-val counter_schema (
-    (:field "count" :integer :immutable :private)
-    (:method "increment" :function public)
-    (:method "get" :function public)
-)
-
-// Validate at runtime
-val c [new MyCounter]
-val valid [typecheck.matches? c counter_schema]
-
-// Or throw on mismatch
-typecheck.assert (c counter_schema)
-```
-
-### Implementation Shape
-
-**Native functions in `/pima/typecheck`:**
-
-| Function | Signature | Description |
-|---|---|---|
-| `matches?` | `(value descriptor)` → boolean | Check if value matches descriptor |
-| `assert` | `(value descriptor)` → value | Return value or throw `:type_error` |
-| `violation` | `(value descriptor)` → error\|unit | Return specific violation or unit |
-
-**Descriptor format** — A list of requirement specs, each a list:
-```pima
-(:field "name" :expected-type :mutability :visibility)
-(:method "name" :function public)
-(:has "name")  // just existence check
-```
-
-**Runtime validation algorithm:**
-1. If value is not an object, fail immediately unless descriptor is empty.
-2. For each `:field` requirement: check the object environment for a binding with matching name, mutability, and visibility. Optionally check the value's fundamental type.
-3. For each `:method` requirement: check for a public binding whose value is a function.
-4. For type symbol requirements: check the object's type list contains the expected symbol.
-
-**Key insight:** This works with ANY object — not just ones created from typed templates. It's duck-typing made explicit. An object satisfies a descriptor if it has the right shape, regardless of how it was constructed.
-
-### Relationship to Suggestion 1
-
-Suggestion 1 (`type` declarations) produces compile-time guarantees. Suggestion 2 (runtime checker) works without compile-time info. They complement each other:
-- `type` declarations for your own code (compile-time safety)
-- `typecheck.matches?` for validating external/dynamic values (runtime flexibility)
-
-A `type` declaration could internally compile to a descriptor that `typecheck` uses, sharing the validation logic.
-
----
-
-## Suggestion 3: Algebraic Data Types via Tagged Unions
-
-**The idea:** A `union` construct that creates values with a discriminant tag and a shaped payload, validated at construction time. Pattern-matched via `match` with compile-time exhaustiveness checking.
-
-**Why it fits Pima:** Pima already has `match` with pattern matching on lists and literals. The conventional result pattern `(:ok value)` / (:error message)` is already used informally via lists with a symbol tag. A proper union type makes this explicit, validated, and exhaustive.
-
-```pima
-// Define a union type
-type Result {
-    ok :value
-    error :message
-}
-
-// Construct variants
-val success [Result.ok 42]
-val failure [Result.error "something went wrong"]
-
-// Match with exhaustiveness checking
-match success (
-    (:ok value) {
-        Console.println ("got:" value)
-    }
-    (:error message) {
-        Console.println ("err:" message)
-    }
-)
-```
-
-### Implementation Shape
-
-**New Value variant:**
-```rust
-#[derive(Clone, Debug)]
-pub enum Value {
-    // ... existing ...
-    Union {
-        tag: SymbolId,        // variant discriminant
-        payload: Value,       // single payload value (could be a list of fields)
-        union_id: UnionTypeId, // which union type this belongs to
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct UnionTypeId(pub u16);
-```
-
-**New AST nodes:**
-```rust
-NodeKind::UnionDeclaration {
-    name: Name,
-    variants: Vec<UnionVariant>,
-}
-
-pub struct UnionVariant {
-    pub name: Name,
-    pub payload_pattern: Pattern,  // e.g. :value or (:a :b :c)
+function length (values:list) {
+    List.length values
 }
 ```
 
-**New IR instructions:**
-```rust
-/// Construct a union variant. Validates payload against the variant's pattern.
-MakeUnion {
-    destination: Register,
-    union_type: u16,      // index into program's union table
-    variant: u16,         // variant index
-    payload: Register,    // payload value (list if multi-field)
-}
+This extends existing pattern matching rather than adding static typing. See
+the typed-pattern document for supported positions, error behavior, and parser
+rules.
 
-/// Extract union tag for branching (optimized match compilation).
-UnionTag {
-    destination: Register,
-    source: Register,
-}
-```
+## Optional future features
 
-**Program-level storage:**
-```rust
-pub struct Program {
-    // ... existing ...
-    pub unions: Vec<UnionDefinition>,
-}
+These ideas are independent and have not been accepted.
 
-pub struct UnionDefinition {
-    pub name: Arc<str>,
-    pub variants: Vec<UnionVariantDef>,
-}
+### Object contracts
 
-pub struct UnionVariantDef {
-    pub name: Arc<str>,
-    pub payload_pattern: Vec<Arc<str>>,  // field names for multi-field payloads
-}
-```
+A named contract could describe required members, visibility, mutability, and
+optional runtime type tags. Construction or an explicit check would validate an
+object against that shape.
 
-**Match compilation:** When the compiler sees `match` over a binding known to be a union type, it compiles to a `UnionTag` instruction + jump table instead of sequential list-length/equality checks. The compiler can also verify exhaustiveness: if variants are missing, emit a warning diagnostic.
+Questions that must be settled first:
 
-**Type system integration:** A union value has type list `(:union :Result)` where `:Result` is the union's declared name. `[Types.is? value :Result]` works naturally.
+- whether contracts are declarations or ordinary object values;
+- whether known violations are warnings or errors;
+- whether validation occurs only at construction or can be requested later;
+- how ordered namespace composition exposes the final selected shape; and
+- whether a contract name belongs in an object's runtime type list.
 
-### Why This Is Powerful
+### Structural checking
 
-This solves Pima's most common ad-hoc pattern: the tagged result tuple. Today, `(:ok value)` is just a list — nothing enforces that it has two elements or that the first is `:ok`. With unions:
-- Construction validates the payload shape
-- Match can be exhaustive (compile-time warning on missing variants)
-- The runtime representation is compact (tag + single payload, not a full list)
-- It integrates with `type` contracts (Suggestion 1) — a function can declare its return type as a union
+A library operation could validate an arbitrary object against a descriptor at
+runtime. This would support data received through imports or I/O without
+requiring construction through a particular template. It should reuse the same
+descriptor and error model as object contracts if both features are adopted.
 
-### Example: HTTP Response Type
+### Tagged unions
 
-```pima
-type HttpMethod (:method)
-type Headers ((:list (:pair :string :string)))
-type Body (:body)
+A union facility could validate a tag and payload shape, then allow `match` to
+check exhaustiveness when the union definition is statically known. This is a
+larger change: it requires a declared variant model, construction rules,
+transport support, formatter and language-server support, and a decision about
+whether exhaustiveness failures are warnings or errors.
 
-type HttpRequest {
-    request (:method :path :headers :body)
-}
+Ordinary tagged lists such as `(:ok value)` remain valid regardless of whether
+unions are added.
 
-type HttpResponse {
-    ok (:status :reason :headers :body)
-    client_error (:status :reason)
-    server_error (:status :message)
-}
+## Constraints
 
-function handle_request (req) -> HttpResponse {
-    match req (
-        (:request method path headers body) {
-            if [= method "GET"] {
-                HttpResponse.ok (200 "OK" () "content")
-            } {
-                HttpResponse.client_error (405 "Method Not Allowed")
-            }
-        }
-    )
-}
-```
+Any future design must preserve these properties:
 
----
+- untyped objects and existing runtime type tags continue to work;
+- types describe values rather than imposing inferred binding types;
+- remote transport uses explicit portable representations;
+- contracts cannot introduce inheritance, implicit coercion, or hidden parent
+  objects; and
+- errors remain ordinary typed object values.
 
-## Recommended Implementation Order
-
-### Phase 1: Structural Type Declarations (Suggestion 1)
-
-**Effort:** Medium. Adds one new AST node type, one IR instruction, and a contract table to `Program`.
-
-**Risk:** Low. Stays within the existing object model. Compile-time checks are optimistic (warn on known violations), runtime checks are the source of truth.
-
-**Dependency:** None. Builds on existing `MakeNamespace` and `new` compilation.
-
-**Impact:** Immediately useful. Every object in Pima code can be typed. Catches bugs at `new` time instead of at field access time.
-
-### Phase 2: Runtime Type Checker (Suggestion 2)
-
-**Effort:** Low-Medium. Pure native functions, no AST or IR changes.
-
-**Risk:** Very low. Opt-in runtime validation. No compile-time behavior affected.
-
-**Dependency:** Can share validation logic with Phase 1's `CheckContract`.
-
-**Impact:** Enables validation of values from external sources (imports, I/O, user input). Complements compile-time contracts.
-
-### Phase 3: Algebraic Data Types (Suggestion 3)
-
-**Effort:** High. New `Value` variant, new AST nodes, new IR instructions, match compilation changes, exhaustiveness analysis.
-
-**Risk:** Medium. Changes the value model and match semantics. Must coexist with existing list-based tagged unions.
-
-**Dependency:** Phase 1 (type declaration infrastructure) and the match compiler.
-
-**Impact:** Transforms how Pima programs represent sum types. Makes the conventional `(:ok value)` pattern explicit, validated, and optimizable.
-
----
-
-## Design Constraints & Trade-offs
-
-### What Pima Is NOT Becoming
-
-This proposal does **not** add:
-- **Static type inference** — Pima remains dynamically typed. Type declarations are contracts checked at construction, not annotations inferred across the program.
-- **Gradual typing** — There's no "checked" vs "unchecked" mode. Either you validate or you don't.
-- **Generics** — Type parameters would require significant compiler changes. Out of scope.
-- **Subtype lattices** — Type relationships are flat: a value either satisfies a contract or it doesn't. No inheritance hierarchy.
-
-### The GC Constraint
-
-`dumpster::unsync::Gc` means all runtime type metadata must be either:
-- Stored in `Program` (compile-time, not GC-traced)
-- Stored as `Arc<str>` or `SymbolId` inside `Value` (both `'static` or GC-safe)
-
-Union definitions and type contracts belong in `Program` — they're compile-time artifacts. Runtime type tags on values are just `SymbolId`s (already used by the type list system).
-
-### Backward Compatibility
-
-All three suggestions are additive:
-- Existing untyped objects work exactly as before
-- `type` declarations are optional — templates without contracts bypass validation
-- `typecheck.matches?` is opt-in
-- Union values are a new `Value` variant — existing code never sees them unless it uses the `type` keyword
-
-### The Spec Question
-
-The language reference section 14 currently excludes "static typing." These suggestions stay within bounds because:
-- Validation happens at runtime (`new` time), not at compile time as a hard gate
-- The compiler emits warnings, not errors, for contract violations on known templates
-- The language remains dynamically typed — types belong to values, not bindings
-- No type inference or type variables are introduced
-
-The spec would need a new section: **"Type Contracts"** — describing `type` declarations as runtime-enforced object schemas, not static types.
-
----
-
-## Open Questions
-
-1. **Should `type` declarations be module-scoped or object-members?** Module-scoped keeps them simple. Object-members would allow `import MyModule.Counter` to bring in the type contract.
-
-2. **How strict should compile-time checking be?** Option A: warnings only (current Pima philosophy). Option B: errors for known violations (safer but stricter).
-
-3. **Should unions replace the list-based `(:tag payload)` convention?** Soft deprecation with a lint warning seems right. The convention works and is widespread in existing code.
-
-4. **Can `match` exhaustiveness be enforced?** The compiler can warn when a union is matched without covering all variants. But should missing variants be errors? Pima's philosophy suggests warnings.
-
-5. **Type aliases?** `type Alias = OtherType` — useful for renaming, but adds complexity. Defer until Phase 2+.
-
-6. **Nested contracts?** Can a field require its value to satisfy another contract? `require val inner :InnerContract` — possible but adds recursive validation. Phase 2+ territory.
+The language reference's excluded-functionality section remains authoritative
+until a proposal is accepted and implemented.

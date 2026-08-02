@@ -172,7 +172,7 @@ handles are opaque synchronized identities and may themselves cross the
 boundary.
 
 Bare and `*` requirements use this representation as copy and move policies,
-respectively. `&` is deliberately narrower: it rejects everything except the
+respectively. `&` accepts only the
 opaque synchronized handle variants. Worker interpreters participating in a
 share use the same concurrency hub, allowing the shared handle to be used from
 either worker without sharing either VM heap.
@@ -186,8 +186,8 @@ The initial model rejects:
 - VM-local native resources; and
 - lists containing any rejected value.
 
-Remote mutable state is never copied to the caller. A caller deliberately
-requests a snapshot or invokes a remote function that mutates worker-owned
+Remote mutable state is never copied to the caller. A caller requests a
+snapshot or invokes a remote function that mutates worker-owned
 state.
 
 ## Executable Templates

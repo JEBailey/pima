@@ -17,7 +17,7 @@ boundaries and invariants are described in
 
 Each physical line begins with a command. If its first value is callable, Pima
 invokes it with the remaining values packed into one argument list. Otherwise,
-the line simply returns that value.
+the line returns that value.
 
 ```pima
 import "/pima/library/standard"
@@ -93,8 +93,8 @@ survivors to create one fresh namespace. Templates are not parent objects:
 there is no hidden object chain, inheritance lookup, or `super`, and every
 surviving method shares the one completed `this`.
 
-Members are private unless declared with `pub`. A `pub var` is deliberately
-readable and writable from outside the object. Inside a method, the reserved
+Members are private unless declared with `pub`. A `pub var` is readable and
+writable from outside the object. Inside a method, the reserved
 value `this` refers to the object that owns the bound method.
 
 Selected and wildcard imports are live references to those public bindings.
@@ -177,7 +177,7 @@ HTML is the default documentation format and produces an indexed static site.
 Markdown and JSON are available with `--format`. For compatibility,
 `pima file.pima` remains an alias for
 `pima run file.pima`. `check`, `fmt`, and `doc` accept files or directories and
-discover `.pima` files recursively. The formatter deliberately preserves
+discover `.pima` files recursively. The formatter preserves
 physical line boundaries because they are significant Pima syntax.
 
 The interpreter is also available as a Rust library:
