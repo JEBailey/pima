@@ -34,6 +34,9 @@ pub struct VmCell {
     pub(crate) mutable: std::cell::Cell<Option<bool>>,
     pub(crate) fallback: Option<VmValue>,
     pub(crate) construction_ready: std::cell::Cell<Option<bool>>,
+    /// Namespaces that expose this storage as a member. Holding a member
+    /// reference therefore retains the complete owning object.
+    pub(crate) owners: std::cell::RefCell<Vec<super::NamespaceRef>>,
 }
 
 impl VmCell {
@@ -44,6 +47,7 @@ impl VmCell {
             mutable: std::cell::Cell::new(None),
             fallback,
             construction_ready: std::cell::Cell::new(None),
+            owners: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -103,6 +107,7 @@ unsafe impl<V: Visitor> TraceWith<V> for VmCell {
             .borrow()
             .accept(visitor)
             .and_then(|_| self.fallback.accept(visitor))
+            .and_then(|_| self.owners.borrow().accept(visitor))
     }
 }
 

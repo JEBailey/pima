@@ -70,6 +70,11 @@ pub enum Instruction {
         mutable: bool,
         name: Arc<str>,
     },
+    BindImport {
+        binding: Register,
+        source: Register,
+        name: Arc<str>,
+    },
     LoadBinding {
         destination: Register,
         binding: Register,
@@ -85,6 +90,10 @@ pub enum Instruction {
         name: Arc<str>,
     },
     MakeList {
+        destination: Register,
+        elements: Vec<Register>,
+    },
+    MakeArguments {
         destination: Register,
         elements: Vec<Register>,
     },

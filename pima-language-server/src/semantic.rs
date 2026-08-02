@@ -417,7 +417,7 @@ impl<'module> Builder<'module> {
                         scope,
                         alias.as_ref().unwrap_or(member),
                         SymbolKind::Binding,
-                        false,
+                        true,
                     );
                 }
             }

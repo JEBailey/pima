@@ -328,8 +328,12 @@ mutable lexical captures share one representation and participate in garbage
 collection.
 
 Objects use runtime environments to retain visibility and mutability
-metadata. VM-linked binding values provide live read-only import views without
-duplicating mutable state. Symbols are interned by the VM's native context.
+metadata. VM-linked binding values make imports aliases of exported storage,
+preserving `pub var` writability and `pub val` immutability without duplicating
+state. Member cells retain their owning namespaces, keeping the complete object
+alive while any extracted reference exists. These ownership cycles participate
+in traced garbage collection and are reclaimed when externally unreachable.
+Symbols are interned by the VM's native context.
 
 ## 7. Engine
 

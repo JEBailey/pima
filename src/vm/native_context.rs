@@ -3,6 +3,21 @@ use crate::{
     runtime::{SymbolId, SymbolInterner, Value},
 };
 
+fn retain_namespace_from_member_cells(namespace: &crate::runtime::NamespaceRef) {
+    for binding in namespace.environment.borrow().bindings.values() {
+        let Value::VmBinding(cell) = &binding.value else {
+            continue;
+        };
+        let mut owners = cell.owners.borrow_mut();
+        if !owners
+            .iter()
+            .any(|owner| dumpster::unsync::Gc::ptr_eq(owner, namespace))
+        {
+            owners.push(namespace.clone());
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct VmNativeContext {
     pub(crate) symbols: SymbolInterner,
@@ -189,14 +204,14 @@ impl VmNativeContext {
         let types = crate::runtime::namespace_types(&mut self.symbols, &environment)
             .map_err(|message| self.typed_error(&["error", "type_error"], message))?;
         let is_error = types.contains(&self.symbols.intern("error"));
-        Ok(Value::Namespace(dumpster::unsync::Gc::new(
-            crate::runtime::Namespace {
-                environment,
-                types,
-                is_error,
-                error_metadata: std::cell::RefCell::new(None),
-            },
-        )))
+        let namespace = dumpster::unsync::Gc::new(crate::runtime::Namespace {
+            environment,
+            types,
+            is_error,
+            error_metadata: std::cell::RefCell::new(None),
+        });
+        retain_namespace_from_member_cells(&namespace);
+        Ok(Value::Namespace(namespace))
     }
 
     pub(crate) fn make_native_namespace(
@@ -222,12 +237,14 @@ impl VmNativeContext {
                 },
             );
         }
-        Value::Namespace(dumpster::unsync::Gc::new(crate::runtime::Namespace {
+        let namespace = dumpster::unsync::Gc::new(crate::runtime::Namespace {
             environment: dumpster::unsync::Gc::new(std::cell::RefCell::new(environment)),
             types: Vec::new(),
             is_error: false,
             error_metadata: std::cell::RefCell::new(None),
-        }))
+        });
+        retain_namespace_from_member_cells(&namespace);
+        Value::Namespace(namespace)
     }
 
     pub(crate) fn load_member(
@@ -551,3 +568,32 @@ impl NativeContext for VmNativeContext {
 }
 
 impl VmNativeContext {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vm_member_cells_retain_their_complete_namespace() {
+        let cell = dumpster::unsync::Gc::new(crate::runtime::VmCell::binding(None));
+        *cell.value.borrow_mut() = crate::runtime::VmValue::Value(Value::Integer(1));
+        cell.mutable.set(Some(true));
+
+        let value = VmNativeContext::default().make_native_namespace(vec![(
+            "count".into(),
+            true,
+            true,
+            Value::VmBinding(cell.clone()),
+        )]);
+        let Value::Namespace(namespace) = value else {
+            panic!("expected namespace");
+        };
+
+        assert!(
+            cell.owners
+                .borrow()
+                .iter()
+                .any(|owner| dumpster::unsync::Gc::ptr_eq(owner, &namespace))
+        );
+    }
+}

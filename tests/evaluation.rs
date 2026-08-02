@@ -971,6 +971,54 @@ fn errors_are_never_equal_even_to_the_same_reference() {
 }
 
 #[test]
+fn reference_same_compares_storage_identity_instead_of_values() {
+    let value = run_ok(
+        "val Template { pub var count 1 }\n\
+         val first_object [new Template]\n\
+         val second_object [new Template]\n\
+         val first first_object.count\n\
+         val alias first_object.count\n\
+         val other second_object.count\n\
+         val same Reference.same?\n\
+         ([same first alias] [same first other] [Reference.same? 1 1] [= first other])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(false),
+                pima::Value::Boolean(false),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn reference_same_identifies_one_moved_location_without_equating_errors() {
+    let value = run_ok(
+        "val Service { pub val value 42 }\n\
+         val service [remote Service]\n\
+         val alias service\n\
+         val same Reference.same?\n\
+         val Worker @(*alias) { pub val received alias }\n\
+         val worker [remote Worker]\n\
+         ([same service alias] [= service alias])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Boolean(false)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
 fn user_defined_error_objects_are_never_equal() {
     let value = run_ok(
         "val Failure {\n\
@@ -1804,18 +1852,25 @@ fn selected_namespace_import_supports_existing_and_aliased_names() {
 }
 
 #[test]
-fn selected_namespace_imports_are_live_read_only_views() {
+fn selected_namespace_imports_preserve_exported_mutability() {
     let outcome = run(
         "val Template {\n    pub var count 0\n    pub function bump () { let count [+ count 1] }\n}\nval counter [new Template]\nimport counter.count\n[counter.bump ]\ncount\n",
     );
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
     assert_eq!(outcome.value, Some(pima::Value::Integer(1)));
 
+    assert_eq!(
+        run_ok(
+            "val Template { pub var count 0 }\nval counter [new Template]\nimport counter.count as current_count\nlet current_count 7\ncounter.count\n",
+        ),
+        pima::Value::Integer(7)
+    );
+
     let outcome = run(
-        "val Template { pub var count 0 }\nval counter [new Template]\nimport counter.count\nlet count 1\n",
+        "val Template { pub val count 0 }\nval counter [new Template]\nimport counter.count\nlet count 1\n",
     );
     assert!(!outcome.is_success());
-    assert!(outcome.diagnostics[0].message.contains("imported binding"));
+    assert!(outcome.diagnostics[0].message.contains("immutable binding"));
 }
 
 #[test]
@@ -2075,7 +2130,7 @@ fn module_aliases_share_the_cached_module() {
 }
 
 #[test]
-fn unaliased_imports_are_live_read_only_views() {
+fn unaliased_imports_preserve_exported_mutability() {
     let directory = module_test_directory("live-import");
     std::fs::write(
         directory.join("counter.pima"),
@@ -2086,9 +2141,28 @@ fn unaliased_imports_are_live_read_only_views() {
         working_directory: Some(directory),
     });
 
-    let outcome = interpreter.run_source("<test>", "import \"counter.pima\"\n[bump ]\ncount\n");
+    let outcome = interpreter.run_source(
+        "<test>",
+        "import \"counter.pima\"\n[bump ]\nlet count 5\ncount\n",
+    );
     assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
-    assert_eq!(outcome.value, Some(pima::Value::Integer(1)));
+    assert_eq!(outcome.value, Some(pima::Value::Integer(5)));
+}
+
+#[test]
+fn wildcard_module_imports_preserve_exported_mutability() {
+    let directory = module_test_directory("wildcard-live-import");
+    std::fs::write(directory.join("counter.pima"), "pub var count 0\n").unwrap();
+    let mut interpreter = Interpreter::new(Config {
+        working_directory: Some(directory),
+    });
+
+    let outcome = interpreter.run_source(
+        "<test>",
+        "import \"counter.pima\" as counter\nimport counter.*\nlet count 9\ncounter.count\n",
+    );
+    assert!(outcome.is_success(), "{:?}", outcome.diagnostics);
+    assert_eq!(outcome.value, Some(pima::Value::Integer(9)));
 }
 
 #[test]

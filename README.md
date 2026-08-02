@@ -97,6 +97,15 @@ Members are private unless declared with `pub`. A `pub var` is deliberately
 readable and writable from outside the object. Inside a method, the reserved
 value `this` refers to the object that owns the bound method.
 
+Selected and wildcard imports are live references to those public bindings.
+Importing a `pub var` preserves its writability, importing a `pub val` preserves
+its immutability, and qualified and imported access always observe the same
+storage location.
+
+An extracted member reference keeps its complete owning object alive. Rebinding
+the original object name does not retarget the reference or discard that object;
+the object becomes collectible only after its final external reference is gone.
+
 If construction fails, functions and blocks created inside it are invalidated,
 including references published through earlier side effects. Using one later
 produces `:invalid_object` and retains the original construction error for
@@ -117,6 +126,10 @@ value remains `counter`.
 Errors are typed object values. `throw` raises one and `attempt` returns a
 raised error as a value so it can be inspected. Like NaN, an error is never
 equal to anything, including itself; use `Types.is?` to identify its type.
+
+`Reference.same?` instead tests whether two references identify the same
+storage location. It can recognize aliases after that location is moved or
+invalidated without making their error values equal under `=`.
 
 Remote objects execute in isolated workers. An annotated block declares the
 context it needs and how each value crosses the worker boundary:

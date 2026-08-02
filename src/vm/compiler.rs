@@ -127,7 +127,6 @@ struct Compiler<'a> {
     diagnostics: Vec<Diagnostic>,
     binding_registers: Vec<Register>,
     initial_bindings: Vec<(Register, Value)>,
-    imported_bindings: std::collections::HashSet<Arc<str>>,
     module_index: usize,
     construction: Option<Register>,
 }
@@ -165,7 +164,6 @@ impl<'a> Compiler<'a> {
             diagnostics: Vec::new(),
             binding_registers: Vec::new(),
             initial_bindings: Vec::new(),
-            imported_bindings: std::collections::HashSet::new(),
             construction: None,
             module_index,
             source: None,
@@ -686,13 +684,11 @@ impl<'a> Compiler<'a> {
                 });
                 let local_name = alias.as_ref().unwrap_or(member).text.clone();
                 let binding = self.locals[&local_name].register;
-                self.instructions.push(Instruction::Bind {
+                self.instructions.push(Instruction::BindImport {
                     binding,
                     source: imported,
-                    mutable: false,
                     name: local_name.clone(),
                 });
-                self.imported_bindings.insert(local_name);
                 Some(self.load_constant(Value::Unit))
             }
             NodeKind::Import { .. } | NodeKind::NamespaceImport { .. }
@@ -986,13 +982,33 @@ impl<'a> Compiler<'a> {
             return self.compile_primitive_call(callee, argument, span);
         }
         let callee = self.compile_node(callee)?;
-        let argument = self.compile_node(argument)?;
+        let argument = self.compile_call_argument(argument)?;
         let destination = self.allocate_register();
         self.instructions.push(Instruction::CallDynamic {
             destination,
             callee,
             argument,
             command,
+        });
+        Some(destination)
+    }
+
+    fn compile_call_argument(&mut self, argument: NodeId) -> Option<Register> {
+        let NodeKind::List(arguments) = &self.module.node(argument).kind else {
+            return self.compile_node(argument);
+        };
+        let arguments = arguments.clone();
+        let elements = arguments
+            .into_iter()
+            .filter_map(|argument| match &self.module.node(argument).kind {
+                NodeKind::Identifier(name) => self.locals.get(name).map(|local| local.register),
+                _ => self.compile_node(argument),
+            })
+            .collect();
+        let destination = self.allocate_register();
+        self.instructions.push(Instruction::MakeArguments {
+            destination,
+            elements,
         });
         Some(destination)
     }

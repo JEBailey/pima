@@ -197,6 +197,10 @@ pub val Types [new {
     pub val is? Types.is?
 }]
 
+pub val Reference [new {
+    pub val same? Reference.same?
+}]
+
 pub val Console [new {
     pub val println Console.println
 }]

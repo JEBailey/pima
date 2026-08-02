@@ -380,6 +380,38 @@ impl Machine {
                     *cell.value.borrow_mut() = value;
                     cell.mutable.set(Some(*mutable));
                 }
+                Instruction::BindImport {
+                    binding,
+                    source,
+                    name,
+                } => {
+                    let Slot::Cell(cell) = frame.registers[binding.0 as usize].clone() else {
+                        return Err(VmError::internal("BIND_IMPORT requires a binding cell"));
+                    };
+                    let source = frame.registers[source.0 as usize].clone();
+                    if let Slot::Value(Value::VmBinding(linked)) | Slot::Cell(linked) = &source
+                        && dumpster::unsync::Gc::ptr_eq(&cell, linked)
+                    {
+                        continue 'dispatch;
+                    }
+                    if !matches!(*cell.value.borrow(), Slot::Uninitialized) {
+                        let error = self.context.typed_error(
+                            &["error", "name_error"],
+                            format!("duplicate binding `{name}` in current scope"),
+                        );
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    }
+                    match source {
+                        Slot::Value(Value::VmBinding(linked)) | Slot::Cell(linked) => {
+                            frame.registers[binding.0 as usize] = Slot::Cell(linked);
+                        }
+                        value => {
+                            *cell.value.borrow_mut() = value;
+                            cell.mutable.set(Some(false));
+                        }
+                    }
+                }
                 Instruction::LoadBinding {
                     destination,
                     binding,
@@ -478,6 +510,17 @@ impl Machine {
                         .iter()
                         .map(|register| language_value(&frame.registers[register.0 as usize]))
                         .collect::<Result<Vec<_>, _>>()?;
+                    frame.registers[destination.0 as usize] =
+                        Slot::Value(Value::List(values.into_iter().collect()));
+                }
+                Instruction::MakeArguments {
+                    destination,
+                    elements,
+                } => {
+                    let values = elements
+                        .iter()
+                        .map(|element| linked_value(&frame.registers[element.0 as usize]))
+                        .collect::<Result<Vec<_>, Diagnostic>>()?;
                     frame.registers[destination.0 as usize] =
                         Slot::Value(Value::List(values.into_iter().collect()));
                 }
@@ -932,7 +975,7 @@ impl Machine {
                         callee = Value::VmClosure(partial.closure.clone());
                     }
                     if let Value::NativeFunction(native) = callee {
-                        let arguments = match argument {
+                        let mut arguments = match argument {
                             Value::List(values) => values.to_vec(),
                             value => vec![value],
                         };
@@ -940,6 +983,11 @@ impl Machine {
                             .natives
                             .get(native)
                             .ok_or_else(|| VmError::internal("invalid native function id"))?;
+                        if definition.name != "same?" {
+                            arguments
+                                .iter_mut()
+                                .for_each(|value| *value = value.resolved());
+                        }
                         if !definition.arity.check(arguments.len()) {
                             let error = self.context.typed_error(
                                 &["error", "arity_error"],
@@ -963,6 +1011,7 @@ impl Machine {
                         continue 'dispatch;
                     }
                     if let Value::RemoteFunction(handle, member) = callee {
+                        let argument = resolve_call_argument(argument);
                         match self
                             .context
                             .call_remote_function(handle, &member, &argument)
@@ -978,6 +1027,7 @@ impl Machine {
                         continue 'dispatch;
                     }
                     if let Value::BoundRemoteFunction(_, handle, member) = callee {
+                        let argument = resolve_call_argument(argument);
                         match self
                             .context
                             .call_remote_function(handle, &member, &argument)
@@ -1038,6 +1088,7 @@ impl Machine {
                         catch_typed_error(&mut frames, &mut handlers, error)?;
                         continue 'dispatch;
                     };
+                    let argument = resolve_call_argument(argument);
                     let function = closure.function;
                     let captures = closure.captures.clone();
                     let Some(owner) = self.programs.get(&closure.program) else {
@@ -1212,6 +1263,13 @@ fn linked_value(value: &Slot) -> Result<Value, Diagnostic> {
     }
 }
 
+fn resolve_call_argument(value: Value) -> Value {
+    match value {
+        Value::List(values) => Value::List(values.iter().map(Value::resolved).collect()),
+        value => value.resolved(),
+    }
+}
+
 fn replace_referenced_location(cell: &dumpster::unsync::Gc<VmCell>, replacement: Slot) {
     let linked = match &*cell.value.borrow() {
         Slot::Value(Value::VmBinding(linked)) | Slot::Cell(linked) => Some(linked.clone()),
@@ -1268,9 +1326,13 @@ fn initialize_registers(
         .cloned()
         .collect::<std::collections::HashMap<_, _>>();
     for register in binding_registers {
-        let fallback = initial_bindings.get(register).cloned().map(Slot::Value);
-        registers[register.0 as usize] =
-            Slot::Cell(dumpster::unsync::Gc::new(VmCell::binding(fallback)));
+        registers[register.0 as usize] = match initial_bindings.get(register) {
+            Some(Value::VmBinding(cell)) => Slot::Cell(cell.clone()),
+            initial => {
+                let fallback = initial.cloned().map(Slot::Value);
+                Slot::Cell(dumpster::unsync::Gc::new(VmCell::binding(fallback)))
+            }
+        };
     }
     registers
 }

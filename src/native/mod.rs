@@ -4,6 +4,7 @@ pub(crate) mod host;
 pub mod io;
 pub mod lists;
 pub mod numbers;
+pub mod references;
 pub mod registry;
 pub mod remote;
 pub mod strings;
@@ -19,6 +20,7 @@ pub(crate) fn register_core(registry: &mut NativeRegistry) {
     strings::register(registry);
     lists::register(registry);
     types::register(registry);
+    references::register(registry);
     console::register(registry);
 }
 
@@ -31,6 +33,7 @@ pub(crate) fn core_namespace(name: &str) -> Option<&'static str> {
         | "starts_with?" | "ends_with?" | "replace" | "split" | "join" => Some("String"),
         "push" | "append" | "head" | "rest" | "empty?" => Some("List"),
         "types" | "is?" => Some("Types"),
+        "same?" => Some("Reference"),
         "println" => Some("Console"),
         "not" => Some("Logic"),
         _ => None,

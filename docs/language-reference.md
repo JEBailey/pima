@@ -1037,6 +1037,7 @@ objects:
 | `Math.div`, `Math.mod`, `Math.int` | Integer division, remainder, and conversion |
 | `Logic.not` | Boolean negation |
 | `Types.of`, `Types.is?` | Inspect and test value types |
+| `Reference.same?` | Test whether two references identify the same storage |
 | `String.from`, `String.concat` | Display conversion and concatenation |
 | `String.length`, `String.slice`, `String.chars` | Unicode-scalar string operations |
 | `String.byte_length` | UTF-8 encoded byte length |
@@ -1093,6 +1094,12 @@ library function rather than the `=` operator.
   the corresponding element comparison false. Inspect errors with `Types.is?`
   and their public metadata rather than equality.
 - Values of unrelated categories are unequal rather than producing an error.
+
+`Reference.same?` is separate from value equality. It returns `true` only when
+both arguments are references to the same resolved storage location. Equal
+values stored in different locations, and non-reference values, return `false`.
+Aliases remain identical after their shared location is moved or invalidated,
+even though the resulting error values remain unequal under `=`.
 
 ### 10.2 Strings
 
@@ -1418,9 +1425,11 @@ import object-path.member as local-name
 
 They are permitted only at module scope. Every path begins with an ordinary
 identifier and every intermediate segment must be a public object member.
-`*` adds read-only live views of all public members. A selected import adds one
-read-only live view using either the member name or its `as` name. Private
-members are never imported.
+`*` adds live references to all public bindings. A selected import adds one
+live reference using either the member name or its `as` name. Each reference
+preserves the source binding's mutability: an imported `pub var` is writable,
+while an imported `pub val` remains immutable. Private members are never
+imported.
 
 Object imports are atomic: if a target name would collide with a binding
 already declared in the current module, the import fails without introducing
@@ -1474,11 +1483,21 @@ The error diagnostic includes the complete cycle of canonical module paths.
 Module initialization side effects performed before a failure are not rolled
 back.
 
-Imported names are read-only views of their source bindings. If a module or
-object internally changes a `pub var`, importers observe the new value, but
-cannot assign to it with `let`. An aliased module import exposes its views
-through an immutable module object. Unaliased module and object imports
-introduce views directly into the importing module.
+Imported names refer to their source bindings rather than copying their values.
+If the source is a `pub var`, assignment through either the imported name or a
+qualified member updates the same storage location, and both forms immediately
+observe the change. If the source is a `pub val`, both forms remain immutable.
+Selected-import aliases preserve this behavior; the alias changes only the
+local spelling. Moving through an imported reference invalidates that shared
+location under the ordinary move rules, so every other reference observes the
+same moved error. Unaliased module and object imports introduce these references
+directly into the importing module.
+
+A reference to an object member retains the complete object that owns that
+storage, including its private state and other members. Rebinding the name that
+previously held the object does not destroy it while such a reference remains.
+The object and its member storage become collectible together after the final
+external reference disappears.
 
 ### 12.2 Standard I/O module
 

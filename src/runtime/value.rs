@@ -153,6 +153,32 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
+pub(crate) fn same_reference(left: &Value, right: &Value) -> bool {
+    fn location(value: &Value) -> Option<Gc<super::VmCell>> {
+        let Value::VmBinding(cell) = value else {
+            return None;
+        };
+        let mut cell = cell.clone();
+        loop {
+            let linked = match &*cell.value.borrow() {
+                super::VmValue::Value(Value::VmBinding(linked)) | super::VmValue::Cell(linked) => {
+                    Some(linked.clone())
+                }
+                _ => None,
+            };
+            let Some(linked) = linked else {
+                return Some(cell);
+            };
+            cell = linked;
+        }
+    }
+
+    match (location(left), location(right)) {
+        (Some(left), Some(right)) => Gc::ptr_eq(&left, &right),
+        _ => false,
+    }
+}
+
 fn is_error_value(value: &Value) -> bool {
     match value {
         Value::Namespace(namespace) => namespace.is_error,
