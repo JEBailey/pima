@@ -49,7 +49,11 @@ pub trait NativeContext {
     fn make_remote_namespace(
         &mut self,
         blueprint: crate::runtime::RemoteBlueprint,
-        context: Vec<(std::sync::Arc<str>, Value)>,
+        context: Vec<(
+            std::sync::Arc<str>,
+            crate::runtime::ContextTransferMode,
+            Value,
+        )>,
     ) -> NativeResult;
     fn load_remote_member(
         &mut self,

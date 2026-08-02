@@ -59,7 +59,7 @@
     },
     "keywords": {
       "name": "keyword.control.pima",
-      "match": "\\b(?:as|attempt|await|branch|break|continue|do|function|if|import|let|match|new|pub|remote|return|throw|until|val|var|while)\\b"
+      "match": "\\b(?:as|attempt|await|branch|break|continue|do|function|if|import|let|match|new|pub|remote|return|this|throw|until|val|var|while)\\b"
     },
     "constants": {
       "name": "constant.language.pima",

@@ -11,6 +11,15 @@ pub struct NamespaceBinding {
     pub name: Arc<str>,
     pub source: Register,
     pub public: bool,
+    pub mutable: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoteContextBinding {
+    pub name: Arc<str>,
+    pub source: Register,
+    pub mode: crate::runtime::ContextTransferMode,
+    pub move_target: Option<Register>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,11 +87,12 @@ pub enum Instruction {
     MakeNamespace {
         destination: Register,
         bindings: Vec<NamespaceBinding>,
+        self_binding: Option<Register>,
     },
     MakeRemoteNamespace {
         destination: Register,
         blueprint: RemoteBlueprint,
-        context: Vec<(Arc<str>, Register)>,
+        context: Vec<RemoteContextBinding>,
     },
     AwaitTask {
         destination: Register,
@@ -92,6 +102,18 @@ pub enum Instruction {
         destination: Register,
         namespace: Register,
         name: Arc<str>,
+        allow_private: bool,
+    },
+    StoreMember {
+        namespace: Register,
+        source: Register,
+        name: Arc<str>,
+        allow_private: bool,
+    },
+    CheckMemberWritable {
+        namespace: Register,
+        name: Arc<str>,
+        allow_private: bool,
     },
     CheckListLength {
         source: Register,
@@ -146,6 +168,7 @@ pub enum Instruction {
         destination: Register,
         callee: Register,
         argument: Register,
+        command: bool,
     },
     DoDynamic {
         destination: Register,

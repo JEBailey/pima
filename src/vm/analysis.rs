@@ -142,7 +142,13 @@ impl ScopeWalker<'_> {
                 self.visit_node(value);
             }
             NodeKind::Function { name, .. } => self.declare(name),
-            NodeKind::Assignment { value, .. } | NodeKind::Throw(value) => self.visit_node(value),
+            NodeKind::Assignment { target, value } => {
+                if let crate::syntax::ast::AssignmentTarget::Member(member) = target {
+                    self.visit_node(member);
+                }
+                self.visit_node(value);
+            }
+            NodeKind::Throw(value) => self.visit_node(value),
             NodeKind::List(nodes) => nodes.into_iter().for_each(|node| self.visit_node(node)),
             NodeKind::Member { object, .. } => self.visit_node(object),
             NodeKind::Call {

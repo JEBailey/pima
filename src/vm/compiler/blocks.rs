@@ -32,6 +32,16 @@ impl Compiler<'_> {
             .iter()
             .filter_map(|(name, local)| local.block.map(|block| (name.clone(), block)))
             .collect();
+        let self_binding = self.allocate_register();
+        self.binding_registers.push(self_binding);
+        self.locals.insert(
+            Arc::from("this"),
+            Local {
+                register: self_binding,
+                block: None,
+                binding: true,
+            },
+        );
 
         let mut winners = std::collections::HashMap::new();
         let mut winner_order = Vec::new();
@@ -209,13 +219,29 @@ impl Compiler<'_> {
         let mut bindings = Vec::new();
         for (name, (_, statement)) in &winners {
             match &self.module.node(*statement).kind {
-                NodeKind::Binding { visibility, .. } | NodeKind::Function { visibility, .. } => {
+                NodeKind::Binding {
+                    visibility,
+                    mutability,
+                    ..
+                } => {
                     if let Some(local) = self.locals.get(name).copied() {
                         let source = namespace_value_register(self, local, name);
                         bindings.push(NamespaceBinding {
                             name: name.clone(),
                             source,
                             public: *visibility == Visibility::Public,
+                            mutable: *mutability == BindingKind::Mutable,
+                        });
+                    }
+                }
+                NodeKind::Function { visibility, .. } => {
+                    if let Some(local) = self.locals.get(name).copied() {
+                        let source = namespace_value_register(self, local, name);
+                        bindings.push(NamespaceBinding {
+                            name: name.clone(),
+                            source,
+                            public: *visibility == Visibility::Public,
+                            mutable: false,
                         });
                     }
                 }
@@ -228,6 +254,7 @@ impl Compiler<'_> {
                 name: Arc::from("types"),
                 source: local.register,
                 public: true,
+                mutable: false,
             });
         }
         self.locals = outer_locals;
@@ -235,6 +262,7 @@ impl Compiler<'_> {
         self.instructions.push(Instruction::MakeNamespace {
             destination,
             bindings,
+            self_binding: Some(self_binding),
         });
         Some(destination)
     }
@@ -327,7 +355,7 @@ impl Compiler<'_> {
                     .block(block)
                     .requirements
                     .iter()
-                    .all(|requirement| self.locals.contains_key(&requirement.text))
+                    .all(|requirement| self.locals.contains_key(&requirement.name.text))
             {
                 blocks.insert(block);
             }
@@ -364,7 +392,7 @@ impl Compiler<'_> {
 
     pub(super) fn check_block_requirements(&mut self, block: BlockId) {
         for requirement in &self.module.block(block).requirements {
-            if !self.locals.contains_key(&requirement.text) {
+            if !self.locals.contains_key(&requirement.name.text) {
                 self.instructions.push(Instruction::RaiseTyped {
                     types: vec![
                         Arc::from("error"),
@@ -373,7 +401,7 @@ impl Compiler<'_> {
                     ],
                     message: Arc::from(format!(
                         "cannot execute block: required context binding `{}` is unavailable",
-                        requirement.text
+                        requirement.name.text
                     )),
                 });
             }

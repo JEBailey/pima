@@ -158,16 +158,19 @@ This function would accept only argument lists beginning with `:get`.
 Annotated block requirements are also unambiguous name positions:
 
 ```pima
-@(name score) { ... }
+@(name *score &service) { ... }
 ```
 
 These names describe bindings that must be available when the block executes.
+The optional `*` and `&` prefixes are structural transport modifiers, not
+symbols: bare requirements copy into a remote worker, `*` moves, and `&`
+shares an already synchronized remote or future handle.
 
 ## Brackets and Invocation
 
-The AST currently distinguishes calls with an `immediate` Boolean, but both
-line calls and bracketed calls execute normally. The useful distinction is only
-their syntactic boundary:
+The AST distinguishes line commands from bracketed calls with an `immediate`
+Boolean. Both invoke callable values, but a zero-operand line command returns a
+non-callable value while a bracketed call rejects a non-callable callee.
 
 ```pima
 foo 1 2
@@ -181,25 +184,25 @@ val result [foo 1 2]
 
 uses brackets to delimit an invocation inside another form.
 
-Recommended changes:
-
-- call `[...]` a bracketed or nested invocation;
-- remove the unused `immediate` field from call AST nodes;
-- do not describe brackets as selecting another evaluation mode.
-
-Outside brackets, a bare function name evaluates to the function value. Inside
-brackets, a callee with no operands receives the empty argument list:
+Call `[...]` a bracketed or nested invocation. Outside brackets, a bare
+function name in command position receives the empty argument list. Bare
+non-callable values pass through:
 
 ```pima
 val operation calculate
-[operation]
+operation
+42
 ```
+
+A higher-order function uses `return operation` when it intends to return the
+callable itself instead of executing it as the line command.
 
 ## Reserved Forms and Operand Boundaries
 
 Reserved forms currently consume operands using different parser rules:
 
-- `new` and `do` consume through a line or bracket boundary;
+- `new` consumes one or more template operands through a line or bracket
+  boundary, while `do` consumes exactly one code-block expression;
 - `return` and `break` consume zero or one expression, while `throw` consumes
   exactly one expression;
 - `val`, `var`, and `let` consume a pattern and one expression;

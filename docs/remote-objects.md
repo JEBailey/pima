@@ -87,8 +87,10 @@ Only names explicitly declared by an annotated template are captured:
 
 ```pima
 val limit 10
+val workload (1 2 3)
+val service [remote Service]
 
-val Worker @(limit) {
+val Worker @(limit *workload &service) {
     var processed 0
 
     pub function limit () limit
@@ -97,10 +99,20 @@ val Worker @(limit) {
 val worker [remote Worker]
 ```
 
-`limit` is resolved before the worker starts, transported by value, and
-installed as an immutable worker-local binding. A caller `var` never becomes a
-shared mutable cell. Mutable state declared inside `Worker` remains exclusively
-owned by that worker.
+Bare requirements such as `limit` are resolved before the worker starts,
+transported by value, and installed as immutable worker-local bindings. A
+`*workload` requirement uses the same transport representation but, after
+successful worker creation, replaces the caller's shared location with an
+`(:error :move_error :moved_value)` value. Every reference-like alias observes
+the same replacement. The error records the remote-construction operation and
+source span for diagnostics and logs. Failed construction does not consume
+the binding. An `&service` requirement accepts only an existing remote-object
+or future handle and preserves that synchronized identity in the worker. TCP
+listener handles are also shareable, enabling multiple isolated workers to
+block in `accept` on one listening socket.
+
+A caller `var` never becomes a shared mutable cell. Mutable state declared
+inside `Worker` remains exclusively owned by that worker.
 
 Missing requirements fail with `:missing_context`. Values that cannot cross the
 transport boundary fail with `:unsendable_value`.
@@ -148,6 +160,12 @@ Symbols travel by name because symbol IDs belong to one interpreter. A list is
 transportable only when every element is transportable. Remote and future
 handles are opaque synchronized identities and may themselves cross the
 boundary.
+
+Bare and `*` requirements use this representation as copy and move policies,
+respectively. `&` is deliberately narrower: it rejects everything except the
+opaque synchronized handle variants. Worker interpreters participating in a
+share use the same concurrency hub, allowing the shared handle to be used from
+either worker without sharing either VM heap.
 
 The initial model rejects:
 

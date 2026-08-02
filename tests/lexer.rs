@@ -134,6 +134,19 @@ fn recognizes_remote_as_a_keyword() {
 }
 
 #[test]
+fn recognizes_this_as_a_keyword() {
+    let kinds = lex_kinds("this");
+    assert!(matches!(kinds[0], TokenKind::Keyword(Keyword::This)));
+}
+
+#[test]
+fn recognizes_shared_context_marker() {
+    let kinds = lex_kinds("@(&service *workload) {}");
+    assert!(matches!(kinds[2], TokenKind::Ampersand));
+    assert_eq!(kinds[4], TokenKind::Identifier(Arc::from("*")));
+}
+
+#[test]
 fn recognizes_await_as_a_keyword() {
     let kinds = lex_kinds("await pending");
     assert!(matches!(kinds[0], TokenKind::Keyword(Keyword::Await)));

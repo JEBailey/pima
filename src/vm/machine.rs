@@ -77,6 +77,18 @@ impl Machine {
         Self::with_context(VmNativeContext::new(working_directory))
     }
 
+    pub(crate) fn with_concurrency(
+        working_directory: std::path::PathBuf,
+        concurrency: std::sync::Arc<crate::runtime::ConcurrencyHub>,
+        network: std::sync::Arc<std::sync::Mutex<crate::native::host::NetworkResources>>,
+    ) -> Self {
+        Self::with_context(VmNativeContext::with_concurrency(
+            working_directory,
+            concurrency,
+            network,
+        ))
+    }
+
     pub fn standard_globals(&mut self) -> std::collections::HashMap<std::sync::Arc<str>, Value> {
         let definitions = self
             .natives
@@ -90,6 +102,7 @@ impl Machine {
                 namespaces.entry(namespace).or_default().push((
                     std::sync::Arc::from(name),
                     true,
+                    false,
                     Value::NativeFunction(id),
                 ));
             } else if matches!(name, "+" | "-" | "*" | "/" | "<" | ">" | "=") {
@@ -178,6 +191,7 @@ impl Machine {
             bindings.push((
                 std::sync::Arc::from(public_name),
                 true,
+                false,
                 Value::NativeFunction(native),
             ));
         }
@@ -351,7 +365,12 @@ impl Machine {
                         }
                     }
                     Slot::Cell(cell) => {
-                        frame.registers[destination.0 as usize] = cell.value.borrow().clone();
+                        frame.registers[destination.0 as usize] =
+                            if cell.contains_reference_like_value() {
+                                Slot::Value(Value::VmBinding(cell))
+                            } else {
+                                cell.value.borrow().clone()
+                            };
                     }
                     value => frame.registers[destination.0 as usize] = value,
                 },
@@ -475,6 +494,7 @@ impl Machine {
                 Instruction::MakeNamespace {
                     destination,
                     bindings,
+                    self_binding,
                 } => {
                     let bindings = bindings
                         .iter()
@@ -482,12 +502,23 @@ impl Machine {
                             Ok((
                                 binding.name.clone(),
                                 binding.public,
+                                binding.mutable,
                                 linked_value(&frame.registers[binding.source.0 as usize])?,
                             ))
                         })
                         .collect::<Result<Vec<_>, Diagnostic>>()?;
                     match self.context.make_namespace(bindings) {
                         Ok(namespace) => {
+                            if let Some(binding) = self_binding {
+                                let Slot::Cell(cell) = frame.registers[binding.0 as usize].clone()
+                                else {
+                                    return Err(VmError::internal(
+                                        "object self binding is not a cell",
+                                    ));
+                                };
+                                *cell.value.borrow_mut() = Slot::Value(namespace.clone());
+                                cell.mutable.set(Some(false));
+                            }
                             frame.registers[destination.0 as usize] = Slot::Value(namespace);
                         }
                         Err(error) => {
@@ -501,20 +532,33 @@ impl Machine {
                     blueprint,
                     context,
                 } => {
-                    let context = context
+                    let transported_context = context
                         .iter()
-                        .map(|(name, register)| {
+                        .map(|binding| {
                             Ok((
-                                name.clone(),
-                                language_value(&frame.registers[register.0 as usize])?,
+                                binding.name.clone(),
+                                binding.mode,
+                                language_value(&frame.registers[binding.source.0 as usize])?,
                             ))
                         })
                         .collect::<Result<Vec<_>, Diagnostic>>()?;
                     match self
                         .context
-                        .make_remote_namespace(blueprint.clone(), context)
+                        .make_remote_namespace(blueprint.clone(), transported_context)
                     {
                         Ok(namespace) => {
+                            for binding in context {
+                                let Some(target) = binding.move_target else {
+                                    continue;
+                                };
+                                let moved = Slot::Value(
+                                    self.context.moved_value_error(binding.name.as_ref()),
+                                );
+                                match frame.registers[target.0 as usize].clone() {
+                                    Slot::Cell(cell) => replace_referenced_location(&cell, moved),
+                                    _ => frame.registers[target.0 as usize] = moved,
+                                }
+                            }
                             frame.registers[destination.0 as usize] = Slot::Value(namespace);
                         }
                         Err(error) => {
@@ -545,9 +589,16 @@ impl Machine {
                     destination,
                     namespace,
                     name,
+                    allow_private,
                 } => {
+                    let owner = reference_location(&frame.registers[namespace.0 as usize]);
                     let namespace = language_value(&frame.registers[namespace.0 as usize])?;
-                    match self.context.load_member(namespace, name) {
+                    match self.context.load_member(namespace, name, *allow_private) {
+                        Ok(Value::RemoteFunction(handle, member)) if owner.is_some() => {
+                            frame.registers[destination.0 as usize] = Slot::Value(
+                                Value::BoundRemoteFunction(owner.unwrap(), handle, member),
+                            );
+                        }
                         Ok(value) => {
                             frame.registers[destination.0 as usize] = Slot::Value(value);
                         }
@@ -555,6 +606,36 @@ impl Machine {
                             catch_typed_error(&mut frames, &mut handlers, error)?;
                             continue 'dispatch;
                         }
+                    }
+                }
+                Instruction::StoreMember {
+                    namespace,
+                    source,
+                    name,
+                    allow_private,
+                } => {
+                    let namespace = language_value(&frame.registers[namespace.0 as usize])?;
+                    let source = language_value(&frame.registers[source.0 as usize])?;
+                    if let Err(error) =
+                        self.context
+                            .store_member(namespace, name, source, *allow_private)
+                    {
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    }
+                }
+                Instruction::CheckMemberWritable {
+                    namespace,
+                    name,
+                    allow_private,
+                } => {
+                    let namespace = language_value(&frame.registers[namespace.0 as usize])?;
+                    if let Err(error) =
+                        self.context
+                            .check_member_writable(namespace, name, *allow_private)
+                    {
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
                     }
                 }
                 Instruction::CheckListLength {
@@ -700,9 +781,24 @@ impl Machine {
                     destination,
                     callee,
                     argument,
+                    command,
                 } => {
                     let mut callee = language_value(&frame.registers[callee.0 as usize])?;
                     let mut argument = language_value(&frame.registers[argument.0 as usize])?;
+                    if *command
+                        && !matches!(
+                            callee,
+                            Value::NativeFunction(_)
+                                | Value::VmClosure(_)
+                                | Value::VmPartial(_)
+                                | Value::RemoteFunction(_, _)
+                                | Value::BoundRemoteFunction(_, _, _)
+                                | Value::TaskFunction(_, _)
+                        )
+                    {
+                        frame.registers[destination.0 as usize] = Slot::Value(callee);
+                        continue 'dispatch;
+                    }
                     let contains_placeholder = matches!(argument, Value::Placeholder)
                         || matches!(&argument, Value::List(values) if values.iter().any(|value| matches!(value, Value::Placeholder)));
                     if contains_placeholder {
@@ -820,6 +916,21 @@ impl Machine {
                         continue 'dispatch;
                     }
                     if let Value::RemoteFunction(handle, member) = callee {
+                        match self
+                            .context
+                            .call_remote_function(handle, &member, &argument)
+                        {
+                            Ok(value) => {
+                                frame.registers[destination.0 as usize] = Slot::Value(value)
+                            }
+                            Err(error) => {
+                                catch_typed_error(&mut frames, &mut handlers, error)?;
+                                continue 'dispatch;
+                            }
+                        }
+                        continue 'dispatch;
+                    }
+                    if let Value::BoundRemoteFunction(_, handle, member) = callee {
                         match self
                             .context
                             .call_remote_function(handle, &member, &argument)
@@ -1010,6 +1121,7 @@ impl Machine {
                             Ok((
                                 binding.name.clone(),
                                 binding.public,
+                                binding.mutable,
                                 linked_value(&frame.registers[binding.source.0 as usize])?,
                             ))
                         })
@@ -1046,6 +1158,25 @@ fn linked_value(value: &Slot) -> Result<Value, Diagnostic> {
     match value {
         Slot::Cell(cell) => Ok(Value::VmBinding(cell.clone())),
         value => language_value(value),
+    }
+}
+
+fn replace_referenced_location(cell: &dumpster::unsync::Gc<VmCell>, replacement: Slot) {
+    let linked = match &*cell.value.borrow() {
+        Slot::Value(Value::VmBinding(linked)) | Slot::Cell(linked) => Some(linked.clone()),
+        _ => None,
+    };
+    if let Some(linked) = linked {
+        replace_referenced_location(&linked, replacement);
+    } else {
+        *cell.value.borrow_mut() = replacement;
+    }
+}
+
+fn reference_location(value: &Slot) -> Option<dumpster::unsync::Gc<VmCell>> {
+    match value {
+        Slot::Value(Value::VmBinding(cell)) | Slot::Cell(cell) => Some(cell.clone()),
+        _ => None,
     }
 }
 
@@ -1188,6 +1319,7 @@ mod tests {
                     destination: Register(2),
                     callee: Register(0),
                     argument: Register(1),
+                    command: false,
                 },
                 Instruction::Return {
                     source: Register(2),

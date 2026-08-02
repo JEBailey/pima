@@ -16,6 +16,14 @@ fn generated_bindings(count: usize) -> String {
     source
 }
 
+fn generated_calls(count: usize) -> String {
+    let mut source = String::with_capacity(count * 24);
+    for index in 0..count {
+        source.push_str(&format!("[combine {index} {index} {index}]\n"));
+    }
+    source
+}
+
 fn syntax_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("syntax");
     for count in [100, 1_000] {
@@ -55,6 +63,24 @@ fn syntax_benchmarks(c: &mut Criterion) {
                     let source_id = sources.add("<benchmark>", black_box(source.as_str()));
                     let tokens = lex(source_id, source).expect("benchmark source should lex");
                     black_box(parse(&tokens).expect("benchmark source should parse"));
+                });
+            },
+        );
+    }
+
+    for count in [100, 1_000] {
+        let source = generated_calls(count);
+        let mut sources = SourceMap::default();
+        let source_id = sources.add("<benchmark>", source.as_str());
+        let tokens = lex(source_id, &source).expect("benchmark source should lex");
+
+        group.throughput(Throughput::Bytes(source.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("parse_prelexed_calls", count),
+            &tokens,
+            |b, tokens| {
+                b.iter(|| {
+                    black_box(parse(black_box(tokens)).expect("benchmark source should parse"));
                 });
             },
         );

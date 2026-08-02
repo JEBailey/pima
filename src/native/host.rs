@@ -10,18 +10,34 @@ use crate::runtime::{TcpConnectionId, TcpListenerId};
 #[derive(Debug)]
 pub(crate) struct HostResources {
     working_directory: PathBuf,
-    listeners: Vec<Option<TcpListener>>,
-    connections: Vec<Option<TcpStream>>,
+    network: std::sync::Arc<std::sync::Mutex<NetworkResources>>,
     concurrency: std::sync::Arc<crate::runtime::ConcurrencyHub>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct NetworkResources {
+    listeners: Vec<Option<std::sync::Arc<TcpListener>>>,
+    connections: Vec<Option<std::sync::Arc<std::sync::Mutex<TcpStream>>>>,
 }
 
 impl HostResources {
     pub(crate) fn new(working_directory: PathBuf) -> Self {
+        Self::with_concurrency(
+            working_directory,
+            std::sync::Arc::new(crate::runtime::ConcurrencyHub::new()),
+            std::sync::Arc::new(std::sync::Mutex::new(NetworkResources::default())),
+        )
+    }
+
+    pub(crate) fn with_concurrency(
+        working_directory: PathBuf,
+        concurrency: std::sync::Arc<crate::runtime::ConcurrencyHub>,
+        network: std::sync::Arc<std::sync::Mutex<NetworkResources>>,
+    ) -> Self {
         Self {
             working_directory,
-            listeners: Vec::new(),
-            connections: Vec::new(),
-            concurrency: std::sync::Arc::new(crate::runtime::ConcurrencyHub::new()),
+            network,
+            concurrency,
         }
     }
 
@@ -50,18 +66,24 @@ impl HostResources {
             .register_remote(sender, blueprint.public_functions.clone());
         let working_directory = self.working_directory.clone();
         let concurrency = self.concurrency.clone();
+        let network = self.network.clone();
         let (initialization, initialized) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name(format!("pima-remote-{}", handle.object()))
             .spawn(move || {
-                let mut interpreter = crate::Interpreter::new(crate::Config {
-                    working_directory: Some(working_directory),
-                });
+                let mut interpreter = crate::engine::Interpreter::new_remote_worker(
+                    working_directory,
+                    concurrency.clone(),
+                    network,
+                );
                 for (name, value) in context {
                     let value = interpreter.vm.import_transport(value);
                     interpreter.vm_session_globals.insert(name, value);
                 }
-                let initialization_source = format!("val __remote [new {}]\n", blueprint.source);
+                let initialization_source = format!(
+                    "{}\nval __remote [new {}]\n",
+                    blueprint.preamble, blueprint.source
+                );
                 let outcome = interpreter.run_source("<remote-init>", &initialization_source);
                 if !outcome.is_success() {
                     let message = outcome
@@ -166,22 +188,35 @@ impl HostResources {
     pub(crate) fn listen(&mut self, address: &str, port: u16) -> Result<TcpListenerId, String> {
         let listener = TcpListener::bind((address, port))
             .map_err(|error| format!("could not listen on {address}:{port}: {error}"))?;
-        let id = TcpListenerId(self.listeners.len() as u32);
-        self.listeners.push(Some(listener));
+        let mut network = self
+            .network
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let id = TcpListenerId(network.listeners.len() as u32);
+        network.listeners.push(Some(std::sync::Arc::new(listener)));
         Ok(id)
     }
 
     pub(crate) fn accept(&mut self, listener: TcpListenerId) -> Result<TcpConnectionId, String> {
         let listener = self
+            .network
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
             .listeners
             .get(listener.0 as usize)
-            .and_then(Option::as_ref)
+            .and_then(Clone::clone)
             .ok_or_else(|| "TCP listener is closed".to_owned())?;
         let (connection, _) = listener
             .accept()
             .map_err(|error| format!("could not accept TCP connection: {error}"))?;
-        let id = TcpConnectionId(self.connections.len() as u32);
-        self.connections.push(Some(connection));
+        let mut network = self
+            .network
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let id = TcpConnectionId(network.connections.len() as u32);
+        network
+            .connections
+            .push(Some(std::sync::Arc::new(std::sync::Mutex::new(connection))));
         Ok(id)
     }
 
@@ -190,7 +225,8 @@ impl HostResources {
         connection: TcpConnectionId,
         maximum: usize,
     ) -> Result<String, String> {
-        let connection = self.connection_mut(connection)?;
+        let connection = self.connection(connection)?;
+        let mut connection = connection.lock().unwrap_or_else(|error| error.into_inner());
         let mut bytes = vec![0; maximum];
         let count = connection
             .read(&mut bytes)
@@ -200,7 +236,9 @@ impl HostResources {
     }
 
     pub(crate) fn write(&mut self, connection: TcpConnectionId, text: &str) -> Result<(), String> {
-        self.connection_mut(connection)?
+        self.connection(connection)?
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
             .write_all(text.as_bytes())
             .map_err(|error| format!("could not write TCP connection: {error}"))
     }
@@ -210,7 +248,8 @@ impl HostResources {
         connection: TcpConnectionId,
         milliseconds: u64,
     ) -> Result<(), String> {
-        let connection = self.connection_mut(connection)?;
+        let connection = self.connection(connection)?;
+        let connection = connection.lock().unwrap_or_else(|error| error.into_inner());
         let timeout = Some(Duration::from_millis(milliseconds));
         connection
             .set_read_timeout(timeout)
@@ -219,7 +258,10 @@ impl HostResources {
     }
 
     pub(crate) fn close_listener(&mut self, listener: TcpListenerId) -> Result<(), String> {
-        self.listeners
+        self.network
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .listeners
             .get_mut(listener.0 as usize)
             .ok_or_else(|| "invalid TCP listener".to_owned())?
             .take()
@@ -228,7 +270,10 @@ impl HostResources {
     }
 
     pub(crate) fn close_connection(&mut self, connection: TcpConnectionId) -> Result<(), String> {
-        self.connections
+        self.network
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .connections
             .get_mut(connection.0 as usize)
             .ok_or_else(|| "invalid TCP connection".to_owned())?
             .take()
@@ -236,10 +281,16 @@ impl HostResources {
             .ok_or_else(|| "TCP connection is already closed".to_owned())
     }
 
-    fn connection_mut(&mut self, connection: TcpConnectionId) -> Result<&mut TcpStream, String> {
-        self.connections
-            .get_mut(connection.0 as usize)
-            .and_then(Option::as_mut)
+    fn connection(
+        &self,
+        connection: TcpConnectionId,
+    ) -> Result<std::sync::Arc<std::sync::Mutex<TcpStream>>, String> {
+        self.network
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .connections
+            .get(connection.0 as usize)
+            .and_then(Clone::clone)
             .ok_or_else(|| "TCP connection is closed".to_owned())
     }
 }

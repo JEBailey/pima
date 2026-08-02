@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use pima::{
     source::Span,
-    syntax::ast::{BindingKind, BlockId, Module, Name, NodeId, NodeKind, Pattern},
+    syntax::ast::{
+        AssignmentTarget, BindingKind, BlockId, Module, Name, NodeId, NodeKind, Pattern,
+    },
 };
 
 use crate::ast_utils::pattern_captures;
@@ -290,7 +292,7 @@ impl<'module> Builder<'module> {
     fn visit_block(&mut self, block: BlockId, scope: ScopeId) {
         let block = self.module.block(block);
         for requirement in &block.requirements {
-            self.reference(scope, &requirement.text, requirement.span);
+            self.reference(scope, &requirement.name.text, requirement.name.span);
         }
         self.visit_statements(&block.statements, scope);
     }
@@ -333,9 +335,12 @@ impl<'module> Builder<'module> {
                     }
                 }
             }
-            NodeKind::Assignment { pattern, value } => {
+            NodeKind::Assignment { target, value } => {
                 self.visit_node(*value, scope);
-                self.reference_pattern(scope, pattern);
+                match target {
+                    AssignmentTarget::Pattern(pattern) => self.reference_pattern(scope, pattern),
+                    AssignmentTarget::Member(member) => self.visit_node(*member, scope),
+                }
             }
             NodeKind::Function {
                 name,

@@ -260,6 +260,129 @@ fn remote_transports_required_context_as_an_immutable_snapshot() {
 }
 
 #[test]
+fn remote_move_transfers_then_replaces_the_source_binding_with_an_error() {
+    let value = run_ok(
+        "val workload (20 22)\n\
+         val Worker @(*workload) { pub val result workload }\n\
+         val worker [remote Worker]\n\
+         ([await worker.result] [Types.is? workload :moved_value])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::List(
+                    [pima::Value::Integer(20), pima::Value::Integer(22)]
+                        .into_iter()
+                        .collect()
+                ),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn remote_move_invalidates_every_binding_linked_to_the_same_reference() {
+    let value = run_ok(
+        "val Service { pub val value 42 }\n\
+         val service [remote Service]\n\
+         val alias service\n\
+         val Worker @(*alias) { pub val received alias }\n\
+         val worker [remote Worker]\n\
+         ([Types.is? service :moved_value] [Types.is? alias :moved_value])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Boolean(true)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn moving_an_object_invalidates_an_extracted_bound_remote_method() {
+    let value = run_ok(
+        "val Service { pub function read () 42 }\n\
+         val service [remote Service]\n\
+         val read service.read\n\
+         val Worker @(*service) { pub val received service }\n\
+         val worker [remote Worker]\n\
+         ([Types.is? service :moved_value] [Types.is? read :moved_value])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Boolean(true)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn moved_value_error_records_the_move_operation_and_source_span() {
+    let value = run_ok(
+        "val workload (20 22)\n\
+         val Worker @(*workload) { pub val result workload }\n\
+         val worker [remote Worker]\n\
+         (workload.move_operation workload.move_source workload.move_start workload.move_end)",
+    );
+    let pima::Value::List(fields) = value else {
+        panic!("expected provenance fields");
+    };
+    let fields = fields.to_vec();
+    assert_eq!(fields[0], pima::Value::String("remote construction".into()));
+    assert!(matches!(fields[1], pima::Value::Integer(_)));
+    assert!(matches!(fields[2], pima::Value::Integer(_)));
+    assert!(matches!(fields[3], pima::Value::Integer(_)));
+}
+
+#[test]
+fn failed_remote_move_leaves_the_source_binding_unchanged() {
+    let value = run_ok(
+        "val workload [new { pub val value 42 }]\n\
+         val Worker @(*workload) { pub val result workload }\n\
+         val failure [attempt { remote Worker }]\n\
+         ([Types.is? failure :unsendable_value] workload.value)",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Integer(42)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn remote_share_accepts_handles_and_rejects_local_values() {
+    let value = run_ok(
+        "val Service { pub val value 42 }\n\
+         val service [remote Service]\n\
+         val Worker @(&service) { pub function read () { await service.value } }\n\
+         val worker [remote Worker]\n\
+         val scalar 1\n\
+         val Invalid @(&scalar) { pub val value scalar }\n\
+         val failure [attempt { remote Invalid }]\n\
+         ([await [worker.read]] [Types.is? failure :unsendable_value])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Integer(42), pima::Value::Boolean(true)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
 fn remote_composition_transports_the_union_of_required_context() {
     let value = run_ok(
         "val left 3\n\
@@ -1169,9 +1292,128 @@ fn member_function_call() {
 }
 
 #[test]
+fn this_refers_to_the_current_object_inside_methods() {
+    let value = run_ok(
+        "val Counter {\n\
+             pub val count 42\n\
+             pub function current () this\n\
+             pub function read () this.count\n\
+         }\n\
+         val counter [new Counter]\n\
+         ([= counter [counter.current]] [counter.read])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Integer(42)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn this_is_unavailable_outside_an_object_and_cannot_be_redeclared() {
+    let outcome = run("this\n");
+    assert!(!outcome.is_success());
+    assert!(
+        outcome.diagnostics[0]
+            .message
+            .contains("unbound identifier `this`")
+    );
+
+    let outcome = run("val this 1\n");
+    assert!(!outcome.is_success());
+    assert!(outcome.diagnostics[0].message.contains("binding pattern"));
+}
+
+#[test]
 fn private_member_access_is_error() {
     let outcome = run("val Template {\n  val x 10\n}\nval obj [new Template]\nobj.x");
     assert!(!outcome.is_success());
+}
+
+#[test]
+fn public_mutable_members_can_be_assigned_externally() {
+    let value = run_ok(
+        "val counter [new { pub var count 0 }]\n\
+         let counter.count 10\n\
+         counter.count",
+    );
+    assert_eq!(value, pima::Value::Integer(10));
+}
+
+#[test]
+fn methods_can_assign_private_mutable_members_through_this() {
+    let value = run_ok(
+        "val counter [new {\n\
+             var count 0\n\
+             pub function increment () { let this.count [+ this.count 1] }\n\
+             pub function read () this.count\n\
+         }]\n\
+         counter.increment\n\
+         counter.read",
+    );
+    assert_eq!(value, pima::Value::Integer(1));
+}
+
+#[test]
+fn private_and_immutable_members_reject_assignment() {
+    let value = run_ok(
+        "val object [new {\n\
+             var private 1\n\
+             pub val fixed 2\n\
+         }]\n\
+         val private_failure [attempt { let object.private 3 }]\n\
+         val fixed_failure [attempt { let object.fixed 3 }]\n\
+         ([Types.is? private_failure :visibility_error]\n\
+          [Types.is? fixed_failure :mutation_error])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Boolean(true)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn failed_member_assignment_preserves_the_previous_value() {
+    let value = run_ok(
+        "val object [new { pub var value 7 }]\n\
+         val failure [attempt { let object.value [Math.div 1 0] }]\n\
+         object.value",
+    );
+    assert_eq!(value, pima::Value::Integer(7));
+}
+
+#[test]
+fn invalid_member_target_is_rejected_before_evaluating_the_replacement() {
+    let value = run_ok(
+        "var evaluated false\n\
+         val object [new { pub val fixed 7 }]\n\
+         val failure [attempt {\n\
+             let object.fixed do {\n\
+                 let evaluated true\n\
+                 9\n\
+             }\n\
+         }]\n\
+         (evaluated object.fixed [Types.is? failure :mutation_error])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(false),
+                pima::Value::Integer(7),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
 }
 
 #[test]
@@ -1515,6 +1757,24 @@ fn calls_pack_one_trailing_expression_into_a_singleton_list() {
 fn zero_arg_invocation() {
     let value = run_ok("function f () { 99 }\n[f ]");
     assert_eq!(value, pima::Value::Integer(99));
+}
+
+#[test]
+fn zero_operand_line_commands_call_functions_and_return_other_values() {
+    assert_eq!(
+        run_ok("function answer () 42\nanswer\n"),
+        pima::Value::Integer(42)
+    );
+    assert_eq!(run_ok("val answer 42\nanswer\n"), pima::Value::Integer(42));
+    assert_eq!(run_ok("\"answer\"\n"), pima::Value::String("answer".into()));
+    assert_eq!(
+        run_ok(
+            "val Answer { pub function read () 42 }\n\
+             val answer [new Answer]\n\
+             answer.read\n"
+        ),
+        pima::Value::Integer(42)
+    );
 }
 
 #[test]

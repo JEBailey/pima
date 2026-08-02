@@ -1,7 +1,7 @@
 use pima::{
     source::SourceMap,
     syntax::{
-        ast::{BindingKind, LoopKind, NodeKind, Pattern, Visibility},
+        ast::{BindingKind, ContextTransferMode, LoopKind, NodeKind, Pattern, Visibility},
         lexer::lex,
         parser::parse,
     },
@@ -63,7 +63,11 @@ fn binding_patterns_use_bare_names_as_destinations() {
     );
     for &statement in &module.statements {
         let pattern = match &module.node(statement).kind {
-            NodeKind::Binding { pattern, .. } | NodeKind::Assignment { pattern, .. } => pattern,
+            NodeKind::Binding { pattern, .. } => pattern,
+            NodeKind::Assignment {
+                target: pima::syntax::ast::AssignmentTarget::Pattern(pattern),
+                ..
+            } => pattern,
             _ => panic!("expected binding operation"),
         };
         assert!(matches!(
@@ -154,6 +158,26 @@ fn parses_immediate_zero_argument_member_call() {
 }
 
 #[test]
+fn parses_a_single_expression_line_as_a_zero_operand_command() {
+    for source in ["serve\n", "server.serve\n", "42\n"] {
+        let module = parse_source(source);
+        let NodeKind::Call {
+            argument,
+            immediate,
+            ..
+        } = module.node(module.statements[0]).kind
+        else {
+            panic!("expected line command for {source:?}");
+        };
+        assert!(!immediate);
+        assert!(matches!(
+            &module.node(argument).kind,
+            NodeKind::List(elements) if elements.is_empty()
+        ));
+    }
+}
+
+#[test]
 fn packs_implicit_call_arguments_into_lists() {
     for source in ["[add 1 2]\n", "add 1 2\n"] {
         let module = parse_source(source);
@@ -211,6 +235,20 @@ fn packs_multiple_new_operands_into_one_list() {
         &module.node(operand).kind,
         NodeKind::List(elements) if elements.len() == 2
     ));
+}
+
+#[test]
+fn do_accepts_exactly_one_code_block_operand() {
+    parse_source("do { 42 }\n");
+    parse_source("[do { 42 }]\n");
+
+    for source in ["do { 1 } { 2 }\n", "[do { 1 } { 2 }]\n"] {
+        let mut sources = SourceMap::default();
+        let source_id = sources.add("<test>", source);
+        let tokens = lex(source_id, source).expect("source should lex");
+        let diagnostics = parse(&tokens).expect_err("extra `do` operand should not parse");
+        assert!(diagnostics[0].message.contains("unexpected operand"));
+    }
 }
 
 #[test]
@@ -290,9 +328,26 @@ fn parses_await_expression() {
 #[test]
 fn keyword_names_are_valid_member_selectors() {
     let module = parse_source("Remote.new");
+    let NodeKind::Call { callee, .. } = module.node(module.statements[0]).kind else {
+        panic!("expected member command");
+    };
     assert!(matches!(
-        &module.node(module.statements[0]).kind,
+        &module.node(callee).kind,
         NodeKind::Member { member, .. } if member.text.as_ref() == "new"
+    ));
+}
+
+#[test]
+fn parses_member_assignment_targets() {
+    let module = parse_source("let this.state.count 1\n");
+    let pima::syntax::ast::NodeKind::Assignment { target, .. } =
+        &module.node(module.statements[0]).kind
+    else {
+        panic!("expected assignment");
+    };
+    assert!(matches!(
+        target,
+        pima::syntax::ast::AssignmentTarget::Member(_)
     ));
 }
 
@@ -498,7 +553,7 @@ do code
 #[test]
 fn parses_annotated_block_context_requirements() {
     let module = parse_source(
-        "val report @(name score) {\n\
+        "val report @(name *score &service) {\n\
              Console.println (name score)\n\
          }\n",
     );
@@ -512,10 +567,13 @@ fn parses_annotated_block_context_requirements() {
     assert_eq!(
         requirements
             .iter()
-            .map(AsRef::as_ref)
+            .map(|requirement| requirement.name.text.as_ref())
             .collect::<Vec<&str>>(),
-        ["name", "score"]
+        ["name", "score", "service"]
     );
+    assert_eq!(requirements[0].mode, ContextTransferMode::Copy);
+    assert_eq!(requirements[1].mode, ContextTransferMode::Move);
+    assert_eq!(requirements[2].mode, ContextTransferMode::Share);
 }
 
 #[test]

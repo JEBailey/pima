@@ -38,7 +38,9 @@ It also supports `throw` and `attempt` through explicit handler records that
 unwind VM call frames without using Rust stack unwinding.
 Object construction supports immutable and mutable state, functions,
 lexical initializer reads, validated custom type lists, and visibility-checked
-member access. Block literals produce inert linked block values. `do` dispatches
+member access. Each object scope contains a private immutable `this` cell that
+is populated with the completed namespace after construction; methods capture
+the cell and preserve exact object identity. Block literals produce inert linked block values. `do` dispatches
 both local and cross-module blocks in the caller's current environment, including
 blocks passed through function parameters. Placeholder-based partial application
 is compiled as an ordinary VM callable value.
@@ -47,8 +49,26 @@ Annotated block requirements are checked when the block is instantiated.
 Missing bindings execute a typed-error instruction and therefore remain
 catchable by `attempt` as `(:error :name_error :missing_context)` rather than
 being reported as VM compiler failures.
+Requirements also retain a worker-transfer mode: bare names copy, `*name`
+moves, and `&name` shares a synchronized remote or future handle. Remote
+lowering records the originating register for moved values. The machine
+invalidates the root shared location only after transport and worker
+construction succeed. Reference-like assignment links bindings to that
+location, so every alias observes its replacement with
+`(:error :move_error :moved_value)`. The error carries structured operation
+and source-span provenance. Shared handles remain usable because
+related worker interpreters use the same concurrency hub while keeping
+separate VM heaps.
 Unsupported AST constructs produce compiler diagnostics rather than executing
 through an alternate runtime.
+
+Object namespace entries retain both visibility and declaration mutability.
+`let object.member value` lowers to a member-store instruction; the VM resolves
+the object and replacement before committing the store, then enforces
+visibility and `var` mutability. Stores through `this` carry object-private
+access, while ordinary member stores require `pub var`. Mutable namespace
+entries link back to their VM binding cells so lexical reads and member reads
+cannot diverge after an update.
 
 Functions compile to ordinary runtime closure values containing a compiled
 program id, function id, and captured slots. The machine retains loaded

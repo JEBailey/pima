@@ -65,6 +65,26 @@ impl Interpreter {
         }
     }
 
+    pub(crate) fn new_remote_worker(
+        working_directory: std::path::PathBuf,
+        concurrency: std::sync::Arc<crate::runtime::ConcurrencyHub>,
+        network: std::sync::Arc<std::sync::Mutex<crate::native::host::NetworkResources>>,
+    ) -> Self {
+        let module_directory = camino::Utf8PathBuf::from_path_buf(working_directory.clone())
+            .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
+        Self {
+            instance_id: NEXT_INTERPRETER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            sources: SourceMap::default(),
+            parsed_modules: Vec::new(),
+            module_loader: ModuleLoader::new(module_directory),
+            vm: crate::vm::Machine::with_concurrency(working_directory, concurrency, network),
+            vm_programs: std::collections::HashMap::new(),
+            vm_module_indices: std::collections::HashMap::new(),
+            vm_loading: Vec::new(),
+            vm_session_globals: std::collections::HashMap::new(),
+        }
+    }
+
     pub fn run_source(&mut self, name: &str, source: &str) -> RunOutcome {
         match self.prepare_source(name, source) {
             Ok(program) => self.run_prepared(program),

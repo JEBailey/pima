@@ -16,7 +16,7 @@ pub use block::{BlockRef, StoredBlock};
 pub(crate) use concurrency::{
     ConcurrencyHub, RemoteOperation, RemoteReply, TransportError, TransportValue,
 };
-pub use concurrency::{RemoteBlueprint, RemoteNamespaceHandle, TaskHandle};
+pub use concurrency::{ContextTransferMode, RemoteBlueprint, RemoteNamespaceHandle, TaskHandle};
 pub use environment::{Environment, EnvironmentRef};
 pub use error::ErrorMetadata;
 pub use ids::{NativeFunctionId, SymbolId, TcpConnectionId, TcpListenerId};

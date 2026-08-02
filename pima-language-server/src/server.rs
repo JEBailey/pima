@@ -919,7 +919,8 @@ fn analyze(text: &str) -> Analysis {
 
 const KEYWORDS: &[&str] = &[
     "as", "attempt", "await", "branch", "break", "continue", "do", "function", "if", "import",
-    "let", "match", "new", "pub", "remote", "return", "throw", "until", "val", "var", "while",
+    "let", "match", "new", "pub", "remote", "return", "this", "throw", "until", "val", "var",
+    "while",
 ];
 
 fn valid_identifier(name: &str) -> bool {
@@ -1089,6 +1090,7 @@ fn describe_token(kind: &TokenKind) -> Option<String> {
         TokenKind::Keyword(keyword) => match keyword.as_str() {
             "remote" => "`remote`: construct an object in an isolated worker VM; member requests return futures.".into(),
             "await" => "`await`: wait for a future and produce its value or throw its error.".into(),
+            "this" => "`this`: the current completed object inside one of its methods.".into(),
             name => format!("Pima keyword `{name}`"),
         },
         TokenKind::Boolean(_) => "Pima boolean".into(),

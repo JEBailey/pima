@@ -33,6 +33,23 @@ impl VmNativeContext {
             stack: Vec::new(),
         }
     }
+
+    pub(crate) fn with_concurrency(
+        working_directory: std::path::PathBuf,
+        concurrency: std::sync::Arc<crate::runtime::ConcurrencyHub>,
+        network: std::sync::Arc<std::sync::Mutex<crate::native::host::NetworkResources>>,
+    ) -> Self {
+        Self {
+            symbols: SymbolInterner::default(),
+            host: crate::native::host::HostResources::with_concurrency(
+                working_directory,
+                concurrency,
+                network,
+            ),
+            active_span: None,
+            stack: Vec::new(),
+        }
+    }
 }
 
 impl VmNativeContext {
@@ -56,21 +73,69 @@ impl VmNativeContext {
             });
         }
     }
+
+    pub(crate) fn moved_value_error(&mut self, binding: &str) -> Value {
+        let origin = self.active_span;
+        let location = origin.map_or_else(
+            || "an unknown source location".to_owned(),
+            |span| {
+                format!(
+                    "source {} bytes {}..{}",
+                    span.source.index(),
+                    span.start,
+                    span.end
+                )
+            },
+        );
+        let error = self.typed_error(
+            &["error", "move_error", "moved_value"],
+            format!("context binding `{binding}` was moved by remote construction at {location}"),
+        );
+        if let (Some(span), Value::Namespace(namespace)) = (origin, &error) {
+            let mut environment = namespace.environment.borrow_mut();
+            for (name, value) in [
+                (
+                    "move_operation",
+                    Value::String("remote construction".into()),
+                ),
+                (
+                    "move_source",
+                    Value::Integer(i64::from(span.source.index())),
+                ),
+                ("move_start", Value::Integer(span.start as i64)),
+                ("move_end", Value::Integer(span.end as i64)),
+            ] {
+                environment.bindings.insert(
+                    self.symbols.intern(name),
+                    crate::runtime::Binding {
+                        value,
+                        mutability: crate::runtime::BindingMutability::Immutable,
+                        visibility: crate::runtime::BindingVisibility::Public,
+                    },
+                );
+            }
+        }
+        error
+    }
     pub(crate) fn resolve(&self, symbol: SymbolId) -> Option<&str> {
         self.symbols.resolve(symbol)
     }
 
     pub(crate) fn make_namespace(
         &mut self,
-        bindings: Vec<(std::sync::Arc<str>, bool, Value)>,
+        bindings: Vec<(std::sync::Arc<str>, bool, bool, Value)>,
     ) -> NativeResult {
         let mut environment = crate::runtime::Environment::new();
-        for (name, public, value) in bindings {
+        for (name, public, mutable, value) in bindings {
             environment.bindings.insert(
                 self.symbols.intern(&name),
                 crate::runtime::Binding {
                     value,
-                    mutability: crate::runtime::BindingMutability::Immutable,
+                    mutability: if mutable {
+                        crate::runtime::BindingMutability::Mutable
+                    } else {
+                        crate::runtime::BindingMutability::Immutable
+                    },
                     visibility: if public {
                         crate::runtime::BindingVisibility::Public
                     } else {
@@ -93,15 +158,19 @@ impl VmNativeContext {
 
     pub(crate) fn make_native_namespace(
         &mut self,
-        bindings: Vec<(std::sync::Arc<str>, bool, Value)>,
+        bindings: Vec<(std::sync::Arc<str>, bool, bool, Value)>,
     ) -> Value {
         let mut environment = crate::runtime::Environment::new();
-        for (name, public, value) in bindings {
+        for (name, public, mutable, value) in bindings {
             environment.bindings.insert(
                 self.symbols.intern(&name),
                 crate::runtime::Binding {
                     value,
-                    mutability: crate::runtime::BindingMutability::Immutable,
+                    mutability: if mutable {
+                        crate::runtime::BindingMutability::Mutable
+                    } else {
+                        crate::runtime::BindingMutability::Immutable
+                    },
                     visibility: if public {
                         crate::runtime::BindingVisibility::Public
                     } else {
@@ -117,7 +186,12 @@ impl VmNativeContext {
         }))
     }
 
-    pub(crate) fn load_member(&mut self, value: Value, name: &str) -> NativeResult {
+    pub(crate) fn load_member(
+        &mut self,
+        value: Value,
+        name: &str,
+        allow_private: bool,
+    ) -> NativeResult {
         if let Value::RemoteNamespace(handle) = value {
             return <Self as NativeContext>::load_remote_member(self, handle, name);
         }
@@ -152,13 +226,101 @@ impl VmNativeContext {
                 format!("object has no member `{name}`"),
             ));
         };
-        if binding.visibility == crate::runtime::BindingVisibility::Private {
+        if binding.visibility == crate::runtime::BindingVisibility::Private && !allow_private {
             return Err(self.typed_error(
                 &["error", "visibility_error"],
                 format!("member `{name}` is private"),
             ));
         }
         Ok(binding.value)
+    }
+
+    pub(crate) fn store_member(
+        &mut self,
+        value: Value,
+        name: &str,
+        replacement: Value,
+        allow_private: bool,
+    ) -> NativeResult {
+        let Value::Namespace(namespace) = value else {
+            return Err(self.typed_error(
+                &["error", "type_error"],
+                "member assignment requires a local object".to_owned(),
+            ));
+        };
+        let symbol = self.symbols.intern(name);
+        let mut environment = namespace.environment.borrow_mut();
+        let Some(binding) = environment.bindings.get_mut(&symbol) else {
+            drop(environment);
+            return Err(self.typed_error(
+                &["error", "name_error"],
+                format!("object has no member `{name}`"),
+            ));
+        };
+        if binding.visibility == crate::runtime::BindingVisibility::Private && !allow_private {
+            drop(environment);
+            return Err(self.typed_error(
+                &["error", "visibility_error"],
+                format!("member `{name}` is private"),
+            ));
+        }
+        if !matches!(
+            binding.mutability,
+            crate::runtime::BindingMutability::Mutable
+        ) {
+            drop(environment);
+            return Err(self.typed_error(
+                &["error", "mutation_error"],
+                format!("cannot assign to immutable member `{name}`"),
+            ));
+        }
+        if let Value::VmBinding(cell) = &binding.value {
+            *cell.value.borrow_mut() = crate::runtime::VmValue::Value(replacement.clone());
+        } else {
+            binding.value = replacement.clone();
+        }
+        Ok(replacement)
+    }
+
+    pub(crate) fn check_member_writable(
+        &mut self,
+        value: Value,
+        name: &str,
+        allow_private: bool,
+    ) -> NativeResult {
+        let Value::Namespace(namespace) = value else {
+            return Err(self.typed_error(
+                &["error", "type_error"],
+                "member assignment requires a local object".to_owned(),
+            ));
+        };
+        let symbol = self.symbols.intern(name);
+        let environment = namespace.environment.borrow();
+        let Some(binding) = environment.bindings.get(&symbol) else {
+            drop(environment);
+            return Err(self.typed_error(
+                &["error", "name_error"],
+                format!("object has no member `{name}`"),
+            ));
+        };
+        if binding.visibility == crate::runtime::BindingVisibility::Private && !allow_private {
+            drop(environment);
+            return Err(self.typed_error(
+                &["error", "visibility_error"],
+                format!("member `{name}` is private"),
+            ));
+        }
+        if !matches!(
+            binding.mutability,
+            crate::runtime::BindingMutability::Mutable
+        ) {
+            drop(environment);
+            return Err(self.typed_error(
+                &["error", "mutation_error"],
+                format!("cannot assign to immutable member `{name}`"),
+            ));
+        }
+        Ok(Value::Unit)
     }
 
     pub(crate) fn validate_thrown(&mut self, value: Value) -> Value {
@@ -197,12 +359,27 @@ impl NativeContext for VmNativeContext {
     fn make_remote_namespace(
         &mut self,
         blueprint: crate::runtime::RemoteBlueprint,
-        context: Vec<(std::sync::Arc<str>, Value)>,
+        context: Vec<(
+            std::sync::Arc<str>,
+            crate::runtime::ContextTransferMode,
+            Value,
+        )>,
     ) -> NativeResult {
         let context = context
             .into_iter()
-            .map(|(name, value)| {
-                crate::runtime::TransportValue::from_value(&value, |symbol| {
+            .map(|(name, mode, value)| {
+                let resolved = value.resolved();
+                if mode == crate::runtime::ContextTransferMode::Share {
+                    if let Value::TcpListener(listener) = resolved {
+                        return Ok((name, crate::runtime::TransportValue::TcpListener(listener)));
+                    }
+                    if !matches!(resolved, Value::RemoteNamespace(_) | Value::Task(_)) {
+                        return Err(
+                            "shared context must be a remote object, future, or TCP listener handle",
+                        );
+                    }
+                }
+                crate::runtime::TransportValue::from_value(&resolved, |symbol| {
                     self.symbols.resolve(symbol).map(std::sync::Arc::from)
                 })
                 .map(|value| (name, value))

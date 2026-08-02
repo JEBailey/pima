@@ -5,6 +5,14 @@ use std::{
 
 use super::{PersistentList, SymbolId, Value};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContextTransferMode {
+    #[default]
+    Copy,
+    Move,
+    Share,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RemoteNamespaceHandle {
     hub: u64,
@@ -65,6 +73,7 @@ impl std::hash::Hash for TaskHandle {
 
 #[derive(Clone, Debug)]
 pub struct RemoteBlueprint {
+    pub(crate) preamble: std::sync::Arc<str>,
     pub(crate) source: std::sync::Arc<str>,
     pub(crate) public_functions: Vec<std::sync::Arc<str>>,
 }
@@ -125,6 +134,7 @@ pub(crate) enum TransportValue {
     List(Vec<TransportValue>),
     RemoteNamespace(RemoteNamespaceHandle),
     Task(TaskHandle),
+    TcpListener(super::TcpListenerId),
 }
 
 impl TransportValue {
@@ -157,6 +167,7 @@ impl TransportValue {
             | Value::Block(_)
             | Value::Namespace(_)
             | Value::RemoteFunction(_, _)
+            | Value::BoundRemoteFunction(_, _, _)
             | Value::TcpListener(_)
             | Value::TcpConnection(_) => Err("value cannot cross a VM boundary"),
         }
@@ -182,6 +193,7 @@ impl TransportValue {
             ),
             Self::RemoteNamespace(handle) => Value::RemoteNamespace(handle),
             Self::Task(handle) => Value::Task(handle),
+            Self::TcpListener(handle) => Value::TcpListener(handle),
         }
     }
 }

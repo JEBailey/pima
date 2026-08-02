@@ -130,6 +130,18 @@ pub function create_file_server (directory) {
     }
 }
 
+val RemoteFileServer @(document_root) {
+    pub function handle (method target) {
+        val result [[create_file_server document_root].handle method target]
+        (result.status result.reason result.headers result.body)
+    }
+}
+
+pub function create_remote_file_server (directory) {
+    val document_root [io.canonicalize directory]
+    remote RemoteFileServer
+}
+
 pub function header (response name) {
     function find (headers) {
         if [List.empty? headers] :missing {

@@ -55,6 +55,16 @@ impl VmCell {
             },
         }
     }
+
+    pub(crate) fn contains_reference_like_value(&self) -> bool {
+        match &*self.value.borrow() {
+            VmValue::Value(Value::VmBinding(cell)) | VmValue::Cell(cell) => {
+                cell.contains_reference_like_value()
+            }
+            VmValue::Value(value) => value.is_reference_like(),
+            VmValue::Uninitialized => false,
+        }
+    }
 }
 
 impl Drop for VmCell {

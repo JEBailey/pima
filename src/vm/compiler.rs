@@ -4,13 +4,15 @@ use crate::{
     diagnostic::Diagnostic,
     runtime::Value,
     syntax::ast::{
-        BindingKind, BlockId, LoopKind, Module, NamespaceImportSelection, NodeId, NodeKind,
-        Pattern, Visibility,
+        AssignmentTarget, BindingKind, BlockId, LoopKind, Module, NamespaceImportSelection, NodeId,
+        NodeKind, Pattern, Visibility,
     },
 };
 
 use super::analysis::ScopeAnalysis;
-use super::ir::{Function, Instruction, NamespaceBinding, Primitive, Program, Register};
+use super::ir::{
+    Function, Instruction, NamespaceBinding, Primitive, Program, Register, RemoteContextBinding,
+};
 use super::passes::PassPipeline;
 
 mod blocks;
@@ -303,12 +305,12 @@ impl<'a> Compiler<'a> {
         let mut captured = std::collections::HashSet::new();
         for (_, block) in &templates {
             for requirement in &self.module.block(*block).requirements {
-                if declared.contains(&requirement.text)
-                    || !captured.insert(requirement.text.clone())
+                if declared.contains(&requirement.name.text)
+                    || !captured.insert(requirement.name.text.clone())
                 {
                     continue;
                 }
-                let Some(local) = self.locals.get(&requirement.text).copied() else {
+                let Some(local) = self.locals.get(&requirement.name.text).copied() else {
                     self.instructions.push(Instruction::RaiseTyped {
                         types: vec![
                             Arc::from("error"),
@@ -317,7 +319,7 @@ impl<'a> Compiler<'a> {
                         ],
                         message: Arc::from(format!(
                             "cannot execute block: required context binding `{}` is unavailable",
-                            requirement.text
+                            requirement.name.text
                         )),
                     });
                     continue;
@@ -327,13 +329,30 @@ impl<'a> Compiler<'a> {
                     self.instructions.push(Instruction::LoadBinding {
                         destination: value,
                         binding: local.register,
-                        name: requirement.text.clone(),
+                        name: requirement.name.text.clone(),
                     });
                     value
                 } else {
                     local.register
                 };
-                context.push((requirement.text.clone(), value));
+                let mode = match requirement.mode {
+                    crate::syntax::ast::ContextTransferMode::Copy => {
+                        crate::runtime::ContextTransferMode::Copy
+                    }
+                    crate::syntax::ast::ContextTransferMode::Move => {
+                        crate::runtime::ContextTransferMode::Move
+                    }
+                    crate::syntax::ast::ContextTransferMode::Share => {
+                        crate::runtime::ContextTransferMode::Share
+                    }
+                };
+                context.push(RemoteContextBinding {
+                    name: requirement.name.text.clone(),
+                    source: value,
+                    mode,
+                    move_target: (mode == crate::runtime::ContextTransferMode::Move)
+                        .then_some(local.register),
+                });
             }
         }
         let blueprint_source: Arc<str> = if template_sources.len() == 1 {
@@ -341,10 +360,29 @@ impl<'a> Compiler<'a> {
         } else {
             Arc::from(format!("({})", template_sources.join(" ")))
         };
+        let preamble = self.source.as_ref().map_or_else(
+            || Arc::from(""),
+            |source| {
+                Arc::from(
+                    self.module
+                        .statements
+                        .iter()
+                        .filter_map(|statement| {
+                            let node = self.module.node(*statement);
+                            is_remote_preamble_node(self.module, node)
+                                .then(|| source.get(node.span.start..node.span.end))
+                                .flatten()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            },
+        );
         let destination = self.allocate_register();
         self.instructions.push(Instruction::MakeRemoteNamespace {
             destination,
             blueprint: crate::runtime::RemoteBlueprint {
+                preamble,
                 source: blueprint_source,
                 public_functions: public_functions
                     .into_iter()
@@ -389,12 +427,14 @@ impl<'a> Compiler<'a> {
             match &self.module.node(*statement).kind {
                 NodeKind::Binding {
                     visibility,
+                    mutability,
                     pattern,
                     ..
                 } => collect_pattern_exports(
                     pattern,
                     &self.locals,
                     *visibility == Visibility::Public,
+                    *mutability == BindingKind::Mutable,
                     &mut exports,
                 ),
                 NodeKind::Function {
@@ -405,6 +445,7 @@ impl<'a> Compiler<'a> {
                             name: name.text.clone(),
                             source: local.register,
                             public: *visibility == Visibility::Public,
+                            mutable: false,
                         });
                     }
                 }
@@ -422,6 +463,13 @@ impl<'a> Compiler<'a> {
             self.instruction_spans.entry(instruction).or_insert(span);
         }
         result
+    }
+
+    fn is_this_expression(&self, id: NodeId) -> bool {
+        matches!(
+            &self.module.node(id).kind,
+            NodeKind::Identifier(name) if name.as_ref() == "this"
+        )
     }
 
     fn compile_node_inner(&mut self, id: NodeId) -> Option<Register> {
@@ -483,6 +531,7 @@ impl<'a> Compiler<'a> {
                     destination,
                     namespace,
                     name: member.text.clone(),
+                    allow_private: self.is_this_expression(*object),
                 });
                 Some(destination)
             }
@@ -506,21 +555,45 @@ impl<'a> Compiler<'a> {
                 self.commit_binding_captures(captures, *mutability == BindingKind::Mutable, block);
                 Some(self.load_constant(Value::Unit))
             }
-            NodeKind::Assignment { pattern, value } => {
-                let source = self.compile_node(*value)?;
-                let mut captures = Vec::new();
-                self.compile_capture_pattern(
-                    pattern,
-                    source,
-                    Arc::from("assignment pattern does not match its value"),
-                    &mut captures,
-                );
-                self.commit_assignment_captures(captures);
-                Some(source)
-            }
+            NodeKind::Assignment { target, value } => match target {
+                AssignmentTarget::Pattern(pattern) => {
+                    let source = self.compile_node(*value)?;
+                    let mut captures = Vec::new();
+                    self.compile_capture_pattern(
+                        pattern,
+                        source,
+                        Arc::from("assignment pattern does not match its value"),
+                        &mut captures,
+                    );
+                    self.commit_assignment_captures(captures);
+                    Some(source)
+                }
+                AssignmentTarget::Member(target) => {
+                    let NodeKind::Member { object, member } = &self.module.node(*target).kind
+                    else {
+                        unreachable!("member assignment target must be a member expression");
+                    };
+                    let namespace = self.compile_node(*object)?;
+                    self.instructions.push(Instruction::CheckMemberWritable {
+                        namespace,
+                        name: member.text.clone(),
+                        allow_private: self.is_this_expression(*object),
+                    });
+                    let source = self.compile_node(*value)?;
+                    self.instructions.push(Instruction::StoreMember {
+                        namespace,
+                        source,
+                        name: member.text.clone(),
+                        allow_private: self.is_this_expression(*object),
+                    });
+                    Some(source)
+                }
+            },
             NodeKind::Call {
-                callee, argument, ..
-            } => self.compile_call(*callee, *argument, node.span),
+                callee,
+                argument,
+                immediate,
+            } => self.compile_call(*callee, *argument, *immediate, node.span),
             NodeKind::Block(block) => {
                 let (function, context) = self.compile_block_function(*block);
                 let destination = self.allocate_register();
@@ -597,6 +670,7 @@ impl<'a> Compiler<'a> {
                         destination,
                         namespace: value,
                         name: name.text.clone(),
+                        allow_private: false,
                     });
                     value = destination;
                 }
@@ -605,6 +679,7 @@ impl<'a> Compiler<'a> {
                     destination: imported,
                     namespace: value,
                     name: member.text.clone(),
+                    allow_private: false,
                 });
                 let local_name = alias.as_ref().unwrap_or(member).text.clone();
                 let binding = self.locals[&local_name].register;
@@ -876,8 +951,11 @@ impl<'a> Compiler<'a> {
         &mut self,
         callee: NodeId,
         argument: NodeId,
+        immediate: bool,
         span: crate::source::Span,
     ) -> Option<Register> {
+        let command = !immediate
+            && matches!(&self.module.node(argument).kind, NodeKind::List(values) if values.is_empty());
         if let NodeKind::Identifier(name) = &self.module.node(callee).kind
             && matches!(
                 name.as_ref(),
@@ -893,6 +971,7 @@ impl<'a> Compiler<'a> {
             destination,
             callee,
             argument,
+            command,
         });
         Some(destination)
     }
@@ -1241,6 +1320,7 @@ fn collect_pattern_exports(
     pattern: &Pattern,
     locals: &HashMap<Arc<str>, Local>,
     public: bool,
+    mutable: bool,
     exports: &mut Vec<NamespaceBinding>,
 ) {
     match pattern {
@@ -1250,12 +1330,13 @@ fn collect_pattern_exports(
                     name: name.text.clone(),
                     source: local.register,
                     public,
+                    mutable,
                 });
             }
         }
         Pattern::List(patterns) => {
             for pattern in patterns {
-                collect_pattern_exports(pattern, locals, public, exports);
+                collect_pattern_exports(pattern, locals, public, mutable, exports);
             }
         }
         Pattern::Wildcard | Pattern::Literal(_) => {}
@@ -1272,10 +1353,40 @@ fn collect_block_context(
         return;
     }
     for requirement in &module.block(block).requirements {
-        names.insert(requirement.text.clone());
+        names.insert(requirement.name.text.clone());
     }
     for statement in &module.block(block).statements {
         collect_node_context(module, *statement, names, visited);
+    }
+}
+
+fn is_remote_preamble_node(module: &Module, node: &crate::syntax::ast::Node) -> bool {
+    match &node.kind {
+        NodeKind::Import { .. } | NodeKind::NamespaceImport { .. } | NodeKind::Function { .. } => {
+            true
+        }
+        NodeKind::Binding {
+            mutability: BindingKind::Immutable,
+            value,
+            ..
+        } => is_remote_constant(module, *value),
+        _ => false,
+    }
+}
+
+fn is_remote_constant(module: &Module, node: NodeId) -> bool {
+    match &module.node(node).kind {
+        NodeKind::Unit
+        | NodeKind::Boolean(_)
+        | NodeKind::Integer(_)
+        | NodeKind::Float(_)
+        | NodeKind::String(_)
+        | NodeKind::Symbol(_)
+        | NodeKind::Block(_) => true,
+        NodeKind::List(elements) => elements
+            .iter()
+            .all(|element| is_remote_constant(module, *element)),
+        _ => false,
     }
 }
 
@@ -1311,8 +1422,13 @@ fn collect_node_context(
             collect_pattern_names(pattern, names);
             collect_node_context(module, *value, names, visited);
         }
-        NodeKind::Assignment { pattern, value } => {
-            collect_pattern_names(pattern, names);
+        NodeKind::Assignment { target, value } => {
+            match target {
+                AssignmentTarget::Pattern(pattern) => collect_pattern_names(pattern, names),
+                AssignmentTarget::Member(member) => {
+                    collect_node_context(module, *member, names, visited)
+                }
+            }
             collect_node_context(module, *value, names, visited);
         }
         NodeKind::Function {

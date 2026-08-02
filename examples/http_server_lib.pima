@@ -120,32 +120,35 @@ function serialize_headers (headers) {
 }
 
 function serialize_response (result) {
-    if [not [Types.is? result.status :integer]] {
-        http_error "HTTP response status must be an integer"
-    }
-    if [not [Types.is? result.reason :string]] {
-        http_error "HTTP response reason must be a string"
-    }
-    if [not [Types.is? result.headers :list]] {
-        http_error "HTTP response headers must be a list"
-    }
-    if [not [Types.is? result.body :string]] {
-        http_error "HTTP response body must be a string"
-    }
-    if [String.contains? result.reason "\r"] {
-        http_error "HTTP response reason cannot contain line breaks"
-    }
-    if [String.contains? result.reason "\n"] {
-        http_error "HTTP response reason cannot contain line breaks"
-    }
-
-    [String.concat
-        "HTTP/1.1 " [String.from result.status] " " result.reason "\r\n"
-        [serialize_headers result.headers]
-        "Content-Length: " [String.from [String.byte_length result.body]] "\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        result.body]
+    branch (
+        [not [Types.is? result.status :integer]] {
+            http_error "HTTP response status must be an integer"
+        }
+        [not [Types.is? result.reason :string]] {
+            http_error "HTTP response reason must be a string"
+        }
+        [not [Types.is? result.headers :list]] {
+            http_error "HTTP response headers must be a list"
+        }
+        [not [Types.is? result.body :string]] {
+            http_error "HTTP response body must be a string"
+        }
+        [String.contains? result.reason "\r"] {
+            http_error "HTTP response reason cannot contain line breaks"
+        }
+        [String.contains? result.reason "\n"] {
+            http_error "HTTP response reason cannot contain line breaks"
+        }
+        true {
+            [String.concat
+                "HTTP/1.1 " [String.from result.status] " " result.reason "\r\n"
+                [serialize_headers result.headers]
+                "Content-Length: " [String.from [String.byte_length result.body]] "\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                result.body]
+        }
+    )
 }
 
 function dispatch (handler source) {
@@ -195,4 +198,76 @@ function accept_forever (listener handler) {
 pub function listen (address port handler) {
     val listener [tcp.listen address port]
     accept_forever listener handler
+}
+
+// A bounded pool of isolated workers. Each worker shares the listener and one
+// remote handler, but owns every connection it accepts.
+val ConnectionWorker @(&listener &handler) {
+    function decode_response (encoded) {
+        val status [List.head encoded]
+        val reason [List.head [List.rest encoded]]
+        val headers [List.head [List.rest [List.rest encoded]]]
+        val body [List.head [List.rest [List.rest [List.rest encoded]]]]
+        response status reason headers body
+    }
+
+    function dispatch_remote (source) {
+        val request [attempt { parse_request source }]
+        branch (
+            [Types.is? request :error] {
+                error_response 400 "Bad Request" request.message
+            }
+            true {
+                val result [attempt {
+                    await [handler.handle request.method request.target]
+                }]
+                branch (
+                    [Types.is? result :error] {
+                        error_response 500 "Internal Server Error" "request handler failed"
+                    }
+                    true { decode_response result }
+                )
+            }
+        )
+    }
+
+    function serve_connection (connection) {
+        tcp.set_timeout connection 5000
+        val outcome [attempt {
+            val source [read_headers connection ""]
+            tcp.write connection [serialize_response [dispatch_remote source]]
+        }]
+        tcp.close connection
+        if [Types.is? outcome :error] {
+            Console.println "Connection error:" outcome.message
+        }
+    }
+
+    pub function serve () {
+        val connection [tcp.accept listener]
+        serve_connection connection
+        serve
+    }
+}
+
+function start_workers (listener handlers) {
+    if [List.empty? handlers] () {
+        val handler [List.head handlers]
+        val worker [remote ConnectionWorker]
+        val pending [worker.serve]
+        List.push [start_workers listener [List.rest handlers]] (worker pending)
+    }
+}
+
+pub function listen_parallel (address port handlers) {
+    val listener [tcp.listen address port]
+    val workers [start_workers listener handlers]
+    if [List.empty? workers] {
+        tcp.close listener
+        http_error "listen_parallel requires at least one remote handler"
+    }
+    // All workers are already serving. Awaiting the first keeps the server
+    // process alive and propagates an unexpected worker failure.
+    val first [List.head workers]
+    await [List.head [List.rest first]]
 }

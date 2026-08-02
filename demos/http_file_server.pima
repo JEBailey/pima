@@ -2,11 +2,13 @@ import "/pima/library/standard"
 import "../examples/file_server_lib.pima" as files
 import "../examples/http_server_lib.pima" as http
 
-val server [files.create_file_server "examples/public"]
+val document_root "examples/public"
+val handlers (
+    [files.create_remote_file_server document_root]
+    [files.create_remote_file_server document_root]
+    [files.create_remote_file_server document_root]
+    [files.create_remote_file_server document_root]
+)
 
-function handle_request (request) {
-    server.handle request.method request.target
-}
-
-Console.println "Serving" server.document_root "at http://127.0.0.1:8080"
-http.listen "127.0.0.1" 8080 handle_request
+Console.println "Serving" document_root "at http://127.0.0.1:8080 with 4 workers"
+http.listen_parallel "127.0.0.1" 8080 handlers

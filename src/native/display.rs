@@ -37,6 +37,7 @@ pub(crate) fn value(input: &Value, context: &mut dyn NativeContext) -> String {
         Value::TcpConnection(_) => "#<tcp-connection>".to_owned(),
         Value::RemoteNamespace(_) => "#<remote-object>".to_owned(),
         Value::RemoteFunction(_, name) => format!("#<remote-function:{name}>"),
+        Value::BoundRemoteFunction(_, _, name) => format!("#<remote-function:{name}>"),
         Value::Task(_) => "#<future>".to_owned(),
         Value::TaskFunction(_, name) => format!("#<future-function:{name}>"),
     }

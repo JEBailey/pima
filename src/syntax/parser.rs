@@ -7,8 +7,9 @@ use crate::{
 
 use super::{
     ast::{
-        BindingKind, Block, BlockId, BranchArm, LoopKind, MatchArm, Module, Name,
-        NamespaceImportSelection, Node, NodeId, NodeKind, Pattern, Visibility,
+        AssignmentTarget, BindingKind, Block, BlockId, BranchArm, ContextRequirement,
+        ContextTransferMode, LoopKind, MatchArm, Module, Name, NamespaceImportSelection, Node,
+        NodeId, NodeKind, Pattern, Visibility,
     },
     token::{Keyword, Token, TokenKind},
 };
@@ -93,22 +94,33 @@ impl Parser<'_> {
     }
 
     fn parse_statement(&mut self) -> ParseResult<NodeId> {
-        let first = self.parse_expression()?;
-        if self.is_special_form(first) && !self.at_statement_end() {
+        let callee = self.parse_expression()?;
+        if self.is_special_form(callee) && !self.at_statement_end() {
             self.report_here("unexpected operand after completed special form");
             return Err(());
         }
-        let mut expressions = vec![first];
+        if self.at_statement_end() {
+            if self.is_special_form(callee)
+                || matches!(self.node(callee).kind, NodeKind::Call { .. })
+            {
+                return Ok(callee);
+            }
+            let span = self.node(callee).span;
+            let argument = self.alloc(span, NodeKind::List(Vec::new()));
+            return Ok(self.alloc_call(callee, argument, false, span));
+        }
 
+        let first_argument = self.parse_expression()?;
+        let mut call_span = self.join(self.node(callee).span, self.node(first_argument).span);
+        let argument = self.alloc(call_span, NodeKind::List(vec![first_argument]));
         while !self.at_statement_end() {
-            expressions.push(self.parse_expression()?);
+            let expression = self.parse_expression()?;
+            call_span = self.join(self.node(callee).span, self.node(expression).span);
+            self.push_list_element(argument, expression);
         }
 
-        if expressions.len() == 1 {
-            Ok(first)
-        } else {
-            self.make_call(expressions, false)
-        }
+        self.nodes[argument.0 as usize].span = call_span;
+        Ok(self.alloc_call(callee, argument, false, call_span))
     }
 
     fn parse_expression(&mut self) -> ParseResult<NodeId> {
@@ -132,8 +144,8 @@ impl Parser<'_> {
             Some(TokenKind::Keyword(Keyword::Continue)) => self.parse_continue(),
             Some(TokenKind::Keyword(Keyword::Throw)) => self.parse_throw(),
             Some(TokenKind::Keyword(Keyword::Import)) => self.parse_import(),
-            Some(TokenKind::Keyword(Keyword::New)) => self.parse_unary_special(UnaryForm::New),
-            Some(TokenKind::Keyword(Keyword::Do)) => self.parse_unary_special(UnaryForm::Do),
+            Some(TokenKind::Keyword(Keyword::New)) => self.parse_new(),
+            Some(TokenKind::Keyword(Keyword::Do)) => self.parse_do(),
             Some(TokenKind::Keyword(Keyword::Remote)) => self.parse_remote(),
             Some(TokenKind::Keyword(Keyword::Await)) => self.parse_await(),
             Some(TokenKind::Keyword(Keyword::Attempt)) => self.parse_attempt(),
@@ -195,6 +207,10 @@ impl Parser<'_> {
                 self.advance();
                 Ok(self.alloc(token.span, NodeKind::Identifier(value)))
             }
+            TokenKind::Keyword(Keyword::This) => {
+                self.advance();
+                Ok(self.alloc(token.span, NodeKind::Identifier(Arc::from("this"))))
+            }
             TokenKind::Underscore => {
                 self.advance();
                 Ok(self.alloc(token.span, NodeKind::Placeholder))
@@ -229,17 +245,42 @@ impl Parser<'_> {
 
     fn parse_immediate_call(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
-        let mut expressions = Vec::new();
         self.skip_eols();
 
+        if self.at(|kind| matches!(kind, TokenKind::RightBracket)) {
+            let end = self.advance().span;
+            self.diagnostics.push(Diagnostic::at_error(
+                "an immediate call requires a callee",
+                self.join(start, end),
+            ));
+            return Err(());
+        }
+        if self.at_eof() {
+            self.report_eof("unterminated immediate call; expected `]`");
+            return Err(());
+        }
+
+        let callee = self.parse_expression()?;
+        self.skip_eols();
+        if self.is_special_form(callee) {
+            if !self.at(|kind| matches!(kind, TokenKind::RightBracket)) {
+                self.report_here("unexpected operand after completed special form");
+                return Err(());
+            }
+            self.advance();
+            return Ok(callee);
+        }
+
+        let argument = self.alloc(start, NodeKind::List(Vec::new()));
         while !self.at(|kind| matches!(kind, TokenKind::RightBracket)) {
             if self.at_eof() {
                 self.report_eof("unterminated immediate call; expected `]`");
                 return Err(());
             }
-            expressions.push(self.parse_expression()?);
+            let expression = self.parse_expression()?;
+            self.push_list_element(argument, expression);
             self.skip_eols();
-            if self.is_special_form(*expressions.last().expect("expression was pushed"))
+            if self.is_special_form(expression)
                 && !self.at(|kind| matches!(kind, TokenKind::RightBracket))
             {
                 self.report_here("unexpected operand after completed special form");
@@ -248,28 +289,9 @@ impl Parser<'_> {
         }
 
         let end = self.advance().span;
-        if expressions.is_empty() {
-            self.diagnostics.push(Diagnostic::at_error(
-                "an immediate call requires a callee",
-                self.join(start, end),
-            ));
-            return Err(());
-        }
-
-        if expressions.len() == 1 && self.is_special_form(expressions[0]) {
-            return Ok(expressions[0]);
-        }
-
-        let callee = expressions.remove(0);
-        let argument = self.pack_call_arguments(expressions, self.join(start, end));
-        Ok(self.alloc(
-            self.join(start, end),
-            NodeKind::Call {
-                callee,
-                argument,
-                immediate: true,
-            },
-        ))
+        let span = self.join(start, end);
+        self.nodes[argument.0 as usize].span = span;
+        Ok(self.alloc_call(callee, argument, true, span))
     }
 
     fn parse_block_expression(&mut self) -> ParseResult<NodeId> {
@@ -322,6 +344,17 @@ impl Parser<'_> {
                 self.report_eof("unterminated context requirement list; expected `)`");
                 return Err(());
             }
+            let mode = match self.peek_kind() {
+                Some(TokenKind::Identifier(marker)) if marker.as_ref() == "*" => {
+                    self.advance();
+                    ContextTransferMode::Move
+                }
+                Some(TokenKind::Ampersand) => {
+                    self.advance();
+                    ContextTransferMode::Share
+                }
+                _ => ContextTransferMode::Copy,
+            };
             let token = self.peek().cloned().ok_or_else(|| {
                 self.report_eof("unterminated context requirement list; expected `)`");
             })?;
@@ -344,9 +377,12 @@ impl Parser<'_> {
                 ));
                 return Err(());
             }
-            requirements.push(Name {
-                text: requirement,
-                span: token.span,
+            requirements.push(ContextRequirement {
+                mode,
+                name: Name {
+                    text: requirement,
+                    span: token.span,
+                },
             });
             self.skip_eols();
         }
@@ -412,7 +448,17 @@ impl Parser<'_> {
 
     fn parse_assignment(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
-        let pattern = self.parse_binding_pattern()?;
+        let target = if matches!(
+            self.peek_kind(),
+            Some(TokenKind::Identifier(_) | TokenKind::Keyword(Keyword::This))
+        ) && matches!(
+            self.tokens.get(self.position + 1).map(|token| &token.kind),
+            Some(TokenKind::Dot)
+        ) {
+            AssignmentTarget::Member(self.parse_member_assignment_target()?)
+        } else {
+            AssignmentTarget::Pattern(self.parse_binding_pattern()?)
+        };
         if self.at_statement_end() {
             self.report_here("expected assigned value");
             return Err(());
@@ -420,8 +466,35 @@ impl Parser<'_> {
         let value = self.parse_expression()?;
         Ok(self.alloc(
             self.join(start, self.node(value).span),
-            NodeKind::Assignment { pattern, value },
+            NodeKind::Assignment { target, value },
         ))
+    }
+
+    fn parse_member_assignment_target(&mut self) -> ParseResult<NodeId> {
+        let token = self.advance().clone();
+        let name = match token.kind {
+            TokenKind::Identifier(name) => name,
+            TokenKind::Keyword(Keyword::This) => Arc::from("this"),
+            _ => unreachable!("member assignment target starts with an object name"),
+        };
+        let mut object = self.alloc(token.span, NodeKind::Identifier(name));
+        while self.at(|kind| matches!(kind, TokenKind::Dot)) {
+            self.advance();
+            let (member, member_span) =
+                self.expect_member_name("expected member name after `.`")?;
+            let span = self.join(self.node(object).span, member_span);
+            object = self.alloc(
+                span,
+                NodeKind::Member {
+                    object,
+                    member: Name {
+                        text: member,
+                        span: member_span,
+                    },
+                },
+            );
+        }
+        Ok(object)
     }
 
     fn parse_binding_pattern(&mut self) -> ParseResult<Pattern> {
@@ -778,10 +851,10 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_unary_special(&mut self, form: UnaryForm) -> ParseResult<NodeId> {
+    fn parse_new(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
         if self.at_statement_end() {
-            self.report_here("expected operand");
+            self.report_here("expected at least one template after `new`");
             return Err(());
         }
         let mut operands = Vec::new();
@@ -792,11 +865,16 @@ impl Parser<'_> {
             .node(*operands.last().expect("an operand was parsed"))
             .span;
         let operand = self.pack_special_operands(operands, self.join(start, end));
-        let kind = match form {
-            UnaryForm::New => NodeKind::New(operand),
-            UnaryForm::Do => NodeKind::Do(operand),
-        };
-        Ok(self.alloc(self.join(start, self.node(operand).span), kind))
+        Ok(self.alloc(
+            self.join(start, self.node(operand).span),
+            NodeKind::New(operand),
+        ))
+    }
+
+    fn parse_do(&mut self) -> ParseResult<NodeId> {
+        let start = self.advance().span;
+        let block = self.require_expression("expected code block after `do`")?;
+        Ok(self.alloc(self.join(start, self.node(block).span), NodeKind::Do(block)))
     }
 
     fn parse_attempt(&mut self) -> ParseResult<NodeId> {
@@ -835,24 +913,28 @@ impl Parser<'_> {
         }
     }
 
-    fn make_call(&mut self, expressions: Vec<NodeId>, immediate: bool) -> ParseResult<NodeId> {
-        let mut expressions = expressions;
-        let callee = expressions.remove(0);
-        let last = expressions
-            .last()
-            .copied()
-            .expect("a statement call has at least one argument");
-        let span = self.join(self.node(callee).span, self.node(last).span);
-        let argument = self.pack_call_arguments(expressions, span);
-        let end = self.node(argument).span;
-        Ok(self.alloc(
-            self.join(self.node(callee).span, end),
+    fn alloc_call(
+        &mut self,
+        callee: NodeId,
+        argument: NodeId,
+        immediate: bool,
+        span: Span,
+    ) -> NodeId {
+        self.alloc(
+            span,
             NodeKind::Call {
                 callee,
                 argument,
                 immediate,
             },
-        ))
+        )
+    }
+
+    fn push_list_element(&mut self, list: NodeId, element: NodeId) {
+        let NodeKind::List(elements) = &mut self.nodes[list.0 as usize].kind else {
+            unreachable!("call argument node is always a list");
+        };
+        elements.push(element);
     }
 
     /// Packs operands for syntax forms which still distinguish one operand from
@@ -863,12 +945,6 @@ impl Parser<'_> {
         } else {
             self.alloc(span, NodeKind::List(expressions))
         }
-    }
-
-    /// Every runtime call receives one implicit list argument. Each trailing
-    /// expression contributes one element, including an explicit list.
-    fn pack_call_arguments(&mut self, expressions: Vec<NodeId>, span: Span) -> NodeId {
-        self.alloc(span, NodeKind::List(expressions))
     }
 
     fn is_special_form(&self, id: NodeId) -> bool {
@@ -976,17 +1052,16 @@ impl Parser<'_> {
     }
 
     fn at_eof(&self) -> bool {
-        self.at(|kind| matches!(kind, TokenKind::Eof)) || self.position >= self.tokens.len()
+        matches!(self.peek_kind(), None | Some(TokenKind::Eof))
     }
 
     fn at_statement_end(&self) -> bool {
-        self.at_eof()
-            || self.at(|kind| {
-                matches!(
-                    kind,
-                    TokenKind::Eol | TokenKind::RightBrace | TokenKind::RightBracket
-                )
-            })
+        matches!(
+            self.peek_kind(),
+            None | Some(
+                TokenKind::Eof | TokenKind::Eol | TokenKind::RightBrace | TokenKind::RightBracket
+            )
+        )
     }
 
     fn skip_eols(&mut self) {
@@ -997,6 +1072,13 @@ impl Parser<'_> {
 
     fn synchronize_statement(&mut self) {
         while !self.at_statement_end() {
+            self.position += 1;
+        }
+        // A failed nested expression may return control to statement recovery
+        // while positioned on its closing delimiter. Those delimiters cannot
+        // terminate a top-level or block statement, so consume them to ensure
+        // recovery makes progress. `}` is retained for the enclosing block.
+        if self.at(|kind| matches!(kind, TokenKind::RightParen | TokenKind::RightBracket)) {
             self.position += 1;
         }
         self.skip_eols();
@@ -1024,12 +1106,6 @@ impl Parser<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
-enum UnaryForm {
-    New,
-    Do,
-}
-
 fn is_reserved(name: &str) -> bool {
     matches!(
         name,
@@ -1047,6 +1123,7 @@ fn is_reserved(name: &str) -> bool {
             | "return"
             | "val"
             | "throw"
+            | "this"
             | "until"
             | "var"
             | "while"

@@ -29,8 +29,22 @@ impl Module {
 #[derive(Clone, Debug)]
 pub struct Block {
     pub span: Span,
-    pub requirements: Vec<Name>,
+    pub requirements: Vec<ContextRequirement>,
     pub statements: Vec<NodeId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContextTransferMode {
+    #[default]
+    Copy,
+    Move,
+    Share,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextRequirement {
+    pub mode: ContextTransferMode,
+    pub name: Name,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -78,6 +92,12 @@ pub struct BranchArm {
 }
 
 #[derive(Clone, Debug)]
+pub enum AssignmentTarget {
+    Pattern(Pattern),
+    Member(NodeId),
+}
+
+#[derive(Clone, Debug)]
 pub enum NodeKind {
     Unit,
     Boolean(bool),
@@ -105,7 +125,7 @@ pub enum NodeKind {
         value: NodeId,
     },
     Assignment {
-        pattern: Pattern,
+        target: AssignmentTarget,
         value: NodeId,
     },
     Function {

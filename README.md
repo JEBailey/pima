@@ -78,8 +78,8 @@ requirements on the object template:
 ```pima
 val Worker @(
     configuration
-    (:move input)
-    (:share database)
+    *input
+    &database
 ) {
     pub function run {
         // configuration is an immutable snapshot
@@ -97,10 +97,10 @@ val worker [remote Worker]
 ```
 
 `configuration`, `input`, and `database` must already be visible where
-`remote Worker` is evaluated. A bare requirement implies `:copy`; `:move`
-transfers ownership and leaves the source binding moved; `:share` passes a
-synchronized remote or future handle. These ownership qualifiers are a design
-direction and are not implemented yet.
+`remote Worker` is evaluated. A bare requirement copies a snapshot, `*`
+transfers ownership and replaces the shared source location (including its
+reference aliases) with a provenance-carrying moved-value error, and `&`
+passes a synchronized remote, future, or TCP-listener handle.
 
 More complete programs live in `examples/`, including a JSON parser and a
 directory-backed static file server core.
@@ -125,6 +125,9 @@ cargo run -- run demos/http_file_server.pima
 ```
 
 Then open `http://127.0.0.1:8080` or request it with `curl`.
+The demo starts four isolated accept workers sharing one listener and four
+remote file handlers, allowing independent requests to make progress in
+parallel.
 
 ## Development
 

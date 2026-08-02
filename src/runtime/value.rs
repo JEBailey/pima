@@ -26,6 +26,8 @@ pub enum Value {
     TcpConnection(TcpConnectionId),
     RemoteNamespace(super::RemoteNamespaceHandle),
     RemoteFunction(super::RemoteNamespaceHandle, Arc<str>),
+    #[doc(hidden)]
+    BoundRemoteFunction(Gc<super::VmCell>, super::RemoteNamespaceHandle, Arc<str>),
     Task(super::TaskHandle),
     TaskFunction(super::TaskHandle, Arc<str>),
 }
@@ -37,6 +39,28 @@ impl PartialEq for Value {
 }
 
 impl Value {
+    /// Values whose identity is preserved when they are assigned to another
+    /// binding. The new binding links to the same VM location instead of
+    /// receiving an independent snapshot.
+    pub(crate) fn is_reference_like(&self) -> bool {
+        matches!(
+            self,
+            Self::NativeFunction(_)
+                | Self::VmClosure(_)
+                | Self::VmPartial(_)
+                | Self::VmBinding(_)
+                | Self::Block(_)
+                | Self::Namespace(_)
+                | Self::TcpListener(_)
+                | Self::TcpConnection(_)
+                | Self::RemoteNamespace(_)
+                | Self::RemoteFunction(_, _)
+                | Self::BoundRemoteFunction(_, _, _)
+                | Self::Task(_)
+                | Self::TaskFunction(_, _)
+        )
+    }
+
     pub(crate) fn type_name(&self) -> &'static str {
         match self {
             Self::Unit => "unit",
@@ -50,6 +74,7 @@ impl Value {
             | Self::VmClosure(_)
             | Self::VmPartial(_)
             | Self::RemoteFunction(_, _)
+            | Self::BoundRemoteFunction(_, _, _)
             | Self::TaskFunction(_, _) => "function",
             Self::Placeholder => "placeholder",
             Self::VmBinding(cell) => cell
@@ -72,6 +97,15 @@ impl Value {
     pub(crate) fn resolved(&self) -> Value {
         match self {
             Self::VmBinding(cell) => cell.current_value().unwrap_or(Value::Unit),
+            Self::BoundRemoteFunction(owner, handle, name) => {
+                match owner.current_value().map(|value| value.resolved()) {
+                    Some(Self::RemoteNamespace(_)) => {
+                        Self::BoundRemoteFunction(owner.clone(), *handle, name.clone())
+                    }
+                    Some(value) => value,
+                    None => Value::Unit,
+                }
+            }
             value => value.clone(),
         }
     }
@@ -104,6 +138,10 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
         (Value::RemoteFunction(a_handle, a_name), Value::RemoteFunction(b_handle, b_name)) => {
             a_handle == b_handle && a_name == b_name
         }
+        (
+            Value::BoundRemoteFunction(a_owner, a_handle, a_name),
+            Value::BoundRemoteFunction(b_owner, b_handle, b_name),
+        ) => Gc::ptr_eq(a_owner, b_owner) && a_handle == b_handle && a_name == b_name,
         (Value::Task(a), Value::Task(b)) => a == b,
         (Value::TaskFunction(a_handle, a_name), Value::TaskFunction(b_handle, b_name)) => {
             a_handle == b_handle && a_name == b_name
@@ -174,6 +212,7 @@ unsafe impl<V: Visitor> TraceWith<V> for Value {
             Self::VmBinding(cell) => cell.accept(visitor)?,
             Self::Block(block) => block.accept(visitor)?,
             Self::Namespace(namespace) => namespace.accept(visitor)?,
+            Self::BoundRemoteFunction(owner, _, _) => owner.accept(visitor)?,
             _ => {}
         }
         Ok(())

@@ -144,7 +144,7 @@ The reserved words are:
 
 ```text
 as  attempt  await  branch  break  continue  do  function  if  import  let  match  new  pub
-remote  return  val  throw  until  var  while
+remote  return  this  val  throw  until  var  while
 ```
 
 ## 3. Grammar
@@ -163,14 +163,7 @@ terminator       = logical-NL ;
 layout           = horizontal-space | NL | comment ;
 separator        = horizontal-space | suppressed-NL | comment ;
 
-expression       = literal
-                 | symbol
-                 | identifier
-                 | member-access
-                 | list
-                 | block
-                 | annotated-block
-                 | bracket-expression
+expression       = postfix-expression
                  | declaration
                  | assignment
                  | match-expression
@@ -182,8 +175,21 @@ expression       = literal
                  | new-expression
                  | do-expression
                  | remote-expression
-                 | await-expression
-                 | call ;
+                 | await-expression ;
+
+postfix-expression
+                 = primary-expression,
+                   { ".", member-name } ;
+primary-expression
+                 = literal
+                 | symbol
+                 | "this"
+                 | identifier
+                 | "_"
+                 | list
+                 | block
+                 | annotated-block
+                 | bracket-expression ;
 
 literal          = number | string | "true" | "false" ;
 symbol           = ":", identifier-name ;
@@ -197,8 +203,11 @@ block            = "{", layout*, [ statement-list ], layout*, "}" ;
 annotated-block  = "@", separator*, context-requirements, separator*, block ;
 context-requirements
                  = "(", separator*,
-                   [ identifier, { separator+, identifier } ],
+                   [ context-requirement,
+                     { separator+, context-requirement } ],
                    separator*, ")" ;
+context-requirement
+                 = [ "*" | "&" ], identifier ;
 bracket-expression
                  = "[", separator*, expression,
                    { separator+, expression }, separator*, "]" ;
@@ -209,7 +218,11 @@ declaration      = [ visibility, separator+ ], ( binding
 visibility       = "pub" ;
 binding          = ( "val" | "var" ), separator+,
                    binding-pattern, separator+, expression ;
-assignment       = "let", separator+, binding-pattern, separator+, expression ;
+assignment       = "let", separator+, assignment-target, separator+, expression ;
+assignment-target
+                 = binding-pattern | member-target ;
+member-target    = ( identifier | "this" ), ".", member-name,
+                   { ".", member-name } ;
 binding-pattern  = identifier | "_" | binding-list-pattern ;
 binding-list-pattern
                  = "(", separator*, [ binding-pattern,
@@ -221,7 +234,6 @@ match-list-pattern
 function-declaration
                  = "function", separator+, identifier, separator*,
                    match-pattern, separator+, expression ;
-member-access    = identifier, ".", member-name, { ".", member-name } ;
 member-name      = identifier | reserved-word ;
 
 conditional      = "if", separator+, expression, separator+,
@@ -245,18 +257,22 @@ match-arm        = match-pattern, separator+, expression ;
 import-expression
                  = "import", separator+, ( string | import-path ),
                    [ separator+, "as", separator+, identifier ] ;
-new-expression   = "new", separator+, expression ;
+new-expression   = "new", separator+, expression,
+                   { separator+, expression } ;
 do-expression    = "do", separator+, expression ;
 remote-expression = "remote", separator+, expression ;
 await-expression  = "await", separator+, expression ;
-
-call             = expression, separator+, expression,
-                   { separator+, expression } ;
 ```
 
-Every runtime call has a callee and one list argument. At a line or bracket
-boundary, the expressions following the callee are implicitly packed into that
-argument list:
+`expression` describes one parsed expression; it does not recursively include
+a call production. Calls are assembled by the containing physical line or
+bracket. Every runtime call has a callee and one list argument. When a line
+contains multiple expressions, the first is the callee and the remaining
+expressions are implicitly packed into its argument list. A bracket always
+establishes a call boundary: its first expression is the callee, and any
+remaining expressions are packed in the same way.
+
+For example:
 
 ```pima
 Console.println "sum:" [Math.sum 1 2 3]
@@ -268,10 +284,35 @@ argument list `("42")`. Every explicit parenthesized expression contributes
 one element to that implicit argument list: `operation (a b)` passes
 `((a b))`. Parentheses never disappear at a call boundary.
 
+A physical line is a command boundary. A line containing one ordinary
+expression evaluates it and, when the result is callable, invokes it with the
+empty argument list. A non-callable result passes through unchanged. A line
+containing two or more expressions always invokes the first with the remaining
+expressions as its argument pack. Brackets are strict call boundaries:
+
+```pima
+operation       // call with () when callable; otherwise return its value
+operation 1 2   // call operation with (1 2)
+[operation]     // call operation with ()
+[operation 1 2] // call operation with (1 2)
+(operation 1 2) // construct a three-element list
+```
+
 A bracketed callee with no operands receives the empty argument list, so `[run]`
 is a zero-argument invocation. `[run ()]` is different: it passes one explicit
-empty list and therefore receives `(())`. Outside brackets, a function name
-alone evaluates to the function value rather than invoking it.
+empty list and therefore receives `(())`. Unlike a zero-operand line command,
+a bracket call is strict: a non-callable callee throws a type error.
+
+To preserve a callable value without executing it as the line's command, use
+it in an operand position such as a binding value or explicit control
+transfer:
+
+```pima
+function multiplier (factor) {
+    function apply (value) { * factor value }
+    return apply
+}
+```
 
 Declarations and control structures follow the same surface principle: the
 leading reserved word determines the fixed expression operands that follow it.
@@ -389,6 +430,11 @@ their name.
 
 A list evaluates its elements from left to right and produces a new immutable
 list.
+
+At statement level, the physical line is a command. After resolving its first
+expression, Pima invokes callable values and returns non-callable values. Thus
+`serve` on its own line calls a zero-parameter function, while `42`, `"text"`,
+or a name bound to either value simply returns that value.
 
 A bracket expression evaluates its callee and implicitly packed argument from
 left to right, immediately invokes the callee, and yields the result:
@@ -666,6 +712,15 @@ Privacy is enforced at an environment boundary:
 `pub` modifies declarations only. It cannot prefix `let`, an expression, or a
 function parameter. Public mutable state is permitted with `pub var`, though
 APIs should generally prefer private state exposed through public functions.
+Deliberately public mutable members are writable through member assignment:
+
+```pima
+let counter.count 10
+```
+
+Only members declared with `var` are assignable. `pub val` remains externally
+readable but immutable, and private members remain inaccessible from outside
+their object.
 
 ## 7. Functions, closures, and partial application
 
@@ -919,6 +974,46 @@ A plain block has no enforced context contract and preserves the original open
 block behavior. `@()` is permitted and creates an annotated block whose
 required context list is empty.
 
+Each requirement may declare how its value crosses an isolated worker
+boundary:
+
+```pima
+val Worker @(
+    configuration
+    *workload
+    &service
+) { ... }
+```
+
+- `name` copies a transportable snapshot and is the default;
+- `*name` moves the value and replaces its shared caller-side location with an
+  `(:error :move_error :moved_value)` value after the worker is created; and
+- `&name` shares an existing remote-object, future, or TCP-listener handle.
+
+Move is transactional with respect to worker creation. A missing or
+untransportable value leaves the caller's binding unchanged. Sharing an
+ordinary scalar, list, local object, closure, or mutable cell fails with
+`:unsendable_value`. For local block execution these markers do not alter
+lexical lookup; they describe only transport across an isolated boundary.
+
+Assignment preserves identity for reference-like values: objects, functions,
+blocks, remote objects, futures, and native resource handles. A binding made
+from one of these values is another reference to the same VM location, not a
+copy and not a move. Consequently, successfully moving through any such alias
+replaces the shared source location, and every caller-side alias observes the
+same `:moved_value` error. Scalar and persistent-data assignment retains value
+semantics.
+
+The moved error records where and how the move occurred. It exposes immutable
+`move_operation`, `move_source`, `move_start`, and `move_end` fields, and its
+runtime metadata retains the move instruction as the diagnostic origin. This
+provenance is created only when worker creation succeeds.
+
+Reading a function member produces a bound function. Storing, passing, or
+returning that function creates another reference; it does not remove the
+member or change its object. Its `this` value remains the object from which the
+function was read. Ownership changes only at an explicit move/share boundary.
+
 ## 10. Core operations
 
 Only arithmetic and comparison operators are implicitly available to user
@@ -1132,13 +1227,45 @@ environment is the scope in which `new` is evaluated. Its declarations may
 therefore initialize fields from constructor parameters. Functions declared
 inside the block close over the completed object environment.
 
+`this` is a reserved value referring to that completed object from inside its
+methods:
+
+```pima
+val Counter {
+    pub val count 42
+    pub function current () this
+    pub function read () this.count
+}
+```
+
+Each `new` expression creates its own `this` binding, so nested objects refer
+to themselves rather than an enclosing object. The binding is private and
+immutable and cannot be redeclared. It is filled when construction completes;
+directly evaluating `this` from an initializer before completion is an
+uninitialized-binding error. Outside object construction, `this` is an unbound
+reserved value.
+
+`new` accepts one or more code-block templates through its containing line or
+bracket boundary. Multiple operands are packed in source order and composed
+with the same leftmost-wins behavior as an explicit template list:
+
+```pima
+[new Specialized Base]
+[new (Specialized Base)]
+```
+
+`do`, by contrast, accepts exactly one code block. Additional operands are a
+syntax error.
+
 Object construction proceeds as follows:
 
-1. Evaluate the operand and require a code block.
-2. Create a fresh object environment linked to the current scope.
-3. Execute the block in that object environment.
-4. Validate its optional public `types` declaration.
-5. Return the completed object.
+1. Evaluate the operands and require one or more code-block templates.
+2. Compose multiple templates in source order, with the leftmost surviving
+   declaration taking precedence.
+3. Create a fresh object environment linked to the current scope.
+4. Execute the surviving declarations in that object environment.
+5. Validate its optional public `types` declaration.
+6. Return the completed object.
 
 If block execution, a declaration, or type validation throws, construction
 fails and the incomplete object is discarded. External side effects already
@@ -1179,6 +1306,30 @@ square.set_width 40
 An object value is not implicitly callable, and `square set_width 40` does
 not perform member lookup. Accessing a private member from outside its object
 is an error, even if the member's name is known.
+
+`let` also accepts a member-access target. A public mutable member may be
+updated externally, while a method may update its own private mutable members
+through `this`:
+
+```pima
+val counter new {
+    var count 0
+
+    pub function increment () {
+        let this.count (+ this.count 1)
+    }
+}
+
+counter.increment
+```
+
+Member assignment evaluates the target object and replacement expression
+before committing the update. If target resolution, visibility checking,
+mutability checking, or replacement evaluation fails, the existing member
+value is unchanged. Assigning a private member externally raises
+`:visibility_error`; assigning an immutable member raises `:mutation_error`.
+Remote-object members cannot be assigned directly; their state changes through
+the remote object's public functions.
 
 ## 12. Imports
 
@@ -1410,6 +1561,11 @@ repository's `examples/http_server_lib.pima` implements request framing,
 HTTP/1.x parsing, handler dispatch, response validation, and serialization in
 Pima. `demos/http_file_server.pima` combines it with the static file-serving
 example.
+
+A TCP listener is a synchronized host handle and may be supplied to remote
+workers through an `&listener` context requirement. This supports bounded
+accept-worker pools. Accepted connections remain owned by the worker that
+accepted them; ordinary Pima objects and VM heaps are not shared.
 
 ## 13. Remote object construction
 
