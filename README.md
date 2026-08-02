@@ -3,22 +3,131 @@
 Pima is dual-licensed under the MIT License or Apache License 2.0, at your option.
 
 Pima is an experimental, expression-oriented language implemented with a
-register-based virtual machine in Rust. Its central ideas are:
-
-- physical line endings terminate statements;
-- square brackets invoke immediately;
-- braces produce uninstantiated code blocks;
-- `@(name...) { ... }` declares a block's required execution context;
-- `do` executes a block in the current environment;
-- bindings are immutable unless declared with `var`;
-- objects are private by default and expose members with `pub`;
-- lists are immutable persistent values; and
-- errors are typed object values handled with `throw` and `attempt`.
+register-based virtual machine in Rust. Programs are organized around commands,
+values, code blocks, and objects rather than punctuation-heavy call syntax.
 
 The language is under active design. The normative description lives in
 [docs/language-reference.md](docs/language-reference.md); implementation
 boundaries and invariants are described in
 [docs/architecture.md](docs/architecture.md).
+
+## Core mechanics
+
+### Lines are commands
+
+Each physical line begins with a command. If its first value is callable, Pima
+invokes it with the remaining values packed into one argument list. Otherwise,
+the line simply returns that value.
+
+```pima
+import "/pima/library/standard"
+
+Console.println "Hello from Pima"
++ (20 22)
+42
+```
+
+Square brackets invoke an expression immediately, which is useful when a call
+must be nested inside another expression:
+
+```pima
+Console.println [+ 20 22]
+```
+
+Parentheses create list values; they do not call functions:
+
+```pima
+val numbers (1 2 3)
+```
+
+### Words and symbols
+
+A bare word resolves its bound value. A leading colon requests the word itself
+as a symbol, generally when the surrounding expression would otherwise resolve
+it as a name:
+
+```pima
+val status :ready
+```
+
+Symbols are ordinary values and are commonly used for tags and type names.
+
+### Bindings and mutation
+
+`val` creates an immutable binding, `var` creates a mutable binding, and `let`
+updates an existing mutable location:
+
+```pima
+val name "Pima"
+var count 0
+let count [+ count 1]
+```
+
+Lists and scalar data have value semantics. Objects, functions, blocks,
+futures, and native handles have reference identity when assigned to another
+binding.
+
+### Blocks and objects
+
+Braces create an inert code block. `do` executes one in the current context,
+while `new` combines one or more blocks into a new object:
+
+```pima
+val Counter {
+    pub var count 0
+
+    pub function increment () {
+        let this.count [+ this.count 1]
+        this.count
+    }
+}
+
+val counter [new Counter]
+counter.increment
+let counter.count 10
+```
+
+Members are private unless declared with `pub`. A `pub var` is deliberately
+readable and writable from outside the object. Inside a method, the reserved
+value `this` refers to the object that owns the bound method.
+
+Accessing a function member produces a bound function reference:
+
+```pima
+val increment counter.increment
+increment
+```
+
+Calling `increment` is equivalent to calling `counter.increment`; its `this`
+value remains `counter`.
+
+### Errors and concurrency
+
+Errors are typed object values. `throw` raises one and `attempt` returns a
+raised error as a value so it can be inspected.
+
+Remote objects execute in isolated workers. An annotated block declares the
+context it needs and how each value crosses the worker boundary:
+
+```pima
+val Worker @(
+    configuration
+    *workload
+    &service
+) {
+    pub function run () {
+        workload
+    }
+}
+```
+
+- `configuration` copies a transportable snapshot.
+- `*workload` moves it and invalidates all caller-side references to its shared
+  source location.
+- `&service` shares a synchronized remote, future, or TCP-listener handle.
+
+A moved location becomes a typed `:moved_value` error that records the source
+span and operation responsible for the move.
 
 ## Command line
 
@@ -56,7 +165,7 @@ assert_eq!(outcome.value, Some(pima::Value::Integer(42)));
 `RunOutcome::diagnostics` contains lexer, parser, and uncaught runtime errors.
 An unsuccessful run has no value.
 
-## Example
+## Complete example
 
 ```pima
 import "/pima/library/standard"
@@ -72,7 +181,7 @@ function factorial (number) {
 [factorial 6]
 ```
 
-The planned ownership-aware context contract for remote objects keeps context
+The ownership-aware context contract for remote objects keeps context
 requirements on the object template:
 
 ```pima
@@ -81,7 +190,7 @@ val Worker @(
     *input
     &database
 ) {
-    pub function run {
+    pub function run () {
         // configuration is an immutable snapshot
         // input is owned exclusively by this worker
         // database is a shared remote handle

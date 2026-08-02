@@ -652,3 +652,18 @@ fn parses_all_examples_and_demos() {
         }
     }
 }
+
+#[test]
+fn parses_every_pima_example_in_the_readme() {
+    let readme = include_str!("../README.md");
+    let mut examples = 0;
+    for section in readme.split("```pima\n").skip(1) {
+        let source = section
+            .split_once("\n```")
+            .map(|(source, _)| source)
+            .expect("Pima README fence should be closed");
+        parse_source(source);
+        examples += 1;
+    }
+    assert!(examples > 0, "README should contain Pima examples");
+}
