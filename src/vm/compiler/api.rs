@@ -67,5 +67,6 @@ pub fn compile_module_with_globals_and_pipeline(
 fn finish(compiler: Compiler<'_>, pipeline: &PassPipeline) -> Result<Program, Vec<Diagnostic>> {
     let mut program = compiler.compile()?;
     pipeline.run(&mut program)?;
+    super::super::verifier::verify(&program)?;
     Ok(program)
 }

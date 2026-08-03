@@ -4,7 +4,7 @@ use crate::{
 };
 
 use super::{Compiler, Instruction, Register};
-use crate::vm::ir::Primitive;
+use crate::vm::ir::{CallArgument, Primitive};
 
 impl Compiler<'_> {
     pub(super) fn compile_call(
@@ -24,21 +24,31 @@ impl Compiler<'_> {
         {
             return self.compile_primitive_call(callee, argument, span);
         }
+        let direct_closure = matches!(&self.module.node(callee).kind, NodeKind::Identifier(name) if self.functions.contains_key(name))
+            && !contains_placeholder(self.module, argument);
         let callee = self.compile_node(callee)?;
         let argument = self.compile_call_argument(argument)?;
         let destination = self.allocate_register();
-        self.instructions.push(Instruction::CallDynamic {
-            destination,
-            callee,
-            argument,
-            command,
+        self.instructions.push(if direct_closure {
+            Instruction::CallClosure {
+                destination,
+                callee,
+                argument,
+            }
+        } else {
+            Instruction::CallDynamic {
+                destination,
+                callee,
+                argument,
+                command,
+            }
         });
         Some(destination)
     }
 
-    fn compile_call_argument(&mut self, argument: NodeId) -> Option<Register> {
+    fn compile_call_argument(&mut self, argument: NodeId) -> Option<CallArgument> {
         let NodeKind::List(arguments) = &self.module.node(argument).kind else {
-            return self.compile_node(argument);
+            return self.compile_node(argument).map(CallArgument::Value);
         };
         let arguments = arguments.clone();
         let elements = arguments
@@ -48,12 +58,7 @@ impl Compiler<'_> {
                 _ => self.compile_node(argument),
             })
             .collect();
-        let destination = self.allocate_register();
-        self.instructions.push(Instruction::MakeArguments {
-            destination,
-            elements,
-        });
-        Some(destination)
+        Some(CallArgument::Pack(elements))
     }
 
     fn compile_primitive_call(
@@ -105,5 +110,13 @@ impl Compiler<'_> {
             arguments,
         });
         Some(destination)
+    }
+}
+
+fn contains_placeholder(module: &crate::syntax::ast::Module, node: NodeId) -> bool {
+    match &module.node(node).kind {
+        NodeKind::Placeholder => true,
+        NodeKind::List(nodes) => nodes.iter().any(|node| contains_placeholder(module, *node)),
+        _ => false,
     }
 }

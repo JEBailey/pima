@@ -84,6 +84,7 @@ impl Compiler<'_> {
                     register: Register(1 + index as u16),
                     block: local.block,
                     binding: local.binding,
+                    namespace: local.namespace,
                 },
             );
         }
@@ -106,6 +107,7 @@ impl Compiler<'_> {
                         register,
                         block: analysis.static_block(&name.text),
                         binding: true,
+                        namespace: false,
                     },
                 );
             }
@@ -170,6 +172,7 @@ impl Compiler<'_> {
                     register: Register(1 + index as u16),
                     block: None,
                     binding: true,
+                    namespace: false,
                 },
             );
         }
@@ -241,6 +244,7 @@ impl Compiler<'_> {
                     register,
                     block: analysis.static_block(&name.text),
                     binding: true,
+                    namespace: false,
                 },
             );
         }

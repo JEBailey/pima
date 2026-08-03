@@ -157,9 +157,7 @@ pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
         (Value::String(a), Value::String(b)) => a == b,
         (Value::Symbol(a), Value::Symbol(b)) => a == b,
         (Value::List(a), Value::List(b)) => {
-            let av: Vec<_> = a.iter().collect();
-            let bv: Vec<_> = b.iter().collect();
-            av.len() == bv.len() && av.iter().zip(bv.iter()).all(|(x, y)| x == y)
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x == y)
         }
         (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
         (Value::VmClosure(a), Value::VmClosure(b)) => Gc::ptr_eq(a, b),
@@ -291,8 +289,26 @@ unsafe impl<V: Visitor> TraceWith<V> for Value {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct PersistentList(Vec<Value>);
+/// An immutable list backed by shared contiguous storage.
+///
+/// A tail is represented by advancing `start`, so repeated `rest` operations
+/// are O(1) and do not clone the remaining elements. Constructing a list and
+/// prepending remain O(n), preserving the compact indexed representation used
+/// by native functions and transport.
+#[derive(Clone, Debug)]
+pub struct PersistentList {
+    values: Arc<[Value]>,
+    start: usize,
+}
+
+impl Default for PersistentList {
+    fn default() -> Self {
+        Self {
+            values: Arc::from([]),
+            start: 0,
+        }
+    }
+}
 
 impl PersistentList {
     pub fn empty() -> Self {
@@ -300,41 +316,55 @@ impl PersistentList {
     }
 
     pub fn first(&self) -> Option<&Value> {
-        self.0.first()
+        self.as_slice().first()
     }
 
     pub fn rest(&self) -> Option<Self> {
-        (!self.0.is_empty()).then(|| Self(self.0[1..].to_vec()))
+        (!self.is_empty()).then(|| Self {
+            values: self.values.clone(),
+            start: self.start + 1,
+        })
     }
 
     pub fn push_front(&self, value: Value) -> Self {
-        let mut values = Vec::with_capacity(self.0.len() + 1);
-        values.push(value);
-        values.extend(self.0.iter().cloned());
-        Self(values)
+        Self {
+            values: std::iter::once(value).chain(self.iter().cloned()).collect(),
+            start: 0,
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.values.len() - self.start
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.start == self.values.len()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Value> {
-        self.0.iter()
+        self.as_slice().iter()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Value> {
+        self.as_slice().get(index)
     }
 
     /// Collect elements into a Vec. O(n) — use for testing/inspection.
     pub fn to_vec(&self) -> Vec<Value> {
-        self.0.to_vec()
+        self.as_slice().to_vec()
+    }
+
+    fn as_slice(&self) -> &[Value] {
+        &self.values[self.start..]
     }
 }
 
 impl FromIterator<Value> for PersistentList {
     fn from_iter<T: IntoIterator<Item = Value>>(values: T) -> Self {
-        Self(values.into_iter().collect())
+        Self {
+            values: values.into_iter().collect(),
+            start: 0,
+        }
     }
 }
 
@@ -386,5 +416,20 @@ mod tests {
             &Value::Float(f64::NAN),
             &Value::Float(f64::NAN)
         ));
+    }
+
+    #[test]
+    fn persistent_list_tails_share_their_storage() {
+        let list = [Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+            .into_iter()
+            .collect::<PersistentList>();
+        let tail = list.rest().expect("non-empty list has a tail");
+
+        assert!(Arc::ptr_eq(&list.values, &tail.values));
+        assert_eq!(tail.to_vec(), vec![Value::Integer(2), Value::Integer(3)]);
+        assert_eq!(
+            list.to_vec(),
+            vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+        );
     }
 }

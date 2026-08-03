@@ -8,11 +8,13 @@ use crate::{
 use super::{
     ast::{
         AssignmentTarget, BindingKind, Block, BlockId, BranchArm, ContextRequirement,
-        ContextTransferMode, LoopKind, MatchArm, Module, Name, NamespaceImportSelection, Node,
-        NodeId, NodeKind, Pattern, Visibility,
+        ContextTransferMode, LoopKind, MatchArm, Module, Name, Node, NodeId, NodeKind, Visibility,
     },
     token::{Keyword, Token, TokenKind},
 };
+
+mod imports;
+mod patterns;
 
 pub fn parse(tokens: &[Token]) -> Result<Module, Vec<Diagnostic>> {
     let output = parse_recovering(tokens);
@@ -497,94 +499,6 @@ impl Parser<'_> {
         Ok(object)
     }
 
-    fn parse_binding_pattern(&mut self) -> ParseResult<Pattern> {
-        let token = self.peek().cloned().ok_or_else(|| {
-            self.report_eof("expected binding target");
-        })?;
-        match token.kind {
-            TokenKind::Identifier(name) => {
-                self.advance();
-                Ok(Pattern::Capture(Name {
-                    text: name,
-                    span: token.span,
-                }))
-            }
-            TokenKind::Underscore => {
-                self.advance();
-                Ok(Pattern::Wildcard)
-            }
-            TokenKind::LeftParen => {
-                self.advance();
-                let mut elements = Vec::new();
-                self.skip_eols();
-                while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
-                    if self.at_eof() {
-                        self.report_eof("unterminated binding pattern; expected `)`");
-                        return Err(());
-                    }
-                    elements.push(self.parse_binding_pattern()?);
-                    self.skip_eols();
-                }
-                self.advance();
-                Ok(Pattern::List(elements))
-            }
-            _ => {
-                self.report_here("expected a binding name, `_`, or nested binding pattern");
-                Err(())
-            }
-        }
-    }
-
-    fn parse_pattern(&mut self) -> ParseResult<Pattern> {
-        let token = self.peek().cloned().ok_or_else(|| {
-            self.report_eof("expected pattern");
-        })?;
-        match token.kind {
-            TokenKind::Identifier(name) => {
-                self.advance();
-                Ok(Pattern::Capture(Name {
-                    text: name,
-                    span: token.span,
-                }))
-            }
-            TokenKind::Symbol(name) => {
-                self.advance();
-                let literal = self.alloc(token.span, NodeKind::Symbol(name));
-                Ok(Pattern::Literal(literal))
-            }
-            TokenKind::Boolean(_)
-            | TokenKind::Integer(_)
-            | TokenKind::Float(_)
-            | TokenKind::String(_) => {
-                let literal = self.parse_primary()?;
-                Ok(Pattern::Literal(literal))
-            }
-            TokenKind::Underscore => {
-                self.advance();
-                Ok(Pattern::Wildcard)
-            }
-            TokenKind::LeftParen => {
-                self.advance();
-                let mut elements = Vec::new();
-                self.skip_eols();
-                while !self.at(|kind| matches!(kind, TokenKind::RightParen)) {
-                    if self.at_eof() {
-                        self.report_eof("unterminated list pattern; expected `)`");
-                        return Err(());
-                    }
-                    elements.push(self.parse_pattern()?);
-                    self.skip_eols();
-                }
-                self.advance();
-                Ok(Pattern::List(elements))
-            }
-            _ => {
-                self.report_here("expected capture name, literal, `_`, or list pattern");
-                Err(())
-            }
-        }
-    }
-
     fn parse_match(&mut self) -> ParseResult<NodeId> {
         let start = self.advance().span;
         if self.at_statement_end() {
@@ -658,7 +572,7 @@ impl Parser<'_> {
         let (name, name_span) = self.expect_identifier("expected function name such as `add`")?;
         let parameter = self.parse_pattern()?;
         let mut captures = HashSet::new();
-        if let Some(duplicate) = duplicate_capture(&parameter, &mut captures) {
+        if let Some(duplicate) = patterns::duplicate_capture(&parameter, &mut captures) {
             self.diagnostics.push(Diagnostic::at_error(
                 format!("duplicate function parameter `{}`", duplicate.text),
                 duplicate.span,
@@ -754,101 +668,6 @@ impl Parser<'_> {
             self.join(start, self.node(value).span),
             NodeKind::Throw(value),
         ))
-    }
-
-    fn parse_import(&mut self) -> ParseResult<NodeId> {
-        let start = self.advance().span;
-        if matches!(self.peek_kind(), Some(TokenKind::Identifier(_)))
-            && matches!(
-                self.tokens.get(self.position + 1).map(|token| &token.kind),
-                Some(TokenKind::Dot)
-            )
-        {
-            return self.parse_namespace_import(start);
-        }
-        let token = self.peek().cloned().ok_or_else(|| {
-            self.report_eof("expected module path after `import`");
-        })?;
-        let path = match token.kind {
-            TokenKind::String(path) | TokenKind::ImportPath(path) => path,
-            _ => {
-                self.report_here("module path must be a string or absolute virtual path");
-                return Err(());
-            }
-        };
-        self.advance();
-
-        let alias = if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
-            self.advance();
-            Some(
-                self.expect_identifier("expected alias name such as `standard` after `as`")?
-                    .0,
-            )
-        } else {
-            None
-        };
-
-        let end = self.previous().span;
-        Ok(self.alloc(self.join(start, end), NodeKind::Import { path, alias }))
-    }
-
-    fn parse_namespace_import(&mut self, start: Span) -> ParseResult<NodeId> {
-        let mut names = Vec::new();
-        let (first, first_span) = self.expect_identifier("expected object name after `import`")?;
-        names.push(Name {
-            text: first,
-            span: first_span,
-        });
-
-        loop {
-            self.expect_simple(
-                |kind| matches!(kind, TokenKind::Dot),
-                "expected `.` in object import",
-            )?;
-            let (text, span) = self.expect_member_name("expected member name or `*` after `.`")?;
-            if text.as_ref() == "*" {
-                if self.at(|kind| matches!(kind, TokenKind::Dot)) {
-                    self.report_here("`*` must be the final object import segment");
-                    return Err(());
-                }
-                if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
-                    self.report_here("wildcard object imports cannot use `as`");
-                    return Err(());
-                }
-                return Ok(self.alloc(
-                    self.join(start, span),
-                    NodeKind::NamespaceImport {
-                        path: names,
-                        selection: NamespaceImportSelection::Wildcard(span),
-                        alias: None,
-                    },
-                ));
-            }
-
-            let name = Name { text, span };
-            if self.at(|kind| matches!(kind, TokenKind::Dot)) {
-                names.push(name);
-                continue;
-            }
-
-            let alias = if self.at(|kind| matches!(kind, TokenKind::Keyword(Keyword::As))) {
-                self.advance();
-                let (text, span) =
-                    self.expect_identifier("expected alias name such as `negate` after `as`")?;
-                Some(Name { text, span })
-            } else {
-                None
-            };
-            let end = alias.as_ref().map_or(name.span, |alias| alias.span);
-            return Ok(self.alloc(
-                self.join(start, end),
-                NodeKind::NamespaceImport {
-                    path: names,
-                    selection: NamespaceImportSelection::Member(name),
-                    alias,
-                },
-            ));
-        }
     }
 
     fn parse_new(&mut self) -> ParseResult<NodeId> {
@@ -1128,17 +947,4 @@ fn is_reserved(name: &str) -> bool {
             | "var"
             | "while"
     )
-}
-
-fn duplicate_capture<'a>(
-    pattern: &'a Pattern,
-    captures: &mut HashSet<std::sync::Arc<str>>,
-) -> Option<&'a Name> {
-    match pattern {
-        Pattern::Capture(name) => (!captures.insert(name.text.clone())).then_some(name),
-        Pattern::List(elements) => elements
-            .iter()
-            .find_map(|element| duplicate_capture(element, captures)),
-        Pattern::Wildcard | Pattern::Literal(_) => None,
-    }
 }

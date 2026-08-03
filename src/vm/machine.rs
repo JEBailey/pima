@@ -4,7 +4,7 @@ use crate::{
     runtime::{NativeFunctionId, SymbolId, Value, VmCell, VmClosure, VmPartial, VmValue as Slot},
 };
 
-use super::ir::{Instruction, Primitive, Program};
+use super::ir::{CallArgument, Instruction, Primitive, Program};
 use super::native_context::VmNativeContext;
 
 #[derive(Debug)]
@@ -14,6 +14,32 @@ pub struct Machine {
     context: VmNativeContext,
     programs: std::collections::HashMap<u64, Program>,
     module_exports: std::collections::HashMap<u64, Value>,
+    /// Register buffers retained between executions. Function calls borrow a
+    /// suitably sized buffer and returns clear it before recycling, avoiding
+    /// one heap allocation per call in steady-state execution.
+    register_pool: std::cell::RefCell<Vec<Vec<Slot>>>,
+    metrics_enabled: bool,
+    metrics: std::cell::Cell<VmMetrics>,
+}
+
+/// Deterministic work counters for profiling VM executions. Metrics are
+/// opt-in so normal execution and Criterion timing do not pay counter costs.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VmMetrics {
+    pub instructions: u64,
+    pub dynamic_calls: u64,
+    pub primitive_calls: u64,
+    pub direct_closure_calls: u64,
+    pub member_operations: u64,
+    pub member_cache_hits: u64,
+    pub member_cache_misses: u64,
+    pub specialized_member_reads: u64,
+    pub generic_member_reads: u64,
+    pub referenced_member_receivers: u64,
+    pub argument_packs: u64,
+    pub argument_views: u64,
+    pub register_buffer_allocations: u64,
+    pub register_buffer_reuses: u64,
 }
 
 impl Default for Machine {
@@ -43,6 +69,9 @@ impl Machine {
             context,
             programs: std::collections::HashMap::new(),
             module_exports: std::collections::HashMap::new(),
+            register_pool: std::cell::RefCell::new(Vec::new()),
+            metrics_enabled: false,
+            metrics: std::cell::Cell::new(VmMetrics::default()),
         }
     }
 }
@@ -75,6 +104,54 @@ impl From<Diagnostic> for VmError {
 impl Machine {
     pub fn new(working_directory: std::path::PathBuf) -> Self {
         Self::with_context(VmNativeContext::new(working_directory))
+    }
+
+    pub fn set_metrics_enabled(&mut self, enabled: bool) {
+        self.metrics_enabled = enabled;
+    }
+
+    pub fn reset_metrics(&self) {
+        self.metrics.set(VmMetrics::default());
+    }
+
+    pub fn metrics(&self) -> VmMetrics {
+        self.metrics.get()
+    }
+
+    fn record_metric(&self, update: impl FnOnce(&mut VmMetrics)) {
+        if self.metrics_enabled {
+            let mut metrics = self.metrics.get();
+            update(&mut metrics);
+            self.metrics.set(metrics);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn record_member_metric(&self, warm: bool) {
+        let mut metrics = self.metrics.get();
+        metrics.member_operations += 1;
+        if warm {
+            metrics.member_cache_hits += 1;
+        } else {
+            metrics.member_cache_misses += 1;
+        }
+        self.metrics.set(metrics);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn record_member_read_kind(&self, specialized: bool, referenced: bool) {
+        let mut metrics = self.metrics.get();
+        if specialized {
+            metrics.specialized_member_reads += 1;
+        } else {
+            metrics.generic_member_reads += 1;
+        }
+        if referenced {
+            metrics.referenced_member_receivers += 1;
+        }
+        self.metrics.set(metrics);
     }
 
     pub(crate) fn with_concurrency(
@@ -233,15 +310,16 @@ impl Machine {
         self.programs
             .entry(program.id)
             .or_insert_with(|| program.clone());
+        let entry_registers = self.take_registers(
+            program.register_count,
+            &program.binding_registers,
+            &program.initial_bindings,
+        );
         let mut frames = vec![Frame {
             program: program.id,
             function: None,
             instruction_pointer: 0,
-            registers: initialize_registers(
-                program.register_count,
-                &program.binding_registers,
-                &program.initial_bindings,
-            ),
+            registers: entry_registers,
             return_destination: None,
             call_span: None,
         }];
@@ -290,6 +368,7 @@ impl Machine {
                 .collect();
             self.context.set_execution_metadata(active_span, stack);
             frames[frame_index].instruction_pointer += 1;
+            self.record_metric(|metrics| metrics.instructions += 1);
             let frame = &mut frames[frame_index];
             match instruction {
                 Instruction::LoadConstant {
@@ -509,20 +588,8 @@ impl Machine {
                     let values = elements
                         .iter()
                         .map(|register| language_value(&frame.registers[register.0 as usize]))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    frame.registers[destination.0 as usize] =
-                        Slot::Value(Value::List(values.into_iter().collect()));
-                }
-                Instruction::MakeArguments {
-                    destination,
-                    elements,
-                } => {
-                    let values = elements
-                        .iter()
-                        .map(|element| reference_value(&frame.registers[element.0 as usize]))
-                        .collect::<Result<Vec<_>, Diagnostic>>()?;
-                    frame.registers[destination.0 as usize] =
-                        Slot::Value(Value::List(values.into_iter().collect()));
+                        .collect::<Result<crate::runtime::PersistentList, _>>()?;
+                    frame.registers[destination.0 as usize] = Slot::Value(Value::List(values));
                 }
                 Instruction::MergeNamespaceTypes {
                     destination,
@@ -621,7 +688,7 @@ impl Machine {
                         .collect::<Result<Vec<_>, Diagnostic>>()?;
                     match self
                         .context
-                        .make_remote_namespace(blueprint.clone(), transported_context)
+                        .make_remote_namespace((**blueprint).clone(), transported_context)
                     {
                         Ok(namespace) => {
                             for binding in context {
@@ -667,10 +734,59 @@ impl Machine {
                     namespace,
                     name,
                     allow_private,
+                    cache,
                 } => {
+                    if self.metrics_enabled {
+                        self.record_member_metric(cache.get().is_some());
+                    }
                     let owner = reference_location(&frame.registers[namespace.0 as usize]);
+                    if self.metrics_enabled {
+                        self.record_member_read_kind(false, owner.is_some());
+                    }
                     let namespace = language_value(&frame.registers[namespace.0 as usize])?;
-                    match self.context.load_member(namespace, name, *allow_private) {
+                    match self
+                        .context
+                        .load_member(namespace, name, *allow_private, cache)
+                    {
+                        Ok(Value::RemoteFunction(handle, member)) if owner.is_some() => {
+                            frame.registers[destination.0 as usize] = Slot::Value(
+                                Value::BoundRemoteFunction(owner.unwrap(), handle, member),
+                            );
+                        }
+                        Ok(value) => {
+                            frame.registers[destination.0 as usize] = Slot::Value(value);
+                        }
+                        Err(error) => {
+                            catch_typed_error(&mut frames, &mut handlers, error)?;
+                            continue 'dispatch;
+                        }
+                    }
+                }
+                Instruction::LoadNamespaceMember {
+                    destination,
+                    namespace,
+                    name,
+                    allow_private,
+                    cache,
+                } => {
+                    if self.metrics_enabled {
+                        self.record_member_metric(cache.get().is_some());
+                    }
+                    let owner = reference_location(&frame.registers[namespace.0 as usize]);
+                    if self.metrics_enabled {
+                        self.record_member_read_kind(true, owner.is_some());
+                    }
+                    let value = language_value(&frame.registers[namespace.0 as usize])?;
+                    let result = match value {
+                        Value::Namespace(namespace) => self.context.load_fixed_namespace_member(
+                            namespace,
+                            name,
+                            *allow_private,
+                            cache,
+                        ),
+                        value => self.context.load_member(value, name, *allow_private, cache),
+                    };
+                    match result {
                         Ok(Value::RemoteFunction(handle, member)) if owner.is_some() => {
                             frame.registers[destination.0 as usize] = Slot::Value(
                                 Value::BoundRemoteFunction(owner.unwrap(), handle, member),
@@ -690,12 +806,16 @@ impl Machine {
                     source,
                     name,
                     allow_private,
+                    cache,
                 } => {
+                    if self.metrics_enabled {
+                        self.record_member_metric(cache.get().is_some());
+                    }
                     let namespace = language_value(&frame.registers[namespace.0 as usize])?;
                     let source = language_value(&frame.registers[source.0 as usize])?;
                     if let Err(error) =
                         self.context
-                            .store_member(namespace, name, source, *allow_private)
+                            .store_member(namespace, name, source, *allow_private, cache)
                     {
                         catch_typed_error(&mut frames, &mut handlers, error)?;
                         continue 'dispatch;
@@ -705,11 +825,15 @@ impl Machine {
                     namespace,
                     name,
                     allow_private,
+                    cache,
                 } => {
+                    if self.metrics_enabled {
+                        self.record_member_metric(cache.get().is_some());
+                    }
                     let namespace = language_value(&frame.registers[namespace.0 as usize])?;
                     if let Err(error) =
                         self.context
-                            .check_member_writable(namespace, name, *allow_private)
+                            .check_member_writable(namespace, name, *allow_private, cache)
                     {
                         catch_typed_error(&mut frames, &mut handlers, error)?;
                         continue 'dispatch;
@@ -720,10 +844,11 @@ impl Machine {
                     length,
                     message,
                 } => {
-                    let matches = matches!(
-                        &frame.registers[source.0 as usize],
-                        Slot::Value(Value::List(list)) if list.len() == *length as usize
-                    );
+                    let matches = match &frame.registers[source.0 as usize] {
+                        Slot::Value(Value::List(list)) => list.len() == *length as usize,
+                        Slot::Arguments(values) => values.len() == *length as usize,
+                        _ => false,
+                    };
                     if !matches {
                         let error = self
                             .context
@@ -736,10 +861,16 @@ impl Machine {
                     source,
                     length,
                     target,
-                } => match &frame.registers[source.0 as usize] {
-                    Slot::Value(Value::List(list)) if list.len() == *length as usize => {}
-                    _ => frame.instruction_pointer = *target,
-                },
+                } => {
+                    let matches = match &frame.registers[source.0 as usize] {
+                        Slot::Value(Value::List(list)) => list.len() == *length as usize,
+                        Slot::Arguments(values) => values.len() == *length as usize,
+                        _ => false,
+                    };
+                    if !matches {
+                        frame.instruction_pointer = *target;
+                    }
+                }
                 Instruction::JumpIfNotEqual {
                     left,
                     right,
@@ -766,10 +897,12 @@ impl Machine {
                     source,
                     index,
                 } => {
-                    let Slot::Value(Value::List(list)) = &frame.registers[source.0 as usize] else {
-                        return Err(VmError::internal("LIST_GET requires a list"));
+                    let value = match &frame.registers[source.0 as usize] {
+                        Slot::Value(Value::List(list)) => list.get(*index as usize),
+                        Slot::Arguments(values) => values.get(*index as usize),
+                        _ => return Err(VmError::internal("LIST_GET requires a list")),
                     };
-                    let Some(value) = list.iter().nth(*index as usize).cloned() else {
+                    let Some(value) = value.cloned() else {
                         return Err(VmError::internal("LIST_GET index is out of range"));
                     };
                     frame.registers[destination.0 as usize] = Slot::Value(value);
@@ -779,6 +912,7 @@ impl Machine {
                     primitive,
                     arguments,
                 } => {
+                    self.record_metric(|metrics| metrics.primitive_calls += 1);
                     let mut inline_arguments: [Value; 4] = std::array::from_fn(|_| Value::Unit);
                     let heap_arguments;
                     let arguments = if arguments.len() <= inline_arguments.len() {
@@ -858,14 +992,88 @@ impl Machine {
                             }),
                         })));
                 }
+                Instruction::CallClosure {
+                    destination,
+                    callee,
+                    argument,
+                } => {
+                    self.record_metric(|metrics| metrics.direct_closure_calls += 1);
+                    let callee = language_value(&frame.registers[callee.0 as usize])?;
+                    let argument = match argument {
+                        CallArgument::Value(argument) => {
+                            Slot::Value(language_value(&frame.registers[argument.0 as usize])?)
+                        }
+                        CallArgument::Pack(arguments) => Slot::Arguments({
+                            self.record_metric(|metrics| metrics.argument_views += 1);
+                            arguments
+                                .iter()
+                                .map(|argument| {
+                                    reference_value(&frame.registers[argument.0 as usize])
+                                })
+                                .collect::<Result<_, _>>()?
+                        }),
+                    };
+                    let Value::VmClosure(closure) = callee else {
+                        let error = self.context.typed_error(
+                            &["error", "type_error"],
+                            format!("cannot call value of type {}", callee.type_symbol()),
+                        );
+                        catch_typed_error(&mut frames, &mut handlers, error)?;
+                        continue 'dispatch;
+                    };
+                    if let Some(invalid) = invalid_closure_construction(&closure) {
+                        frame.registers[destination.0 as usize] = Slot::Value(invalid);
+                        continue 'dispatch;
+                    }
+                    let function = closure.function;
+                    let captures = closure.captures.clone();
+                    let owner = self.programs.get(&closure.program).ok_or_else(|| {
+                        VmError::internal("function's compiled module is not loaded in this VM")
+                    })?;
+                    let compiled = &owner.functions[function as usize];
+                    if captures.len() != compiled.capture_count as usize {
+                        return Err(VmError::internal("VM closure capture count mismatch"));
+                    }
+                    let mut registers = self.take_registers(
+                        compiled.register_count,
+                        &compiled.binding_registers,
+                        &[],
+                    );
+                    registers[0] = argument;
+                    for (index, capture) in captures.into_iter().enumerate() {
+                        registers[index + 1] = capture;
+                    }
+                    frames.push(Frame {
+                        program: closure.program,
+                        function: Some(function),
+                        instruction_pointer: 0,
+                        registers,
+                        return_destination: Some(*destination),
+                        call_span: active_span,
+                    });
+                }
                 Instruction::CallDynamic {
                     destination,
                     callee,
                     argument,
                     command,
                 } => {
+                    self.record_metric(|metrics| metrics.dynamic_calls += 1);
                     let mut callee = language_value(&frame.registers[callee.0 as usize])?;
-                    let mut argument = language_value(&frame.registers[argument.0 as usize])?;
+                    let mut argument = match argument {
+                        CallArgument::Value(argument) => {
+                            language_value(&frame.registers[argument.0 as usize])?
+                        }
+                        CallArgument::Pack(arguments) => Value::List({
+                            self.record_metric(|metrics| metrics.argument_packs += 1);
+                            arguments
+                                .iter()
+                                .map(|argument| {
+                                    reference_value(&frame.registers[argument.0 as usize])
+                                })
+                                .collect::<Result<_, _>>()?
+                        }),
+                    };
                     let invalid_construction = match &callee {
                         Value::VmClosure(closure) => invalid_closure_construction(closure),
                         Value::VmPartial(partial) => invalid_closure_construction(&partial.closure),
@@ -875,6 +1083,8 @@ impl Machine {
                         frame.registers[destination.0 as usize] = Slot::Value(invalid);
                         continue 'dispatch;
                     }
+                    let contains_placeholder = matches!(argument, Value::Placeholder)
+                        || matches!(&argument, Value::List(values) if values.iter().any(|value| matches!(value, Value::Placeholder)));
                     if *command
                         && !matches!(
                             callee,
@@ -889,8 +1099,6 @@ impl Machine {
                         frame.registers[destination.0 as usize] = Slot::Value(callee);
                         continue 'dispatch;
                     }
-                    let contains_placeholder = matches!(argument, Value::Placeholder)
-                        || matches!(&argument, Value::List(values) if values.iter().any(|value| matches!(value, Value::Placeholder)));
                     if contains_placeholder {
                         let Value::VmClosure(closure) = callee else {
                             let error = self.context.typed_error(
@@ -1102,7 +1310,7 @@ impl Machine {
                     if captures.len() != compiled.capture_count as usize {
                         return Err(VmError::internal("VM closure capture count mismatch"));
                     }
-                    let mut registers = initialize_registers(
+                    let mut registers = self.take_registers(
                         compiled.register_count,
                         &compiled.binding_registers,
                         &[],
@@ -1167,7 +1375,7 @@ impl Machine {
                         catch_typed_error(&mut frames, &mut handlers, error)?;
                         continue 'dispatch;
                     }
-                    let mut registers = initialize_registers(
+                    let mut registers = self.take_registers(
                         compiled.register_count,
                         &compiled.binding_registers,
                         &[],
@@ -1233,7 +1441,8 @@ impl Machine {
                 Instruction::Return { source } => {
                     let value = frame.registers[source.0 as usize].clone();
                     let destination = frame.return_destination;
-                    frames.pop();
+                    let returned = frames.pop().expect("return requires an active frame");
+                    self.recycle_registers(returned.registers);
                     handlers.retain(|handler| handler.frame_index < frame_index);
                     let Some(caller) = frames.last_mut() else {
                         return Ok(language_value(&value)?);
@@ -1244,11 +1453,40 @@ impl Machine {
             }
         }
     }
+
+    fn take_registers(
+        &self,
+        register_count: u16,
+        binding_registers: &[super::ir::Register],
+        initial_bindings: &[(super::ir::Register, Value)],
+    ) -> Vec<Slot> {
+        let required = register_count as usize;
+        let mut pool = self.register_pool.borrow_mut();
+        let buffer = pool
+            .iter()
+            .position(|buffer| buffer.capacity() >= required)
+            .map(|index| {
+                self.record_metric(|metrics| metrics.register_buffer_reuses += 1);
+                pool.swap_remove(index)
+            })
+            .unwrap_or_else(|| {
+                self.record_metric(|metrics| metrics.register_buffer_allocations += 1);
+                Vec::with_capacity(required)
+            });
+        drop(pool);
+        initialize_registers(buffer, required, binding_registers, initial_bindings)
+    }
+
+    fn recycle_registers(&self, mut registers: Vec<Slot>) {
+        registers.clear();
+        self.register_pool.borrow_mut().push(registers);
+    }
 }
 
 fn language_value(value: &Slot) -> Result<Value, Diagnostic> {
     match value {
         Slot::Value(value) => Ok(value.resolved()),
+        Slot::Arguments(values) => Ok(Value::List(values.iter().cloned().collect())),
         Slot::Uninitialized | Slot::Cell(_) => Err(Diagnostic::error(format!(
             "internal VM storage cannot cross the language-value boundary: {value:?}"
         ))),
@@ -1324,17 +1562,17 @@ struct Frame {
 }
 
 fn initialize_registers(
-    register_count: u16,
+    mut registers: Vec<Slot>,
+    register_count: usize,
     binding_registers: &[super::ir::Register],
     initial_bindings: &[(super::ir::Register, Value)],
 ) -> Vec<Slot> {
-    let mut registers = vec![Slot::Uninitialized; register_count as usize];
-    let initial_bindings = initial_bindings
-        .iter()
-        .cloned()
-        .collect::<std::collections::HashMap<_, _>>();
+    registers.resize(register_count, Slot::Uninitialized);
     for register in binding_registers {
-        registers[register.0 as usize] = match initial_bindings.get(register) {
+        registers[register.0 as usize] = match initial_bindings
+            .iter()
+            .find_map(|(candidate, value)| (candidate == register).then_some(value))
+        {
             Some(Value::VmBinding(cell)) => Slot::Cell(cell.clone()),
             initial => {
                 let fallback = initial.cloned().map(Slot::Value);
@@ -1457,7 +1695,7 @@ mod tests {
                 Instruction::CallDynamic {
                     destination: Register(2),
                     callee: Register(0),
-                    argument: Register(1),
+                    argument: CallArgument::Value(Register(1)),
                     command: false,
                 },
                 Instruction::Return {
@@ -1472,5 +1710,41 @@ mod tests {
             module_index: 0,
         };
         assert_eq!(machine.execute(&caller).unwrap(), Value::Integer(42));
+    }
+
+    #[test]
+    fn returned_frames_recycle_their_register_storage() {
+        let program = Program {
+            id: 3,
+            constants: vec![Value::Integer(7)],
+            instructions: vec![
+                Instruction::LoadConstant {
+                    destination: Register(0),
+                    constant: 0,
+                },
+                Instruction::Return {
+                    source: Register(0),
+                },
+            ],
+            instruction_spans: vec![None; 2],
+            register_count: 1,
+            functions: Vec::new(),
+            binding_registers: Vec::new(),
+            initial_bindings: Vec::new(),
+            module_index: 0,
+        };
+        let mut machine = Machine::default();
+        machine.set_metrics_enabled(true);
+
+        assert_eq!(machine.execute(&program).unwrap(), Value::Integer(7));
+        assert_eq!(machine.metrics().instructions, 2);
+        assert_eq!(machine.metrics().register_buffer_allocations, 1);
+        assert_eq!(machine.register_pool.borrow().len(), 1);
+        let capacity = machine.register_pool.borrow()[0].capacity();
+        assert_eq!(machine.execute(&program).unwrap(), Value::Integer(7));
+        assert_eq!(machine.metrics().instructions, 4);
+        assert_eq!(machine.metrics().register_buffer_reuses, 1);
+        assert_eq!(machine.register_pool.borrow().len(), 1);
+        assert_eq!(machine.register_pool.borrow()[0].capacity(), capacity);
     }
 }

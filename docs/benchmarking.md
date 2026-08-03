@@ -74,3 +74,37 @@ should remain unchanged. Always run the correctness suite as well:
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+# VM optimization comparisons
+
+Before changing VM representations, run the complete workspace test suite and
+save a Criterion baseline. Afterward, rerun the same tests and compare focused
+register-VM groups. In particular:
+
+- `primitive_add` and `branch` measure dispatch overhead.
+- `scalar_capture_call`, `list_pattern_call`, and `fibonacci_15` measure call
+  argument and frame costs.
+- `prepared_sum_1000_integers` measures large argument-pack construction.
+- `object_construct` and member-oriented programs measure namespace storage
+  and lookup behavior.
+
+Treat overlapping confidence intervals as inconclusive rather than reporting a
+speedup. A semantic test failure invalidates the performance result.
+
+The `sustained_vm` group supplies longer-running comparison workloads for
+arithmetic loops, user calls, member access, and mutable closures. Save a named
+baseline before changing the VM:
+
+```console
+cargo bench --bench language -- sustained_vm --save-baseline before-change
+```
+
+`Machine::set_metrics_enabled(true)` enables deterministic work counters. Use
+these in tests to prove that an optimization removes dispatches, allocations,
+or materializations; leave metrics disabled for wall-clock measurements.
+
+The `before-vm-1-6` comparison currently shows direct user calls about 2.7%
+faster, with integer loops and mutable closure calls statistically unchanged.
+Shrinking executable instructions from 88 to 48 bytes improved code density.
+The subsequent fixed-namespace member instruction brought the sustained member
+workload back to its original baseline (9.96 ms versus 9.95 ms, statistically
+unchanged), removing the earlier regression but not establishing a speedup.

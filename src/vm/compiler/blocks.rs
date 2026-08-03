@@ -51,6 +51,7 @@ impl Compiler<'_> {
                 register: self_binding,
                 block: None,
                 binding: true,
+                namespace: true,
             },
         );
 
@@ -130,6 +131,7 @@ impl Compiler<'_> {
                     register,
                     block: known_block,
                     binding: true,
+                    namespace: false,
                 },
             );
         }
@@ -369,6 +371,7 @@ impl Compiler<'_> {
                             register,
                             block: analysis.static_block(&name.text),
                             binding: true,
+                            namespace: false,
                         },
                     );
                 }

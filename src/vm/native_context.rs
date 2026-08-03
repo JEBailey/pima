@@ -252,6 +252,7 @@ impl VmNativeContext {
         value: Value,
         name: &str,
         allow_private: bool,
+        cache: &crate::vm::ir::MemberCache,
     ) -> NativeResult {
         if let Value::RemoteNamespace(handle) = value {
             return <Self as NativeContext>::load_remote_member(self, handle, name);
@@ -274,13 +275,71 @@ impl VmNativeContext {
                 ),
             ));
         };
+        self.load_namespace_member(namespace, name, allow_private, cache)
+    }
+
+    pub(crate) fn load_namespace_member(
+        &mut self,
+        namespace: crate::runtime::NamespaceRef,
+        name: &str,
+        allow_private: bool,
+        cache: &crate::vm::ir::MemberCache,
+    ) -> NativeResult {
         let symbol = self.symbols.intern(name);
-        let binding = namespace
-            .environment
-            .borrow()
-            .bindings
-            .get(&symbol)
-            .cloned();
+        let environment = namespace.environment.borrow();
+        let binding = cache
+            .get()
+            .and_then(|index| environment.bindings.get_index(index))
+            .filter(|(candidate, _)| **candidate == symbol)
+            .map(|(_, binding)| binding.clone())
+            .or_else(|| {
+                let (index, _, binding) = environment.bindings.get_full(&symbol)?;
+                cache.set(index);
+                Some(binding.clone())
+            });
+        drop(environment);
+        let Some(binding) = binding else {
+            return Err(self.typed_error(
+                &["error", "name_error"],
+                format!("object has no member `{name}`"),
+            ));
+        };
+        if binding.visibility == crate::runtime::BindingVisibility::Private && !allow_private {
+            return Err(self.typed_error(
+                &["error", "visibility_error"],
+                format!("member `{name}` is private"),
+            ));
+        }
+        Ok(binding.value)
+    }
+
+    /// Loads from a compiler-proven fixed local namespace site. Namespace
+    /// composition fixes the ordered slot layout, so a warmed site may trust
+    /// its cached slot without re-interning and comparing the member name.
+    pub(crate) fn load_fixed_namespace_member(
+        &mut self,
+        namespace: crate::runtime::NamespaceRef,
+        name: &str,
+        allow_private: bool,
+        cache: &crate::vm::ir::MemberCache,
+    ) -> NativeResult {
+        let environment = namespace.environment.borrow();
+        let binding = if let Some(index) = cache.get() {
+            environment
+                .bindings
+                .get_index(index)
+                .map(|(_, binding)| binding.clone())
+        } else {
+            let symbol = self.symbols.intern(name);
+            environment
+                .bindings
+                .get_full(&symbol)
+                .map(|(index, _, binding)| {
+                    cache.set(index);
+                    binding.clone()
+                })
+        };
+        drop(environment);
         let Some(binding) = binding else {
             return Err(self.typed_error(
                 &["error", "name_error"],
@@ -302,6 +361,7 @@ impl VmNativeContext {
         name: &str,
         replacement: Value,
         allow_private: bool,
+        cache: &crate::vm::ir::MemberCache,
     ) -> NativeResult {
         let Value::Namespace(namespace) = value else {
             return Err(self.typed_error(
@@ -311,13 +371,27 @@ impl VmNativeContext {
         };
         let symbol = self.symbols.intern(name);
         let mut environment = namespace.environment.borrow_mut();
-        let Some(binding) = environment.bindings.get_mut(&symbol) else {
+        let index = cache
+            .get()
+            .filter(|index| {
+                environment
+                    .bindings
+                    .get_index(*index)
+                    .is_some_and(|(candidate, _)| *candidate == symbol)
+            })
+            .or_else(|| environment.bindings.get_index_of(&symbol));
+        let Some(index) = index else {
             drop(environment);
             return Err(self.typed_error(
                 &["error", "name_error"],
                 format!("object has no member `{name}`"),
             ));
         };
+        cache.set(index);
+        let (_, binding) = environment
+            .bindings
+            .get_index_mut(index)
+            .expect("validated member index");
         if binding.visibility == crate::runtime::BindingVisibility::Private && !allow_private {
             drop(environment);
             return Err(self.typed_error(
@@ -348,6 +422,7 @@ impl VmNativeContext {
         value: Value,
         name: &str,
         allow_private: bool,
+        cache: &crate::vm::ir::MemberCache,
     ) -> NativeResult {
         let Value::Namespace(namespace) = value else {
             return Err(self.typed_error(
@@ -357,13 +432,29 @@ impl VmNativeContext {
         };
         let symbol = self.symbols.intern(name);
         let environment = namespace.environment.borrow();
-        let Some(binding) = environment.bindings.get(&symbol) else {
+        let indexed = cache
+            .get()
+            .and_then(|index| {
+                environment
+                    .bindings
+                    .get_index(index)
+                    .map(|entry| (index, entry))
+            })
+            .filter(|(_, (candidate, _))| **candidate == symbol)
+            .or_else(|| {
+                environment
+                    .bindings
+                    .get_full(&symbol)
+                    .map(|(index, candidate, binding)| (index, (candidate, binding)))
+            });
+        let Some((index, (_, binding))) = indexed else {
             drop(environment);
             return Err(self.typed_error(
                 &["error", "name_error"],
                 format!("object has no member `{name}`"),
             ));
         };
+        cache.set(index);
         if binding.visibility == crate::runtime::BindingVisibility::Private && !allow_private {
             drop(environment);
             return Err(self.typed_error(

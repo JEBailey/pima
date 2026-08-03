@@ -133,14 +133,14 @@ impl Compiler<'_> {
         let destination = self.allocate_register();
         self.instructions.push(Instruction::MakeRemoteNamespace {
             destination,
-            blueprint: RemoteBlueprint {
+            blueprint: Box::new(RemoteBlueprint {
                 preamble,
                 source: blueprint_source,
                 public_functions: public_functions
                     .into_iter()
                     .filter_map(|(name, public)| public.then_some(name))
                     .collect(),
-            },
+            }),
             context: context_bindings,
         });
         Some(destination)

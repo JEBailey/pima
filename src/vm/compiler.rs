@@ -10,7 +10,7 @@ use crate::{
 };
 
 use super::analysis::ScopeAnalysis;
-use super::ir::{Function, Instruction, NamespaceBinding, Program, Register};
+use super::ir::{Function, Instruction, MemberCache, NamespaceBinding, Program, Register};
 use super::passes::PassPipeline;
 
 mod api;
@@ -82,6 +82,7 @@ struct Local {
     register: Register,
     block: Option<BlockId>,
     binding: bool,
+    namespace: bool,
 }
 
 struct LoopContext {
@@ -159,6 +160,7 @@ impl<'a> Compiler<'a> {
                             register,
                             block: None,
                             binding: true,
+                            namespace: false,
                         },
                     );
                 }
@@ -217,6 +219,7 @@ impl<'a> Compiler<'a> {
                     register: binding,
                     block: None,
                     binding: true,
+                    namespace: false,
                 },
             );
             self.initial_bindings.push((binding, value));
@@ -329,11 +332,29 @@ impl<'a> Compiler<'a> {
             NodeKind::Member { object, member } => {
                 let namespace = self.compile_node(*object)?;
                 let destination = self.allocate_register();
-                self.instructions.push(Instruction::LoadMember {
-                    destination,
-                    namespace,
-                    name: member.text.clone(),
-                    allow_private: self.is_this_expression(*object),
+                let proven_namespace = matches!(self.module.node(*object).kind, NodeKind::New(_))
+                    || match &self.module.node(*object).kind {
+                        NodeKind::Identifier(name) => {
+                            self.locals.get(name).is_some_and(|local| local.namespace)
+                        }
+                        _ => false,
+                    };
+                self.instructions.push(if proven_namespace {
+                    Instruction::LoadNamespaceMember {
+                        destination,
+                        namespace,
+                        name: member.text.clone(),
+                        allow_private: self.is_this_expression(*object),
+                        cache: MemberCache::default(),
+                    }
+                } else {
+                    Instruction::LoadMember {
+                        destination,
+                        namespace,
+                        name: member.text.clone(),
+                        allow_private: self.is_this_expression(*object),
+                        cache: MemberCache::default(),
+                    }
                 });
                 Some(destination)
             }
@@ -343,7 +364,11 @@ impl<'a> Compiler<'a> {
                 pattern,
                 value,
             } => {
-                let block = (*mutability == BindingKind::Immutable)
+                let immutable = *mutability == BindingKind::Immutable;
+                let namespace_binding = immutable
+                    && matches!(pattern, Pattern::Capture(_))
+                    && matches!(self.module.node(*value).kind, NodeKind::New(_));
+                let block = immutable
                     .then(|| self.resolve_static_block(*value))
                     .flatten();
                 let value = self.compile_node(*value)?;
@@ -355,6 +380,9 @@ impl<'a> Compiler<'a> {
                     &mut captures,
                 );
                 self.commit_binding_captures(captures, *mutability == BindingKind::Mutable, block);
+                if namespace_binding && let Pattern::Capture(name) = pattern {
+                    self.locals.get_mut(&name.text).unwrap().namespace = true;
+                }
                 Some(self.load_constant(Value::Unit))
             }
             NodeKind::Assignment { target, value } => match target {
@@ -380,6 +408,7 @@ impl<'a> Compiler<'a> {
                         namespace,
                         name: member.text.clone(),
                         allow_private: self.is_this_expression(*object),
+                        cache: MemberCache::default(),
                     });
                     let source = self.compile_node(*value)?;
                     self.instructions.push(Instruction::StoreMember {
@@ -387,6 +416,7 @@ impl<'a> Compiler<'a> {
                         source,
                         name: member.text.clone(),
                         allow_private: self.is_this_expression(*object),
+                        cache: MemberCache::default(),
                     });
                     Some(source)
                 }
@@ -474,6 +504,7 @@ impl<'a> Compiler<'a> {
                         namespace: value,
                         name: name.text.clone(),
                         allow_private: false,
+                        cache: MemberCache::default(),
                     });
                     value = destination;
                 }
@@ -483,6 +514,7 @@ impl<'a> Compiler<'a> {
                     namespace: value,
                     name: member.text.clone(),
                     allow_private: false,
+                    cache: MemberCache::default(),
                 });
                 let local_name = alias.as_ref().unwrap_or(member).text.clone();
                 let binding = self.locals[&local_name].register;

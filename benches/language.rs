@@ -442,9 +442,9 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
         });
     });
 
-    let closure_source = "function make_adder (captured) {\n\
+    let closure_source = "function make_adder captured {\n\
          function add (value) { + captured value }\n\
-         add\n\
+         return add\n\
      }\n\
      val add_five [make_adder 5]\n";
     let mut interpreter_closure = Interpreter::default();
@@ -477,7 +477,7 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
              let value [+ value 1]\n\
              value\n\
          }\n\
-         next\n\
+         return next\n\
      }\n\
      val instance [counter 0]\n\
      [instance]\n\
@@ -646,6 +646,49 @@ fn engine_comparison_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
+fn sustained_vm_benchmarks(c: &mut Criterion) {
+    let workloads = [
+        (
+            "integer_loop_10000",
+            "var index 0\nvar total 0\nwhile [< index 10000] {\n let total [+ total index]\n let index [+ index 1]\n}\ntotal",
+            10_000_u64,
+        ),
+        (
+            "user_calls_5000",
+            "function increment (value) { + value 1 }\nvar index 0\nwhile [< index 5000] { let index [increment index] }\nindex",
+            5_000,
+        ),
+        (
+            "member_reads_5000",
+            "val Box { pub val value 7 }\nval box [new Box]\nvar index 0\nvar total 0\nwhile [< index 5000] {\n let total [+ total box.value]\n let index [+ index 1]\n}\ntotal",
+            5_000,
+        ),
+        (
+            "mutable_closure_calls_5000",
+            "function counter (start) {\n var value start\n function next () { let value [+ value 1]\n value }\n return next\n}\nval next [counter 0]\nvar index 0\nwhile [< index 5000] { let index [next] }\nindex",
+            5_000,
+        ),
+    ];
+    let mut group = c.benchmark_group("sustained_vm");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
+    for (name, source, operations) in workloads {
+        let program = compile_vm_source(source);
+        let mut machine = Machine::default();
+        group.throughput(Throughput::Elements(operations));
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(
+                    machine
+                        .execute(&program)
+                        .expect("sustained VM workload should execute"),
+                );
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
@@ -656,6 +699,7 @@ criterion_group! {
         syntax_benchmarks,
         runtime_benchmarks,
         memory_benchmarks,
-        engine_comparison_benchmarks
+        engine_comparison_benchmarks,
+        sustained_vm_benchmarks
 }
 criterion_main!(benches);

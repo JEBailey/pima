@@ -25,6 +25,8 @@ pub(crate) enum VmValue {
     Uninitialized,
     Value(Value),
     Cell(Gc<VmCell>),
+    /// A call pack that has not yet escaped into a language-level list.
+    Arguments(Vec<Value>),
 }
 
 #[derive(Debug)]
@@ -54,6 +56,7 @@ impl VmCell {
     pub(crate) fn current_value(&self) -> Option<Value> {
         match &*self.value.borrow() {
             VmValue::Value(value) => Some(value.resolved()),
+            VmValue::Arguments(values) => Some(Value::List(values.iter().cloned().collect())),
             VmValue::Cell(cell) => cell.current_value(),
             VmValue::Uninitialized => match &self.fallback {
                 Some(VmValue::Value(value)) => Some(value.resolved()),
@@ -69,6 +72,7 @@ impl VmCell {
                 cell.contains_reference_like_value()
             }
             VmValue::Value(value) => value.is_reference_like(),
+            VmValue::Arguments(values) => values.iter().any(Value::is_reference_like),
             VmValue::Uninitialized => false,
         }
     }
@@ -117,6 +121,7 @@ unsafe impl<V: Visitor> TraceWith<V> for VmValue {
             Self::Uninitialized => Ok(()),
             Self::Value(value) => value.accept(visitor),
             Self::Cell(cell) => cell.accept(visitor),
+            Self::Arguments(values) => values.accept(visitor),
         }
     }
 }

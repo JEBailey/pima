@@ -23,6 +23,7 @@ impl Compiler<'_> {
                         register: binding,
                         block: None,
                         binding: true,
+                        namespace: false,
                     },
                 );
             }
@@ -148,6 +149,7 @@ impl Compiler<'_> {
                     register,
                     block,
                     binding: true,
+                    namespace: false,
                 });
         }
     }
@@ -254,6 +256,7 @@ impl Compiler<'_> {
                         register: source,
                         block: None,
                         binding: false,
+                        namespace: false,
                     },
                 );
             }

@@ -33,6 +33,67 @@ fn compile_vm(source: &str) -> pima::vm::Program {
     compile(&module).expect("source should compile")
 }
 
+#[test]
+fn vm_metrics_measure_sustained_calls_and_warmed_member_sites() {
+    let program = compile_vm(
+        "val Box { pub val value 7 }\n\
+         val box [new Box]\n\
+         function identity (value) { value }\n\
+         var index 0\n\
+         while [< index 100] {\n\
+             identity box.value\n\
+             let index [+ index 1]\n\
+         }\n\
+         index",
+    );
+    let mut machine = Machine::default();
+    machine.set_metrics_enabled(true);
+
+    assert_eq!(machine.execute(&program).unwrap(), Value::Integer(100));
+    let metrics = machine.metrics();
+    assert_eq!(metrics.member_operations, 100);
+    assert_eq!(metrics.member_cache_misses, 1);
+    assert_eq!(metrics.member_cache_hits, 99);
+    assert_eq!(metrics.specialized_member_reads, 100);
+    assert_eq!(metrics.generic_member_reads, 0);
+    assert_eq!(metrics.referenced_member_receivers, 100);
+    // One construction plus two command calls per iteration: the member
+    // command resolves to its value, then `identity` consumes that value.
+    assert_eq!(metrics.dynamic_calls, 101);
+    assert_eq!(metrics.direct_closure_calls, 100);
+    assert_eq!(metrics.argument_packs, 101);
+    assert_eq!(metrics.argument_views, 100);
+    assert!(metrics.instructions > 500);
+}
+
+#[test]
+fn compiler_uses_direct_closure_calls_but_keeps_partial_calls_dynamic() {
+    let direct = compile_vm("function add (left right) { + left right }\n[add 20 22]");
+    assert!(
+        direct
+            .instructions()
+            .iter()
+            .any(|instruction| matches!(instruction, pima::vm::Instruction::CallClosure { .. }))
+    );
+
+    let partial = compile_vm("function add (left right) { + left right }\n[add 20 _]");
+    assert!(
+        partial
+            .instructions()
+            .iter()
+            .any(|instruction| matches!(instruction, pima::vm::Instruction::CallDynamic { .. }))
+    );
+}
+
+#[test]
+fn compiler_specializes_proven_local_namespace_reads() {
+    let program = compile_vm("val Box { pub val value 7 }\nval box [new Box]\nbox.value");
+    assert!(program.instructions().iter().any(|instruction| matches!(
+        instruction,
+        pima::vm::Instruction::LoadNamespaceMember { .. }
+    )));
+}
+
 fn run_vm_with_standard_globals(source: &str) -> Value {
     let mut sources = SourceMap::default();
     let source_id = sources.add("<vm-native-test>", source);

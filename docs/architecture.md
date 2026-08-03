@@ -24,8 +24,13 @@ The compiler pass pipeline is an explicit extension point between lowering and
 execution. Passes run in insertion order and visit both the module body and all
 compiled function bodies. Custom pipelines can add analysis or transformation
 stages; an empty pipeline is also available for measurement and debugging. The
-standard pipeline currently normalizes control flow by threading jump chains
-and removing no-op moves and jumps while preserving source-span alignment.
+standard pipeline normalizes control flow by threading jump chains and removing
+no-op moves and jumps while preserving source-span alignment. An opt-in
+conservative linear-scan register allocator is available for experiments and
+large-frame policies. Capture ABI registers remain fixed, binding cells receive
+permanent frame slots, and only temporary registers with non-overlapping
+instruction intervals are reused. It is not enabled globally because sustained
+integer and member workloads currently regress despite their smaller frames.
 `compile_with_pipeline` and its module/global variants accept a caller-built
 `PassPipeline`; `PassPipeline::standard` selects production passes, while
 `PassPipeline::new` starts empty for baselines and compiler experiments.
@@ -331,6 +336,13 @@ Transforms physical tokens into logical statements. It owns the inline-block
 continuation rule and produces recovery diagnostics for malformed source.
 Parsing never depends on runtime arity.
 
+Parser code is divided by grammar responsibility. `parser.rs` owns parser
+state, expression dispatch, delimiters, recovery, and small special forms;
+`parser/patterns.rs` owns binding and match-pattern grammar plus duplicate
+capture discovery; and `parser/imports.rs` owns module and namespace-import
+grammar. Additional syntax families should follow this boundary rather than
+adding another unrelated cluster to the parser-state file.
+
 ## 6. Runtime layer
 
 `Value` contains Pima's scalar values, persistent lists, native function IDs,
@@ -346,6 +358,11 @@ state. Member cells retain their owning namespaces, keeping the complete object
 alive while any extracted reference exists. These ownership cycles participate
 in traced garbage collection and are reclaimed when externally unreachable.
 Symbols are interned by the VM's native context.
+
+Concurrency coordination and transport representation remain separate:
+`runtime/concurrency.rs` owns remote/future handles, leases, hub state, and
+request coordination, while `runtime/concurrency/transport.rs` owns the closed
+set of values that may cross an isolated VM boundary and their conversion.
 
 ## 7. Engine
 
@@ -456,3 +473,40 @@ error values or rendered uncaught-error diagnostics.
 
 Each stage should leave the crate compiling and add focused tests before the
 next layer is introduced.
+# VM performance model
+
+The register VM keeps language semantics at its boundaries while using cheaper
+internal representations where identity is not observable:
+
+- Call operands remain in registers until `CallDynamic`; lowering does not emit
+  a temporary argument-list instruction or register.
+- Calls to statically known declared functions use `CallClosure`. List-pattern
+  functions receive a VM-only argument view and materialize a Pima list only
+  when the complete argument pack escapes; partial and otherwise dynamic calls
+  retain `CallDynamic` semantics.
+- `VmMetrics` is opt-in. Detailed cache accounting is isolated on a cold path
+  so benchmark runs with metrics disabled do not perform counter updates.
+- Returned frames clear and recycle their register buffers. Clearing is
+  required so recycled storage cannot retain garbage-collected values.
+- Persistent lists use shared contiguous storage plus a start offset. `rest`
+  is O(1), list indexing is direct, and prepending or constructing a new list
+  creates fresh immutable storage.
+- Member-access instructions cache an ordered-namespace slot. Every hit
+  validates the symbol at that slot before use, then applies the normal
+  visibility and mutability rules.
+- The compiler emits `LoadNamespaceMember` only for fixed local namespace
+  sites such as immutable bindings initialized by `new`. Once warmed, that
+  instruction trusts the ordered slot and skips repeated symbol interning and
+  name validation. General member reads retain validation because one site may
+  observe unrelated namespace shapes, remote objects, or tasks. Opt-in metrics
+  distinguish specialized and generic reads and referenced receivers.
+- The executable instruction enum uses a one-byte tag, and large metadata for
+  the rare remote-namespace instruction is stored out of line. This reduced
+  the instruction layout from 88 to 48 bytes; a layout test prevents silent
+  growth. The structured register IR remains available to optimization passes
+  and diagnostics.
+
+These optimizations must not change reference identity, fixed method binding,
+move invalidation, ordered namespace composition, or error behavior. The
+conformance suite is the semantic gate; Criterion's register-VM groups are the
+performance gate.
