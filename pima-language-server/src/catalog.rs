@@ -9,6 +9,7 @@ pub fn namespace_members(namespace: &str) -> Option<&'static [Member]> {
         "String" => Some(&STRING),
         "List" => Some(&LIST),
         "Types" => Some(&TYPES),
+        "Value" => Some(&VALUE),
         "Reference" => Some(&REFERENCE),
         "Console" => Some(&CONSOLE),
         "Logic" => Some(&LOGIC),
@@ -32,6 +33,7 @@ pub const NAMESPACES: &[&str] = &[
     "Reference",
     "String",
     "Types",
+    "Value",
 ];
 
 const MATH: [Member; 18] = [
@@ -253,6 +255,11 @@ const TYPES: [Member; 2] = [
         signature: "Types.is?(value, type)",
     },
 ];
+
+const VALUE: [Member; 1] = [Member {
+    name: "copy",
+    signature: "Value.copy(value)",
+}];
 
 const REFERENCE: [Member; 1] = [Member {
     name: "same?",

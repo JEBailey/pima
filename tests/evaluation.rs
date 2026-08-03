@@ -499,9 +499,48 @@ fn remote_rejects_unsendable_required_context() {
         "val local [new { pub val value 1 }]\n\
          val Worker @(local) { pub function read () local }\n\
          val error [attempt { remote Worker }]\n\
-         [Types.is? error :unsendable_value]",
+         ([Types.is? error :copy_error] [Types.is? error :uncopyable_value])",
     );
-    assert_eq!(value, pima::Value::Boolean(true));
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [pima::Value::Boolean(true), pima::Value::Boolean(true)]
+                .into_iter()
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn bare_remote_requirements_reject_remote_and_future_identities() {
+    let value = run_ok(
+        "val Service { pub val value 42 }\n\
+         val service [remote Service]\n\
+         val RemoteWorker @(service) { pub val received service }\n\
+         val remote_error [attempt { remote RemoteWorker }]\n\
+         val pending service.value\n\
+         val FutureWorker @(pending) { pub val received pending }\n\
+         val future_error [attempt { remote FutureWorker }]\n\
+         ([Types.is? remote_error :copy_error]\n\
+          [Types.is? remote_error :uncopyable_value]\n\
+          [Types.is? future_error :copy_error]\n\
+          [Types.is? future_error :uncopyable_value]\n\
+          [await pending])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Integer(42),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
 }
 
 #[test]
@@ -971,6 +1010,69 @@ fn errors_are_never_equal_even_to_the_same_reference() {
 }
 
 #[test]
+fn value_copy_creates_a_detached_data_snapshot() {
+    let value = run_ok(
+        "val State { pub var count 1 }\n\
+         val state [new State]\n\
+         val snapshot [Value.copy (state.count (2 3) \"pima\")]\n\
+         let state.count 9\n\
+         (snapshot state.count)",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::List(
+                    [
+                        pima::Value::Integer(1),
+                        pima::Value::List(
+                            [pima::Value::Integer(2), pima::Value::Integer(3)]
+                                .into_iter()
+                                .collect()
+                        ),
+                        pima::Value::String("pima".into()),
+                    ]
+                    .into_iter()
+                    .collect()
+                ),
+                pima::Value::Integer(9),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn value_copy_rejects_identity_values_and_errors() {
+    let value = run_ok(
+        "val Object { pub val value 1 }\n\
+         val object [new Object]\n\
+         val object_error [attempt { Value.copy object }]\n\
+         val nested_error [attempt { Value.copy (1 object) }]\n\
+         val failure [attempt { Math.div 1 0 }]\n\
+         val error_error [attempt { Value.copy failure }]\n\
+         ([Types.is? object_error :copy_error]\n\
+          [Types.is? object_error :uncopyable_value]\n\
+          [Types.is? nested_error :uncopyable_value]\n\
+          [Types.is? error_error :uncopyable_value])",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+                pima::Value::Boolean(true),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
 fn reference_same_compares_storage_identity_instead_of_values() {
     let value = run_ok(
         "val Template { pub var count 1 }\n\
@@ -1254,6 +1356,90 @@ fn function_argument_pattern_mismatch_is_typed() {
 fn function_return_last_expression() {
     let value = run_ok("function greet (name) {\n  name\n}\n[greet \"world\"]");
     assert_eq!(value, pima::Value::String(std::sync::Arc::from("world")));
+}
+
+#[test]
+fn function_parameters_preserve_argument_locations_and_mutability() {
+    let value = run_ok(
+        "val State { pub var count 1 }\n\
+         val state [new State]\n\
+         function update (count) { let count 10 }\n\
+         update state.count\n\
+         state.count",
+    );
+    assert_eq!(value, pima::Value::Integer(10));
+
+    let immutable = run("function update (count) { let count 10 }\n\
+         val fixed 1\n\
+         update fixed");
+    assert!(!immutable.is_success());
+    assert!(
+        immutable.diagnostics[0]
+            .message
+            .contains("immutable binding")
+    );
+}
+
+#[test]
+fn function_parameters_keep_fixed_reference_identity_when_forwarded_or_captured() {
+    let value = run_ok(
+        "val State { pub var count 1 }\n\
+         var state [new State]\n\
+         val original state.count\n\
+         function same_location (left right) { Reference.same? left right }\n\
+         function retain (count) {\n\
+             function read () { count }\n\
+             (read)\n\
+         }\n\
+         val retained [retain state.count]\n\
+         val read_original [List.head retained]\n\
+         val forwarded [same_location original state.count]\n\
+         let state [new State]\n\
+         let state.count 20\n\
+         (forwarded [read_original] state.count)",
+    );
+    assert_eq!(
+        value,
+        pima::Value::List(
+            [
+                pima::Value::Boolean(true),
+                pima::Value::Integer(1),
+                pima::Value::Integer(20),
+            ]
+            .into_iter()
+            .collect()
+        )
+    );
+}
+
+#[test]
+fn literal_and_computed_arguments_create_immutable_parameter_values() {
+    let literal = run("function update (value) { let value 2 }\nupdate 1\n");
+    assert!(!literal.is_success());
+    assert!(literal.diagnostics[0].message.contains("immutable binding"));
+
+    let computed = run("function update (value) { let value 2 }\nupdate [+ 1 1]\n");
+    assert!(!computed.is_success());
+    assert!(
+        computed.diagnostics[0]
+            .message
+            .contains("immutable binding")
+    );
+}
+
+#[test]
+fn moving_a_reference_parameter_invalidates_the_caller_location() {
+    let value = run_ok(
+        "val Service { pub val value 42 }\n\
+         val service [remote Service]\n\
+         function consume (item) {\n\
+             val Worker @(*item) { pub val received item }\n\
+             remote Worker\n\
+         }\n\
+         val worker [consume service]\n\
+         [Types.is? service :moved_value]",
+    );
+    assert_eq!(value, pima::Value::Boolean(true));
 }
 
 #[test]

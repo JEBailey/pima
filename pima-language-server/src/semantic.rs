@@ -356,7 +356,8 @@ impl<'module> Builder<'module> {
                     .collect();
                 let function_scope = self.child_scope(scope, self.module.node(*body).span);
                 for parameter in parameters {
-                    self.define(function_scope, parameter, SymbolKind::Parameter, false);
+                    // Runtime mutability depends on the argument location.
+                    self.define(function_scope, parameter, SymbolKind::Parameter, true);
                 }
                 self.visit_node(*body, function_scope);
             }
@@ -670,6 +671,12 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, IssueSeverity::Error);
         assert!(issues[0].message.contains("fixed"));
+    }
+
+    #[test]
+    fn leaves_parameter_mutability_to_the_argument_location() {
+        let model = model("function update (value) { let value 2 }\n");
+        assert!(model.issues().all(|issue| !issue.message.contains("value")));
     }
 
     #[test]

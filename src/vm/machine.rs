@@ -519,7 +519,7 @@ impl Machine {
                 } => {
                     let values = elements
                         .iter()
-                        .map(|element| linked_value(&frame.registers[element.0 as usize]))
+                        .map(|element| reference_value(&frame.registers[element.0 as usize]))
                         .collect::<Result<Vec<_>, Diagnostic>>()?;
                     frame.registers[destination.0 as usize] =
                         Slot::Value(Value::List(values.into_iter().collect()));
@@ -1088,7 +1088,6 @@ impl Machine {
                         catch_typed_error(&mut frames, &mut handlers, error)?;
                         continue 'dispatch;
                     };
-                    let argument = resolve_call_argument(argument);
                     let function = closure.function;
                     let captures = closure.captures.clone();
                     let Some(owner) = self.programs.get(&closure.program) else {
@@ -1259,6 +1258,15 @@ fn language_value(value: &Slot) -> Result<Value, Diagnostic> {
 fn linked_value(value: &Slot) -> Result<Value, Diagnostic> {
     match value {
         Slot::Cell(cell) => Ok(Value::VmBinding(cell.clone())),
+        value => language_value(value),
+    }
+}
+
+fn reference_value(value: &Slot) -> Result<Value, Diagnostic> {
+    match value {
+        Slot::Cell(cell) | Slot::Value(Value::VmBinding(cell)) => {
+            Ok(Value::VmBinding(cell.clone()))
+        }
         value => language_value(value),
     }
 }

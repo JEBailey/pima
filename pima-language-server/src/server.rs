@@ -1757,7 +1757,7 @@ mod tests {
         assert!(
             tokens
                 .iter()
-                .any(|token| token.token_type == 2 && token.token_modifiers_bitset == 2)
+                .any(|token| token.token_type == 2 && token.token_modifiers_bitset == 0)
         );
     }
 

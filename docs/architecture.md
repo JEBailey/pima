@@ -30,6 +30,33 @@ and removing no-op moves and jumps while preserving source-span alignment.
 `PassPipeline`; `PassPipeline::standard` selects production passes, while
 `PassPipeline::new` starts empty for baselines and compiler experiments.
 
+Compiler lowering is divided by semantic responsibility:
+
+- `compiler/api.rs` owns public entry points and pipeline application;
+- `compiler.rs` owns the shared lowering context, module orchestration, and
+  general AST dispatch;
+- `compiler/calls.rs` owns command calls, explicit calls, argument-location
+  preservation, and primitive dispatch;
+- `compiler/control.rs` owns conditional/branch lowering, protected regions,
+  and shared jump patching;
+- `compiler/functions.rs` owns closure creation, capture layout, linked-block
+  functions, and suspension/restoration of the enclosing lowering frame;
+- `compiler/loops.rs` owns loop regions plus `break`/`continue` cleanup across
+  protected regions;
+- `compiler/patterns.rs` owns parameter, binding, assignment, and match-pattern
+  lowering;
+- `compiler/blocks.rs` owns `new`, `do`, namespace composition, and block
+  requirement checks; and
+- `compiler/remote.rs` owns remote blueprint construction, context-transfer
+  bindings, worker preamble selection, and future awaiting; and
+- `compiler/context.rs` inventories the execution context required by linked
+  blocks, separately from lexical closure analysis.
+
+These are cooperating lowering facets over one `Compiler` state rather than
+independent compiler phases. Register allocation, diagnostics, constants, and
+instruction emission remain centralized, preventing each syntax feature from
+inventing its own partial lowering context.
+
 The IR supports constants, moves, immutable lists, direct primitive calls,
 private immutable and mutable bindings, conditional and unconditional jumps,
 `if`, ordered `branch`, `while`, `until`, `break`, `continue`, first-class functions, recursive
@@ -107,8 +134,11 @@ stopping at actual child scopes. It expands literal and named `do` blocks,
 resolves block aliases, and guards expansion cycles.
 This preserves declaration timing while allowing recursion and references to
 bindings initialized later. Dynamic calls restore captures into the callee
-frame. Mutable bindings use the same cells, so closures observe later `let`
-updates instead of copied snapshots.
+frame. Call argument packing retains binding cells until dispatch. User-function
+parameter captures alias those cells and preserve their mutability; native and
+remote calls receive resolved or transported values as appropriate. Mutable
+bindings use the same cells, so closures observe later `let` updates instead of
+copied snapshots.
 
 Destructuring first validates and extracts the complete pattern, then commits
 its bindings or assignments. A failed nested pattern therefore cannot leave a

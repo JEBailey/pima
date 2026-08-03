@@ -435,23 +435,35 @@ impl NativeContext for VmNativeContext {
                         return Ok((name, crate::runtime::TransportValue::TcpListener(listener)));
                     }
                     if !matches!(resolved, Value::RemoteNamespace(_) | Value::Task(_)) {
-                        return Err(
-                            "shared context must be a remote object, future, or TCP listener handle",
-                        );
+                        return Err(self.typed_error(
+                            &["error", "remote_error", "unsendable_value"],
+                            "shared context must be a remote object, future, or TCP listener handle"
+                                .to_owned(),
+                        ));
                     }
                 }
-                crate::runtime::TransportValue::from_value(&resolved, |symbol| {
+                let transported = if mode == crate::runtime::ContextTransferMode::Copy {
+                    crate::runtime::copy_snapshot(&resolved).map_err(|message| {
+                        self.typed_error(
+                            &["error", "remote_error", "copy_error", "uncopyable_value"],
+                            message.to_owned(),
+                        )
+                    })?
+                } else {
+                    resolved
+                };
+                crate::runtime::TransportValue::from_value(&transported, |symbol| {
                     self.symbols.resolve(symbol).map(std::sync::Arc::from)
                 })
                 .map(|value| (name, value))
+                .map_err(|message| {
+                    self.typed_error(
+                        &["error", "remote_error", "unsendable_value"],
+                        message.to_owned(),
+                    )
+                })
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|message| {
-                self.typed_error(
-                    &["error", "remote_error", "unsendable_value"],
-                    message.to_owned(),
-                )
-            })?;
+            .collect::<Result<Vec<_>, _>>()?;
         self.host
             .make_remote(blueprint, context)
             .map(Value::RemoteNamespace)

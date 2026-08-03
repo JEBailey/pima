@@ -67,6 +67,20 @@ Lists and scalar data have value semantics. Objects, functions, blocks,
 futures, and native handles have reference identity when assigned to another
 binding.
 
+Function arguments preserve an existing storage reference. The parameter
+points to the resolved location and inherits its mutability; literals and
+computed results instead produce immutable parameter values.
+
+Use `Value.copy` when an explicit detached data snapshot is needed:
+
+```pima
+val saved_count [Value.copy counter.count]
+```
+
+It recursively copies unit, scalar, string, symbol, and list data. Errors and
+identity-bearing values such as objects, functions, blocks, futures, remote
+objects, and native handles fail with `:copy_error :uncopyable_value`.
+
 ### Blocks and objects
 
 Braces create an inert code block. `do` executes one in the current context,
@@ -146,10 +160,13 @@ val Worker @(
 }
 ```
 
-- `configuration` copies a transportable snapshot.
+- `configuration` copies data accepted by `Value.copy`.
 - `*workload` moves it and invalidates all caller-side references to its shared
   source location.
 - `&service` shares a synchronized remote, future, or TCP-listener handle.
+
+Bare requirements cannot implicitly share identity-bearing values. They fail
+with `:copy_error :uncopyable_value`; use `&` to make sharing explicit.
 
 A moved location becomes a typed `:moved_value` error that records the source
 span and operation responsible for the move.

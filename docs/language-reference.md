@@ -168,6 +168,7 @@ expression       = postfix-expression
                  | assignment
                  | match-expression
                  | conditional
+                 | branch-expression
                  | loop
                  | control-transfer
                  | attempt-expression
@@ -238,6 +239,9 @@ member-name      = identifier | reserved-word ;
 
 conditional      = "if", separator+, expression, separator+,
                    expression, [ separator+, expression ] ;
+branch-expression
+                 = "branch", separator*, "(", separator*,
+                   { expression, separator+, expression, separator* }, ")" ;
 loop             = ( "while" | "until" ), separator+,
                    expression, separator+, expression ;
 control-transfer = return-expression
@@ -275,7 +279,7 @@ remaining expressions are packed in the same way.
 For example:
 
 ```pima
-Console.println "sum:" [Math.sum 1 2 3]
+Console.println "sum:" [Math.sum (1 2 3)]
 [+ [fibonacci 5] [fibonacci 6]]
 ```
 
@@ -350,6 +354,9 @@ Every runtime value belongs to one of these categories:
 - Function, including closures and partially applied functions
 - Code block (uninstantiated code)
 - Object
+- Remote object handle
+- Future
+- Native resource handle
 - Unit
 
 The empty list is written `()` and has type `:list`. Unit is a distinct value
@@ -361,15 +368,15 @@ values rather than encoded bytes.
 
 ### 4.1 Runtime types
 
-Every value has an immutable, non-empty list of type symbols. The native
-`types` function returns that list:
+Every value has an immutable, non-empty list of type symbols. The standard
+`Types.of` function returns that list:
 
 ```pima
-[types 42]          // (:integer)
-[types 4.2]         // (:float)
-[types "hello"]     // (:string)
-[types :name]       // (:symbol)
-[types ()]          // (:list)
+[Types.of 42]          // (:integer)
+[Types.of 4.2]         // (:float)
+[Types.of "hello"]     // (:string)
+[Types.of :name]       // (:symbol)
+[Types.of ()]          // (:list)
 ```
 
 The fundamental runtime type is always the first symbol. The fundamental type
@@ -377,15 +384,16 @@ symbols are:
 
 ```text
 :unit  :boolean  :integer  :float  :string
-:symbol  :list  :function  block  :object
+:symbol  :list  :function  :block  :object
+:remote  :future  :tcp_listener  :tcp_connection
 ```
 
-The native predicate `is? value type-symbol` reports whether `type-symbol`
+The standard predicate `Types.is? value type-symbol` reports whether `type-symbol`
 occurs in the value's type list:
 
 ```pima
-[is? 42 :integer]   // true
-[is? 42 :string]    // false
+[Types.is? 42 :integer]   // true
+[Types.is? 42 :string]    // false
 ```
 
 The second operand to `is?` must be a symbol. Type lists contain symbols only,
@@ -411,8 +419,8 @@ val Square {
 }
 
 val square [new Square]
-[types square]          // (:object :square :shape)
-[is? square :shape]     // true
+[Types.of square]          // (:object :square :shape)
+[Types.is? square :shape]  // true
 ```
 
 For an object, the runtime prepends `:object` to the declared type list.
@@ -460,7 +468,7 @@ val report @(name score) {
 ```
 
 The annotation does not create bindings and does not capture their current
-values. Each symbol must be unique and cannot be a reserved word. The first
+values. Each required binding name must be unique and cannot be a reserved word. The first
 version treats the annotation as a guaranteed minimum contract: other free
 identifiers may still resolve normally from the execution environment.
 
@@ -516,8 +524,8 @@ throw [new InvalidOrder]
 Consequently, all errors satisfy both:
 
 ```pima
-[is? error :object]
-[is? error :error]
+[Types.is? error :object]
+[Types.is? error :error]
 ```
 
 An error object must expose an immutable public `message` string. It may
@@ -552,6 +560,12 @@ The standard native error classifications are:
 (:error :index_error)
 (:error :conversion_error)
 (:error :io_error)
+(:error :copy_error)
+(:error :move_error)
+(:error :object_error)
+(:error :remote_error)
+(:error :task_error)
+(:error :tcp_error)
 ```
 
 When an error is thrown, the runtime attaches its source file, line, column, and
@@ -567,7 +581,7 @@ val result [attempt {
     read_file path
 }]
 
-if [is? result :error] {
+if [Types.is? result :error] {
     println result.message
 } {
     process result
@@ -678,9 +692,11 @@ bottom, and only the selected result is evaluated. If no arm matches, `match`
 throws `:match_error`; use `_` as an explicit exhaustive fallback.
 
 A function declaration binds its name in the current environment before its
-body can execute. This permits direct recursion. Function parameters are
-immutable bindings; algorithms that need a changing local value must declare a
-mutable copy with `var`.
+body can execute. This permits direct recursion. A parameter produced from a
+literal or computed result is immutable. A parameter produced from an existing
+storage location preserves that location's mutability and may be updated with
+`let`. Algorithms that require mutable storage for an immutable parameter must
+declare a local `var`.
 
 ### 6.2 Visibility
 
@@ -695,7 +711,7 @@ function helper (x) {
 }
 
 pub function calculate (x) {
-    helper (x)
+    helper x
 }
 ```
 
@@ -729,15 +745,28 @@ expression:
 
 ```pima
 function add (x y) {
-    + (x y)
+    + x y
 }
 ```
 
-Calling a function evaluates one argument value, matches the parameter pattern
-against it, creates immutable bindings for its captures, and evaluates the body
-expression in a child lexical environment. A block is an expression and may be
-used as a multi-statement body. Its final expression is the return value;
-explicit `return` remains optional.
+Calling a function evaluates its argument expressions, matches the parameter
+pattern, and evaluates the body in a child lexical environment. A capture made
+from a storage-producing argument is another reference to that fixed location;
+its mutability is the location's mutability. Literals and computed results have
+no source location and produce immutable parameter values.
+
+List-pattern destructuring preserves locations carried by the implicitly packed
+call operands. An explicitly constructed list remains persistent value data; it
+does not turn its elements into writable references.
+
+Passing a reference never adds a dynamic lookup through the caller's variable.
+Rebinding an earlier path component does not retarget the parameter. Forwarding
+or capturing the parameter preserves its location identity, and moving through
+it invalidates the same caller-side location. `Reference.same?` can test that
+identity.
+
+A block is an expression and may be used as a multi-statement body. Its final
+expression is the return value; explicit `return` remains optional.
 
 Bare names capture values. Symbols match themselves as literal constraints.
 Capture names within the pattern must be distinct.
@@ -755,7 +784,7 @@ A nested function captures bindings from its defining lexical environment:
 ```pima
 function add_to (x) {
     function inner (y) {
-        + (x y)
+        + x y
     }
 }
 ```
@@ -766,13 +795,14 @@ parameters correspond, from left to right, to the placeholders:
 
 ```pima
 val add_five [add 5 _]
-add_five (3)
+add_five 3
 ```
 
 Functions are ordinary values and may be stored, passed, and returned.
 
-A function name used without invocation evaluates to the function value.
-Brackets perform immediate invocation:
+A function name in an operand or binding-value position evaluates to the
+function value. In command position it is invoked with an empty argument list;
+brackets also perform immediate invocation:
 
 ```pima
 val operation calculate
@@ -982,16 +1012,20 @@ val Worker @(
     configuration
     *workload
     &service
-) { ... }
+) {
+    pub val input workload
+}
 ```
 
-- `name` copies a transportable snapshot and is the default;
+- `name` copies data accepted by `Value.copy` and is the default;
 - `*name` moves the value and replaces its shared caller-side location with an
   `(:error :move_error :moved_value)` value after the worker is created; and
 - `&name` shares an existing remote-object, future, or TCP-listener handle.
 
-Move is transactional with respect to worker creation. A missing or
-untransportable value leaves the caller's binding unchanged. Sharing an
+Bare requirements reject errors and identity-bearing values with
+`:copy_error :uncopyable_value`; use `&` when a supported synchronized handle
+must remain shared. Move is transactional with respect to worker creation. A
+missing or untransportable value leaves the caller's binding unchanged. Sharing an
 ordinary scalar, list, local object, closure, or mutable cell fails with
 `:unsendable_value`. For local block execution these markers do not alter
 lexical lookup; they describe only transport across an isolated boundary.
@@ -1043,6 +1077,7 @@ objects:
 | `Math.div`, `Math.mod`, `Math.int` | Integer division, remainder, and conversion |
 | `Logic.not` | Boolean negation |
 | `Types.of`, `Types.is?` | Inspect and test value types |
+| `Value.copy` | Create a detached snapshot of copyable data |
 | `Reference.same?` | Test whether two references identify the same storage |
 | `String.from`, `String.concat` | Display conversion and concatenation |
 | `String.length`, `String.slice`, `String.chars` | Unicode-scalar string operations |
@@ -1056,6 +1091,13 @@ objects:
 | `head` | Return the first list element |
 | `rest` | Return all but the first list element |
 | `empty?` | Test whether a list is empty |
+
+`Value.copy value` explicitly applies the same data-snapshot policy used by a
+bare remote requirement. Unit, booleans, numbers, strings, symbols, and lists
+whose elements are all copyable produce detached values. Implementations may
+structurally share immutable storage without changing this behavior. Errors,
+objects, functions, blocks, remote and future identities, and native resource
+handles fail with `(:error :copy_error :uncopyable_value)`.
 
 ### 10.1 Numbers
 
@@ -1169,9 +1211,8 @@ The list operations have these exact contracts:
   is an error when `list` is empty.
 - `empty? list` returns whether the list contains no elements.
 
-Implementations should use structural sharing where practical. In particular,
-`push` and `rest` should be constant-time operations. `append` may take time
-proportional to the list's length.
+Implementations may use structural sharing where practical. This is an
+implementation optimization and does not alter list semantics or conformance.
 
 There is no mutating `pop` operation. Traversal uses `head` and `rest`, while
 construction uses `push` or `append`.
@@ -1188,6 +1229,7 @@ object values rather than individual global functions:
 - `List`: `push`, `append`, `head`, `rest`, `empty?`, `reverse`, `foreach`,
   `map`, `length`, `contains?`, `fold`, `filter`, `any?`, and `all?`;
 - `Types`: `of` and `is?`;
+- `Value`: `copy`;
 - `Reference`: `same?`;
 - `Console`: `println`; and
 - `Logic`: `not` and `select`.
@@ -1217,9 +1259,10 @@ val counter [new Counter]
 and executes it there. Each invocation creates independent bindings. The
 original block remains uninstantiated and may be used to create more objects.
 
-`new` accepts exactly one code block and does not accept constructor arguments.
-Pima has no reserved initializer method. A function that accepts values and
-creates an object is an ordinary constructor:
+`new` accepts one or more code-block templates and does not accept constructor
+arguments. Multiple templates use the ordered composition rules below. Pima has
+no reserved initializer method. A function that accepts values and creates an
+object is an ordinary constructor:
 
 ```pima
 val InvalidBalance {
@@ -1393,8 +1436,8 @@ import "/pima/library/standard" as standard
 standard.List.reverse (1 2 3)
 ```
 
-The alias is a literal binding destination, so the `:` is required just as it
-is for `val`, `var`, `let`, and `function` declarations.
+The alias is a binding destination and therefore uses a bare identifier. A
+colon would produce a symbol literal and is invalid in this name position.
 
 An object's public members may be imported into the current module:
 
@@ -1632,6 +1675,9 @@ An arbitrary call, closure, or value is not a valid `remote` operand. Templates
 must currently be statically known. Names explicitly listed by an annotated
 template are resolved in the caller, transported as values, and installed as
 immutable worker-local bindings. Mutable cells never cross the worker boundary.
+Bare requirements accept only `Value.copy` data snapshots. Remote objects,
+futures, and supported synchronized native handles require explicit `&`
+sharing or `*` transfer.
 Ordered namespace composition transports the union of external requirements
 and uses the same complete-definition, leftmost-wins contract for `new` and
 `remote`.
@@ -1661,22 +1707,8 @@ The following are not required:
 
 ## 15. Conformance examples
 
-The normative behavioral suite consists of:
-
-```text
-birthday_paradox.pima
-closure.pima
-curried_example.pima
-fibonacci.pima
-foreach.pima
-function_test.pima
-import_test.pima
-json_parser.pima
-lib.pima
-list.pima
-object_test.pima
-newton.pima
-test.pima
-timing.pima
-while.pima
-```
+Every `.pima` source in the repository's `examples/` directory is part of the
+normative behavioral suite. The conformance test discovers these files
+dynamically so adding or removing an example cannot leave a handwritten list
+stale. Demonstrations in `demos/` must also parse, but may depend on external
+resources and are not required to complete during the behavioral suite.

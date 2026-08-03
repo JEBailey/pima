@@ -10,6 +10,7 @@ pub mod remote;
 pub mod strings;
 pub mod tcp;
 pub mod types;
+pub mod values;
 
 pub use registry::{
     Arity, NativeCall, NativeContext, NativeDefinition, NativeRegistry, NativeResult,
@@ -20,6 +21,7 @@ pub(crate) fn register_core(registry: &mut NativeRegistry) {
     strings::register(registry);
     lists::register(registry);
     types::register(registry);
+    values::register(registry);
     references::register(registry);
     console::register(registry);
 }
@@ -33,6 +35,7 @@ pub(crate) fn core_namespace(name: &str) -> Option<&'static str> {
         | "starts_with?" | "ends_with?" | "replace" | "split" | "join" => Some("String"),
         "push" | "append" | "head" | "rest" | "empty?" => Some("List"),
         "types" | "is?" => Some("Types"),
+        "copy" => Some("Value"),
         "same?" => Some("Reference"),
         "println" => Some("Console"),
         "not" => Some("Logic"),

@@ -197,6 +197,10 @@ pub val Types [new {
     pub val is? Types.is?
 }]
 
+pub val Value [new {
+    pub val copy Value.copy
+}]
+
 pub val Reference [new {
     pub val same? Reference.same?
 }]

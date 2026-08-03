@@ -115,8 +115,10 @@ block in `accept` on one listening socket.
 A caller `var` never becomes a shared mutable cell. Mutable state declared
 inside `Worker` remains exclusively owned by that worker.
 
-Missing requirements fail with `:missing_context`. Values that cannot cross the
-transport boundary fail with `:unsendable_value`.
+Missing requirements fail with `:missing_context`. Bare requirements use
+`Value.copy` and reject errors or identity-bearing values with
+`:copy_error :uncopyable_value`. Invalid moves and shares fail with
+`:unsendable_value`.
 
 Move does not recursively serialize a local object graph. Local objects,
 closures, bound methods, code blocks, binding cells, and TCP connections remain
@@ -168,8 +170,8 @@ TransportValue
 
 Symbols travel by name because symbol IDs belong to one interpreter. A list is
 transportable only when every element is transportable. Remote and future
-handles are opaque synchronized identities and may themselves cross the
-boundary.
+handles are opaque synchronized identities and cross the boundary only through
+explicit `&` sharing or `*` transfer.
 
 Bare and `*` requirements use this representation as copy and move policies,
 respectively. `&` accepts only the

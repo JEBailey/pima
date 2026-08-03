@@ -111,6 +111,39 @@ impl Value {
     }
 }
 
+/// Create the detached data snapshot used by explicit copying and bare remote
+/// requirements. Identity-bearing values deliberately have no snapshot form.
+pub(crate) fn copy_snapshot(value: &Value) -> Result<Value, &'static str> {
+    match value.resolved() {
+        Value::Unit => Ok(Value::Unit),
+        Value::Boolean(value) => Ok(Value::Boolean(value)),
+        Value::Integer(value) => Ok(Value::Integer(value)),
+        Value::Float(value) => Ok(Value::Float(value)),
+        Value::String(value) => Ok(Value::String(value)),
+        Value::Symbol(value) => Ok(Value::Symbol(value)),
+        Value::List(values) => values
+            .iter()
+            .map(copy_snapshot)
+            .collect::<Result<PersistentList, _>>()
+            .map(Value::List),
+        Value::Namespace(namespace) if namespace.is_error => Err("errors cannot be copied"),
+        Value::Namespace(_) => Err("local objects cannot be copied"),
+        Value::NativeFunction(_) | Value::VmClosure(_) | Value::VmPartial(_) => {
+            Err("functions cannot be copied")
+        }
+        Value::Block(_) => Err("code blocks cannot be copied"),
+        Value::RemoteNamespace(_)
+        | Value::RemoteFunction(_, _)
+        | Value::BoundRemoteFunction(_, _, _) => Err("remote identities cannot be copied"),
+        Value::Task(_) | Value::TaskFunction(_, _) => Err("future identities cannot be copied"),
+        Value::TcpListener(_) | Value::TcpConnection(_) => {
+            Err("native resource identities cannot be copied")
+        }
+        Value::VmBinding(_) => unreachable!("resolved above"),
+        Value::Placeholder => Err("placeholder values cannot be copied"),
+    }
+}
+
 pub(crate) fn language_equal(left: &Value, right: &Value) -> bool {
     if is_error_value(left) || is_error_value(right) {
         return false;

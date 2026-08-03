@@ -667,3 +667,27 @@ fn parses_every_pima_example_in_the_readme() {
     }
     assert!(examples > 0, "README should contain Pima examples");
 }
+
+#[test]
+fn parses_every_pima_example_in_the_language_reference() {
+    let reference = include_str!("../docs/language-reference.md");
+    let mut examples = 0;
+    for (index, section) in reference.split("```pima\n").skip(1).enumerate() {
+        let source = section
+            .split_once("\n```")
+            .map(|(source, _)| source)
+            .expect("Pima language-reference fence should be closed");
+        let mut sources = SourceMap::default();
+        let name = format!("<language-reference-example-{}>", index + 1);
+        let source_id = sources.add(name.clone(), source);
+        let tokens = lex(source_id, source)
+            .unwrap_or_else(|errors| panic!("{name} failed to lex: {errors:#?}\n{source}"));
+        parse(&tokens)
+            .unwrap_or_else(|errors| panic!("{name} failed to parse: {errors:#?}\n{source}"));
+        examples += 1;
+    }
+    assert!(
+        examples > 0,
+        "language reference should contain Pima examples"
+    );
+}

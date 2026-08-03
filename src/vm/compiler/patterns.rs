@@ -10,12 +10,19 @@ impl Compiler<'_> {
         match pattern {
             Pattern::Wildcard => {}
             Pattern::Capture(name) => {
+                let binding = self.allocate_register();
+                self.binding_registers.push(binding);
+                self.instructions.push(Instruction::BindImport {
+                    binding,
+                    source,
+                    name: name.text.clone(),
+                });
                 self.locals.insert(
                     name.text.clone(),
                     Local {
-                        register: source,
+                        register: binding,
                         block: None,
-                        binding: false,
+                        binding: true,
                     },
                 );
             }
